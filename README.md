@@ -1,4 +1,3 @@
-````markdown
 # hy2ipv6
 
 🚀 一键脚本，在 **IPv6 Only VPS** 上部署 [Hysteria2](https://github.com/apernet/hysteria) 并自动配置 **Cloudflare Tunnel**，实现无论本地是否支持 IPv6，都能轻松使用科学上网。
@@ -16,7 +15,8 @@
 ## 使用方法
 
 1. **运行**
-   ```bash
+
+```bash
    wget -O install_hy2.sh https://raw.githubusercontent.com/everett7623/hy2ipv6/main/install_hy2.sh && chmod +x install_hy2.sh && ./install_hy2.sh
 ````
 
@@ -24,9 +24,9 @@
 
    * 脚本运行过程中会提示登录：
 
-     ```bash
-     cloudflared tunnel login
-     ```
+```bash
+cloudflared tunnel login
+```
    * 浏览器打开输出的链接，选择你的域名或直接使用 Cloudflare 分配的免费隧道域名。
 
 3. **查看配置信息**
@@ -89,9 +89,6 @@
 * [cloudflare/cloudflared](https://github.com/cloudflare/cloudflared)
 
 ---
-
 ## License
 
 MIT
-
-```
