@@ -1,7 +1,7 @@
 #!/bin/bash
 # Hysteria2 + Cloudflare Tunnel 一键安装脚本 (IPv6 Only VPS)
 # GitHub: https://github.com/everett7623/hy2ipv6
-# 修复版本
+# 再次修复版本 (解决 Cloudflare Tunnel 服务安装失败问题)
 
 set -e
 
@@ -74,6 +74,11 @@ echo "Cloudflare 登录授权成功。"
 
 # ========= 创建 & 启动隧道 =========
 echo -e "\n>>> [5/5] 创建并启动 Cloudflare Tunnel"
+
+# 定义 Cloudflare Tunnel 配置文件的系统级目录
+CF_CONFIG_DIR="/etc/cloudflared"
+mkdir -p "$CF_CONFIG_DIR" # 确保目录存在
+
 # 检查隧道是否已存在，如果存在则跳过创建
 if cloudflared tunnel list | grep -q "$TUNNEL_NAME"; then
     echo "隧道 '$TUNNEL_NAME' 已存在，跳过创建步骤。"
@@ -86,9 +91,18 @@ if cloudflared tunnel list | grep -q "$TUNNEL_NAME"; then
 else
     # 创建隧道
     cloudflared tunnel create $TUNNEL_NAME || { echo "创建 Cloudflare Tunnel 失败，请检查。"; exit 1; }
-    # 获取隧道 UUID (从证书文件中提取)
-    UUID=$(cat ~/.cloudflared/*.json | grep -oE '[0-9a-f-]{36}' | head -n1)
+    # 获取隧道 UUID (从 ~/.cloudflared/ 目录下新生成的 JSON 文件中提取)
+    UUID=$(cat /root/.cloudflared/*.json | grep -oE '[0-9a-f-]{36}' | head -n1)
 fi
+
+# 将隧道凭证文件从用户家目录移动到系统级配置目录
+if [ -f "/root/.cloudflared/$UUID.json" ]; then
+    mv "/root/.cloudflared/$UUID.json" "$CF_CONFIG_DIR/" || { echo "移动隧道凭证文件失败。"; exit 1; }
+    echo "隧道凭证文件已移动至 $CF_CONFIG_DIR/$UUID.json"
+else
+    echo "警告：未找到隧道凭证文件 /root/.cloudflared/$UUID.json，可能需要手动处理。"
+fi
+
 
 # 自动生成的 CF 隧道域名
 # 注意：whoami 在root环境下是root，所以域名会是 hy2.root.cfargotunnel.com
@@ -96,24 +110,24 @@ fi
 CF_TUNNEL_DOMAIN="hy2.$(whoami).cfargotunnel.com" 
 
 echo "正在生成 Cloudflare Tunnel 配置文件..."
-# 生成 Cloudflare Tunnel 配置文件
-mkdir -p ~/.cloudflared # 确保目录存在
-cat > ~/.cloudflared/config.yml <<EOF
+# 生成 Cloudflare Tunnel 配置文件到系统级目录
+cat > "$CF_CONFIG_DIR/config.yml" <<EOF
 tunnel: $UUID
-credentials-file: /root/.cloudflared/$UUID.json
+credentials-file: $CF_CONFIG_DIR/$UUID.json
 
 ingress:
   - hostname: $CF_TUNNEL_DOMAIN
     service: https://localhost:$PORT # Hysteria2 默认端口
   - service: http_status:404
 EOF
-echo "Cloudflare Tunnel 配置文件已生成：~/.cloudflared/config.yml"
+echo "Cloudflare Tunnel 配置文件已生成：$CF_CONFIG_DIR/config.yml"
 
 
 # 安装并启动 Cloudflare Tunnel 为系统服务
 echo "正在安装和启动 Cloudflare Tunnel Systemd 服务..."
-cloudflared tunnel service install $TUNNEL_NAME || { echo "Cloudflare Tunnel 服务安装失败。"; exit 1; }
-systemctl enable --now cloudflared-tunnel@$TUNNEL_NAME.service || { echo "Cloudflare Tunnel 服务启动失败。"; exit 1; }
+# 使用 --config 参数明确指定配置文件路径
+cloudflared tunnel service install $TUNNEL_NAME --config "$CF_CONFIG_DIR/config.yml" || { echo "Cloudflare Tunnel 服务安装失败。请检查日志：journalctl -u cloudflared-tunnel@$TUNNEL_NAME.service"; exit 1; }
+systemctl enable --now cloudflared-tunnel@$TUNNEL_NAME.service || { echo "Cloudflare Tunnel 服务启动失败。请检查日志。"; exit 1; }
 systemctl restart cloudflared-tunnel@$TUNNEL_NAME.service # 确保服务在配置更新后重启
 echo "Cloudflare Tunnel 服务已启动并设置为开机自启。"
 
