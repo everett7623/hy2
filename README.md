@@ -15,19 +15,12 @@
 
 ## 使用方法
 
-1. **克隆或直接下载脚本**
+1. **运行**
    ```bash
-   wget -O install_hy2.sh https://raw.githubusercontent.com/everett7623/hy2ipv6/main/install_hy2.sh
-   chmod +x install_hy2.sh
+   wget -O install_hy2.sh https://raw.githubusercontent.com/everett7623/hy2ipv6/main/install_hy2.sh && chmod +x install_hy2.sh && ./install_hy2.sh
 ````
 
-2. **运行脚本**
-
-   ```bash
-   ./install_hy2.sh
-   ```
-
-3. **Cloudflare Tunnel 授权**
+2. **Cloudflare Tunnel 授权**
 
    * 脚本运行过程中会提示登录：
 
@@ -36,7 +29,7 @@
      ```
    * 浏览器打开输出的链接，选择你的域名或直接使用 Cloudflare 分配的免费隧道域名。
 
-4. **查看配置信息**
+3. **查看配置信息**
 
    * 脚本执行完后会输出：
 
