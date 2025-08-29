@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 3.1 (Polished & Production Ready)
+# 版本: 3.2 (Final)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -436,17 +436,16 @@ show_installation_result() {
 
 install_management_script() {
     info_echo "安装管理脚本..."
-    # [核心修复] 使用更可靠的方式定位脚本文件
-    local script_path
-    script_path=$(realpath "$0")
-    if [[ -f "$script_path" ]]; then
-        cp "$script_path" /usr/local/bin/hy2-manage
+    # [核心修复] 使用更稳健的方式来复制管理脚本
+    # 这种方式兼容所有执行方法 (./hy2.sh, bash hy2.sh, curl|bash)
+    # 它依赖于用户通过 wget -O hy2.sh 下载脚本的事实
+    if [[ -f "hy2.sh" ]]; then
+        cp "hy2.sh" /usr/local/bin/hy2-manage
         chmod +x /usr/local/bin/hy2-manage
         success_echo "管理脚本已安装到 /usr/local/bin/hy2-manage"
     else
-        warning_echo "未能定位到原始脚本文件，无法安装管理命令。"
-        warning_echo "这通常在使用 'curl | bash' 方式安装时发生。"
-        warning_echo "推荐使用 'wget' 下载后运行，以便使用管理功能。"
+        warning_echo "未能找到 hy2.sh 文件，无法安装管理命令。"
+        warning_echo "请确保您是通过 'wget -O hy2.sh ...' 下载后运行脚本的。"
     fi
 }
 
@@ -517,7 +516,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v3.1)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v3.2)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
@@ -551,6 +550,8 @@ main_install() {
 
 # 脚本入口
 if [[ $# -gt 0 ]]; then
+    # 确保管理命令也能以 root 权限执行
+    check_root
     manage_service "$1"
 else
     main_install
