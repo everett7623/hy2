@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 3.0 (Production Ready)
+# 版本: 3.2 (Final)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -56,6 +56,7 @@ cleanup_previous_installation() {
     rm -f /usr/local/bin/hysteria
     rm -rf /etc/hysteria2
     rm -rf /etc/cloudflared
+    rm -f /root/.cloudflared/cert.pem
     rm -f /usr/local/bin/hy2-manage
     
     success_echo "旧环境清理完成。"
@@ -320,23 +321,18 @@ setup_cloudflared_tunnel() {
         error_echo "Cloudflared 登录失败"; exit 1
     fi
     
-    # [核心修复] 分步创建和获取 ID，增加健壮性
-    # 检查隧道是否存在，如果不存在才创建
     if ! cloudflared tunnel list -o json | jq -e ".[] | select(.name == \"$TUNNEL_NAME\")" > /dev/null; then
         info_echo "创建新的隧道: $TUNNEL_NAME"
-        # 只创建，不依赖此处的输出
         cloudflared tunnel create "$TUNNEL_NAME" > /dev/null 2>&1
         sleep 2
     else
         info_echo "检测到已存在的隧道: $TUNNEL_NAME"
     fi
 
-    # 严格地从 list 命令获取 ID
     TUNNEL_ID=$(cloudflared tunnel list -o json | jq -r ".[] | select(.name == \"$TUNNEL_NAME\") | .id")
 
-    # [核心修复] 增加严格的空值检查
     if [[ -z "$TUNNEL_ID" ]]; then
-        error_echo "创建或获取隧道 ID 失败！请检查 Cloudflare 账户状态或手动运行 'cloudflared tunnel list' 查看详情。"
+        error_echo "创建或获取隧道 ID 失败！"
         exit 1
     fi
     success_echo "隧道已就绪, ID: $TUNNEL_ID"
@@ -440,9 +436,17 @@ show_installation_result() {
 
 install_management_script() {
     info_echo "安装管理脚本..."
-    cp "$0" /usr/local/bin/hy2-manage
-    chmod +x /usr/local/bin/hy2-manage
-    success_echo "管理脚本已安装到 /usr/local/bin/hy2-manage"
+    # [核心修复] 使用更稳健的方式来复制管理脚本
+    # 这种方式兼容所有执行方法 (./hy2.sh, bash hy2.sh, curl|bash)
+    # 它依赖于用户通过 wget -O hy2.sh 下载脚本的事实
+    if [[ -f "hy2.sh" ]]; then
+        cp "hy2.sh" /usr/local/bin/hy2-manage
+        chmod +x /usr/local/bin/hy2-manage
+        success_echo "管理脚本已安装到 /usr/local/bin/hy2-manage"
+    else
+        warning_echo "未能找到 hy2.sh 文件，无法安装管理命令。"
+        warning_echo "请确保您是通过 'wget -O hy2.sh ...' 下载后运行脚本的。"
+    fi
 }
 
 # 6. 管理与卸载
@@ -512,7 +516,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v3.0)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v3.2)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
@@ -546,6 +550,8 @@ main_install() {
 
 # 脚本入口
 if [[ $# -gt 0 ]]; then
+    # 确保管理命令也能以 root 权限执行
+    check_root
     manage_service "$1"
 else
     main_install
