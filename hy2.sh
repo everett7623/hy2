@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 2.4 (终极修复版 - 修正Hysteria安装逻辑)
+# 版本: 2.6 (终极版 - 集成自动清理)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -37,6 +37,33 @@ error_echo() { echo -e "${RED}[ERROR]${ENDCOLOR} $1"; }
 warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
 
 # --- 核心功能函数 ---
+
+# [新增] 自动清理旧安装的函数
+cleanup_previous_installation() {
+    info_echo "正在检查并清理任何可能存在的旧安装..."
+    
+    # 停止并禁用服务 (忽略任何错误)
+    systemctl stop hysteria-server cloudflared 2>/dev/null || true
+    systemctl disable hysteria-server cloudflared 2>/dev/null || true
+    
+    # 删除旧的隧道 (如果 cloudflared 已安装)
+    if command -v cloudflared &>/dev/null; then
+        # -f 标志可以强制删除，无需确认
+        cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
+    fi
+    
+    # 删除服务和配置文件
+    rm -f /etc/systemd/system/hysteria-server.service
+    rm -f /etc/systemd/system/cloudflared.service
+    systemctl daemon-reload
+    
+    rm -f /usr/local/bin/hysteria
+    rm -rf /etc/hysteria2
+    rm -rf /etc/cloudflared
+    rm -f /usr/local/bin/hy2-manage
+    
+    success_echo "旧环境清理完成。"
+}
 
 # 1. 环境检查
 check_root() {
@@ -175,9 +202,7 @@ get_user_input() {
 install_hysteria2() {
     info_echo "安装 Hysteria2..."
     local download_url
-    # 优先匹配精确名称，更可靠
     download_url=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r ".assets[] | select(.name == \"hysteria-linux-$ARCH\") | .browser_download_url")
-    # 如果精确匹配失败，则使用旧的模糊匹配作为备用方案
     if [[ -z "$download_url" ]]; then
         warning_echo "精确文件名匹配失败，尝试模糊匹配..."
         download_url=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\") and (contains(\"avx\") | not)) | .browser_download_url")
@@ -190,11 +215,9 @@ install_hysteria2() {
     
     info_echo "下载 Hysteria2 从: $download_url"
     
-    # [核心修复] 下载文件后，不再解压，而是直接移动并赋予权限
     wget -qO /usr/local/bin/hysteria "$download_url"
     chmod +x /usr/local/bin/hysteria
     
-    # 验证安装
     if ! command -v hysteria &> /dev/null; then
         error_echo "Hysteria2 安装验证失败"
         exit 1
@@ -245,7 +268,6 @@ install_acme_and_cert() {
     
     if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --debug 2; then
         error_echo "SSL 证书申请失败！请检查上面的 acme.sh debug 日志。"
-        error_echo "常见原因：Cloudflare API Token 权限不足 (需要 Zone:Read, DNS:Edit)。"
         exit 1
     fi
     
@@ -289,12 +311,12 @@ EOF
 setup_cloudflared_tunnel() {
     info_echo "设置 Cloudflare Tunnel..."
     
-    rm -f /root/.cloudflared/cert.pem
-    
-    info_echo "请在接下来打开的浏览器窗口中登录并授权您的域名..."
+    warning_echo "--- 浏览器授权 ---"
+    warning_echo "请在接下来打开的浏览器窗口中登录并授权您的域名。"
+    warning_echo "授权完成后，您可以关闭浏览器标签页返回此终端继续。"
     sleep 3
     if ! cloudflared tunnel login; then
-        error_echo "Cloudflared 登录失败，请检查服务器是否能正常访问网络"; exit 1
+        error_echo "Cloudflared 登录失败"; exit 1
     fi
     
     TUNNEL_ID=$(cloudflared tunnel list -o json | jq -r ".[] | select(.name == \"$TUNNEL_NAME\") | .id" || echo "")
@@ -302,16 +324,25 @@ setup_cloudflared_tunnel() {
         info_echo "创建新的隧道: $TUNNEL_NAME"
         TUNNEL_ID=$(cloudflared tunnel create "$TUNNEL_NAME" | grep -oE '[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}')
         sleep 2
+    else
+        info_echo "使用已存在的隧道: $TUNNEL_NAME"
     fi
+
     if [[ -z "$TUNNEL_ID" ]]; then
         error_echo "创建或获取隧道 ID 失败"; exit 1
     fi
     success_echo "隧道已就绪, ID: $TUNNEL_ID"
     
+    local credential_file="/root/.cloudflared/$TUNNEL_ID.json"
+    if [[ ! -f "$credential_file" ]]; then
+        error_echo "隧道的凭证文件 ($credential_file) 未找到！"
+        exit 1
+    fi
+
     mkdir -p /etc/cloudflared/
     cat > /etc/cloudflared/config.yml << EOF
 tunnel: $TUNNEL_ID
-credentials-file: /root/.cloudflared/$TUNNEL_ID.json
+credentials-file: $credential_file
 protocol: quic
 ingress:
   - hostname: $DOMAIN
@@ -322,7 +353,7 @@ EOF
     
     info_echo "创建 DNS 记录指向隧道..."
     if ! cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN"; then
-        warning_echo "自动创建 DNS 记录可能失败，请登录 Cloudflare 检查 $DOMAIN 的 CNAME 记录是否正确指向 $TUNNEL_ID.cfargotunnel.com"
+        warning_echo "自动创建 DNS 记录可能失败，请手动检查"
     fi
     success_echo "DNS 记录配置完成"
 }
@@ -403,15 +434,7 @@ show_installation_result() {
     echo
     
     echo -e "${BLUE}客户端配置 JSON (可用于 V2RayN / Nekoray 等):${ENDCOLOR}"
-    echo "{"
-    echo "  \"server\": \"$DOMAIN:443\","
-    echo "  \"auth\": \"$HY_PASSWORD\","
-    echo "  \"tls\": {"
-    echo "    \"sni\": \"$DOMAIN\","
-    echo "    \"insecure\": false"
-    echo "  },"
-    echo "  \"masquerade\": \"$FAKE_URL\""
-    echo "}"
+    echo "{\"server\":\"$DOMAIN:443\",\"auth\":\"$HY_PASSWORD\",\"tls\":{\"sni\":\"$DOMAIN\",\"insecure\":false},\"masquerade\":\"$FAKE_URL\"}"
 }
 
 install_management_script() {
@@ -448,8 +471,7 @@ uninstall_all() {
     warning_echo "开始完全卸载 Hysteria2 和相关组件..."
     read -rp "确定要完全卸载吗？此操作不可逆 (y/N): " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-        info_echo "取消卸载"
-        exit 0
+        info_echo "取消卸载"; exit 0
     fi
     
     if [[ -f /etc/hysteria2/uninstall_info.env ]]; then
@@ -470,64 +492,62 @@ uninstall_all() {
     rm -f /usr/local/bin/hysteria
     
     if [[ -n "$DOMAIN" ]] && command -v ~/.acme.sh/acme.sh &> /dev/null; then
-        info_echo "吊销并删除 SSL 证书..."
-        ~/.acme.sh/acme.sh --revoke -d "$DOMAIN" --debug 2 || true
         ~/.acme.sh/acme.sh --remove -d "$DOMAIN" --debug 2 || true
     fi
     
     if [[ -n "$TUNNEL_NAME" ]] && command -v cloudflared &>/dev/null; then
-        info_echo "删除 Cloudflare Tunnel..."
-        cloudflared tunnel cleanup "$TUNNEL_NAME" 2>/dev/null || true
         cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
     fi
     
     rm -rf /etc/hysteria2 /etc/cloudflared
-    
     rm -f /usr/local/bin/hy2-manage
     
     success_echo "Hysteria2 相关配置已完全卸载"
-    warning_echo "Cloudflared 本体未卸载，您可根据需要手动执行 'apt-get remove cloudflared' 或 'yum remove cloudflared'"
-    success_echo "感谢使用！"
+    warning_echo "Cloudflared 本体未卸载, 您可根据需要手动移除"
 }
 
 
 # --- 主流程 ---
-main() {
-    if [[ $# -gt 0 ]]; then
-        manage_service "$1"
-    else
-        clear
-        echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
-        echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-        echo -e "${GREEN}║                      一键安装脚本 (v2.4)                        ║${ENDCOLOR}"
-        echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
-        echo
-        
-        check_root
-        detect_system
-        install_dependencies
-        detect_network
-        
-        get_user_input
-        
-        read -rp "配置确认完成，是否开始安装？ (Y/n): " confirm
-        if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
-            info_echo "安装已取消"
-            exit 0
-        fi
-        
-        install_hysteria2
-        install_cloudflared
-        install_acme_and_cert
-        generate_hysteria_config
-        setup_cloudflared_tunnel
-        create_systemd_services
-        start_services
-        install_management_script
-        
-        show_installation_result
+main_install() {
+    clear
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
+    echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v2.6)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
+    echo
+    
+    check_root
+    
+    # [核心] 在所有操作开始前，执行清理
+    cleanup_previous_installation
+    
+    detect_system
+    install_dependencies
+    install_cloudflared # 提前安装，确保 tunnel delete 命令可用
+    detect_network
+    
+    get_user_input
+    
+    read -rp "配置确认完成，是否开始安装？ (Y/n): " confirm
+    if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
+        info_echo "安装已取消"
+        exit 0
     fi
+    
+    install_hysteria2
+    install_acme_and_cert
+    generate_hysteria_config
+    setup_cloudflared_tunnel
+    create_systemd_services
+    start_services
+    install_management_script
+    
+    show_installation_result
 }
 
 # 脚本入口
-main "$@"
+if [[ $# -gt 0 ]]; then
+    manage_service "$1"
+else
+    main_install
+fi
