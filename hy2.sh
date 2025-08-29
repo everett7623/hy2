@@ -133,10 +133,13 @@ get_user_input() {
     echo
     info_echo "开始配置参数..."
     
+    # 确保输入来自终端
+    exec < /dev/tty
+    
     # 域名输入
     while [[ -z "$DOMAIN" ]]; do
-        echo -n "请输入您的域名: "
-        read DOMAIN
+        printf "请输入您的域名: "
+        read -r DOMAIN
         if [[ -z "$DOMAIN" ]]; then
             warning_echo "域名不能为空，请重新输入"
         else
@@ -146,8 +149,8 @@ get_user_input() {
     
     # Cloudflare Token 输入与验证
     while true; do
-        echo -n "请输入 Cloudflare API Token: "
-        read CF_TOKEN
+        printf "请输入 Cloudflare API Token: "
+        read -r CF_TOKEN
         if [[ -z "$CF_TOKEN" ]]; then
             warning_echo "Token 不能为空，请重新输入"
             continue
@@ -159,7 +162,7 @@ get_user_input() {
             -H "Authorization: Bearer $CF_TOKEN" \
             -H "Content-Type: application/json")
         
-        if echo "$verify_result" | jq -r '.success' | grep -q "true"; then
+        if echo "$verify_result" | jq -r '.success' 2>/dev/null | grep -q "true"; then
             success_echo "Token 验证成功"
             break
         else
@@ -169,23 +172,23 @@ get_user_input() {
     done
     
     # Hysteria 密码
-    echo -n "请输入 Hysteria 密码 (回车自动生成): "
-    read HY_PASSWORD
+    printf "请输入 Hysteria 密码 (回车自动生成): "
+    read -r HY_PASSWORD
     if [[ -z "$HY_PASSWORD" ]]; then
         HY_PASSWORD=$(openssl rand -base64 16)
         info_echo "自动生成密码: $HY_PASSWORD"
     fi
     
     # ACME 邮箱
-    echo -n "请输入 ACME 邮箱 (回车使用默认 $ACME_EMAIL): "
-    read input_email
+    printf "请输入 ACME 邮箱 (回车使用默认 %s): " "$ACME_EMAIL"
+    read -r input_email
     if [[ -n "$input_email" ]]; then
         ACME_EMAIL="$input_email"
     fi
     
     # 伪装网址
-    echo -n "请输入伪装网址 (回车使用默认 $FAKE_URL): "
-    read input_fake
+    printf "请输入伪装网址 (回车使用默认 %s): " "$FAKE_URL"
+    read -r input_fake
     if [[ -n "$input_fake" ]]; then
         FAKE_URL="$input_fake"
     fi
@@ -539,6 +542,14 @@ main_install() {
     info_echo "环境检查完成，开始用户配置..."
     get_user_input
     
+    printf "是否继续安装？(y/N): "
+    read -r confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        info_echo "安装已取消"
+        exit 0
+    fi
+    
+    echo
     info_echo "开始安装组件..."
     install_hysteria2
     install_cloudflared
