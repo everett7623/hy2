@@ -426,10 +426,38 @@ EOF
 create_cloudflared_service() {
     log_info "创建 Cloudflared systemd 服务..."
     
-    # 安装服务
-    cloudflared service install --config "$CF_CONFIG_DIR/config.yml"
+    # 检测 cloudflared 的安装位置
+    local cloudflared_path
+    if [ -f "/usr/bin/cloudflared" ]; then
+        cloudflared_path="/usr/bin/cloudflared"
+    elif [ -f "/usr/local/bin/cloudflared" ]; then
+        cloudflared_path="/usr/local/bin/cloudflared"
+    else
+        cloudflared_path="cloudflared"  # 使用 PATH 中的版本
+    fi
     
-    # 启用并启动服务
+    # 创建 systemd 服务文件
+    cat > /etc/systemd/system/cloudflared.service << EOF
+[Unit]
+Description=Cloudflare Tunnel
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=$cloudflared_path tunnel --config $CF_CONFIG_DIR/config.yml run
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # 重新加载 systemd 并启用服务
+    systemctl daemon-reload
     systemctl enable cloudflared
     systemctl start cloudflared
     
