@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 2.9 (终极版 - 全流程修复与优化)
+# 版本: 3.0 (Production Ready)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -320,17 +320,24 @@ setup_cloudflared_tunnel() {
         error_echo "Cloudflared 登录失败"; exit 1
     fi
     
-    TUNNEL_ID=$(cloudflared tunnel list -o json | jq -r ".[] | select(.name == \"$TUNNEL_NAME\") | .id" || echo "")
-    if [[ -z "$TUNNEL_ID" ]]; then
+    # [核心修复] 分步创建和获取 ID，增加健壮性
+    # 检查隧道是否存在，如果不存在才创建
+    if ! cloudflared tunnel list -o json | jq -e ".[] | select(.name == \"$TUNNEL_NAME\")" > /dev/null; then
         info_echo "创建新的隧道: $TUNNEL_NAME"
-        TUNNEL_ID=$(cloudflared tunnel create "$TUNNEL_NAME" | grep -oE '[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}')
+        # 只创建，不依赖此处的输出
+        cloudflared tunnel create "$TUNNEL_NAME" > /dev/null 2>&1
         sleep 2
     else
-        info_echo "使用已存在的隧道: $TUNNEL_NAME"
+        info_echo "检测到已存在的隧道: $TUNNEL_NAME"
     fi
 
+    # 严格地从 list 命令获取 ID
+    TUNNEL_ID=$(cloudflared tunnel list -o json | jq -r ".[] | select(.name == \"$TUNNEL_NAME\") | .id")
+
+    # [核心修复] 增加严格的空值检查
     if [[ -z "$TUNNEL_ID" ]]; then
-        error_echo "创建或获取隧道 ID 失败"; exit 1
+        error_echo "创建或获取隧道 ID 失败！请检查 Cloudflare 账户状态或手动运行 'cloudflared tunnel list' 查看详情。"
+        exit 1
     fi
     success_echo "隧道已就绪, ID: $TUNNEL_ID"
     
@@ -505,7 +512,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v2.9)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v3.0)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
