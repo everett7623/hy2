@@ -1327,6 +1327,13 @@ recover_from_failure() {
 check_and_repair_installation() {
     log_info "检查是否存在不完整的安装..."
     if [ -f "$CF_CONFIG_DIR/install_status.txt" ]; then
+        log_debug "找到安装状态文件，检查安装状态..."
+=======
+# 检查和修复不完整的安装
+check_and_repair_installation() {
+    log_info "检查是否存在不完整的安装..."
+    if [ -f "$CF_CONFIG_DIR/install_status.txt" ]; then
+        log_debug "找到安装状态文件，检查安装状态..."
         local status=$(cat "$CF_CONFIG_DIR/install_status.txt")
         if [ "$status" == "incomplete" ]; then
             log_warn "检测到不完整的 Cloudflare Tunnel 安装。"
@@ -1399,6 +1406,8 @@ check_and_repair_installation() {
                 fi
             fi
         fi
+    else
+        log_debug "未找到安装状态文件，表示这是全新安装"
     fi
     return 1
 }
@@ -1480,6 +1489,9 @@ install_all() {
         show_config
         return 0
     fi
+    
+    # 如果没有不完整的安装需要修复，继续正常安装流程
+    log_debug "没有检测到不完整的安装，继续正常安装流程..."
     
     # 检查现有安装
     check_installation_status
