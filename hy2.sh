@@ -1328,9 +1328,164 @@ check_and_repair_installation() {
     log_info "检查是否存在不完整的安装..."
     if [ -f "$CF_CONFIG_DIR/install_status.txt" ]; then
         log_debug "找到安装状态文件，检查安装状态..."
-=======
-# 检查和修复不完整的安装
-check_and_repair_installation() {
+        local status=$(cat "$CF_CONFIG_DIR/install_status.txt")
+        if [ "$status" == "incomplete" ]; then
+            log_warn "检测到不完整的 Cloudflare Tunnel 安装。"
+            
+            if [ -f "$CF_CONFIG_DIR/install_checkpoint.txt" ]; then
+                local checkpoint=$(cat "$CF_CONFIG_DIR/install_checkpoint.txt")
+                echo -e "${YELLOW}上次安装失败于: $checkpoint${NC}"
+                
+                read -p "是否尝试修复安装？(Y/n): " repair_confirm
+                if [[ ! "$repair_confirm" =~ ^[Nn]$ ]]; then
+                    log_info "开始修复安装..."
+                    
+                    # 尝试从失败的检查点继续
+                    case "$checkpoint" in
+                        "verify"|"start")
+                            # 尝试重启服务
+                            log_info "尝试重启 Cloudflare Tunnel 服务..."
+                            if systemctl restart cloudflared 2>/dev/null; then
+                                if check_service_status "cloudflared"; then
+                                    echo "complete" > "$CF_CONFIG_DIR/install_status.txt"
+                                    log_info "✅ Cloudflare Tunnel 修复成功"
+                                    # 尝试重新获取并保存域名/UUID/名称
+                                    local current_uuid=$(get_tunnel_uuid)
+                                    local current_tunnel_name=$(cat "$CF_CONFIG_DIR/name.txt" 2>/dev/null || echo "$TUNNEL_NAME")
+                                    local current_cf_domain="${current_tunnel_name}.cfargotunnel.com"
+                                    echo "$current_cf_domain" > "$CF_CONFIG_DIR/domain.txt"
+                                    echo "$current_uuid" > "$CF_CONFIG_DIR/uuid.txt"
+                                    echo "$current_tunnel_name" > "$CF_CONFIG_DIR/name.txt"
+                                    return 0
+                                fi
+                            fi
+                            ;;
+                        "service")
+                            # 重新安装服务
+                            log_info "尝试重新安装 Cloudflare Tunnel 服务..."
+                            if cloudflared service install --config "$CF_CONFIG_DIR/config.yml" 2>/dev/null; then
+                                systemctl enable cloudflared && systemctl start cloudflared
+                                if check_service_status "cloudflared"; then
+                                    echo "complete" > "$CF_CONFIG_DIR/install_status.txt"
+                                    log_info "✅ Cloudflare Tunnel 修复成功"
+                                    return 0
+                                fi
+                            fi
+                            ;;
+                        "dns")
+                            # 重新配置 DNS
+                            log_info "尝试重新配置 DNS 记录..."
+                            local current_tunnel_name=$(cat "$CF_CONFIG_DIR/name.txt" 2>/dev/null || echo "$TUNNEL_NAME")
+                            local current_cf_domain=$(cat "$CF_CONFIG_DIR/domain.txt" 2>/dev/null)
+                            if [ -n "$current_tunnel_name" ] && [ -n "$current_cf_domain" ] && \
+                                retry_with_backoff 3 5 "配置 DNS 记录" cloudflared tunnel route dns "$current_tunnel_name" "$current_cf_domain"; then
+                                log_info "✅ DNS 记录修复成功"
+                                # 尝试启动服务
+                                systemctl enable cloudflared && systemctl start cloudflared
+                                if check_service_status "cloudflared"; then
+                                    echo "complete" > "$CF_CONFIG_DIR/install_status.txt"
+                                    log_info "✅ Cloudflare Tunnel 修复成功"
+                                    return 0
+                                fi
+                            fi
+                            ;;
+                        "config"|"tunnel_create"|"login"|"download")
+                            # 对于这些早期阶段的失败，最好是进行清理后重新安装
+                            log_warn "上次失败发生在早期阶段 ($checkpoint)，建议执行完全卸载后重新安装。"
+                            return 1
+                            ;;
+                    esac
+                    
+                    log_warn "自动修复失败。建议执行 '$0 reinstall'。"
+                fi
+            fi
+        fi
+    else
+        log_debug "未找到安装状态文件，表示这是全新安装"
+    fi
+    return 1
+}
+
+    log_info "检查是否存在不完整的安装..."
+    if [ -f "$CF_CONFIG_DIR/install_status.txt" ]; then
+        log_debug "找到安装状态文件，检查安装状态..."
+        local status=$(cat "$CF_CONFIG_DIR/install_status.txt")
+        if [ "$status" == "incomplete" ]; then
+            log_warn "检测到不完整的 Cloudflare Tunnel 安装。"
+            
+            if [ -f "$CF_CONFIG_DIR/install_checkpoint.txt" ]; then
+                local checkpoint=$(cat "$CF_CONFIG_DIR/install_checkpoint.txt")
+                echo -e "${YELLOW}上次安装失败于: $checkpoint${NC}"
+                
+                read -p "是否尝试修复安装？(Y/n): " repair_confirm
+                if [[ ! "$repair_confirm" =~ ^[Nn]$ ]]; then
+                    log_info "开始修复安装..."
+                    
+                    # 尝试从失败的检查点继续
+                    case "$checkpoint" in
+                        "verify"|"start")
+                            # 尝试重启服务
+                            log_info "尝试重启 Cloudflare Tunnel 服务..."
+                            if systemctl restart cloudflared 2>/dev/null; then
+                                if check_service_status "cloudflared"; then
+                                    echo "complete" > "$CF_CONFIG_DIR/install_status.txt"
+                                    log_info "✅ Cloudflare Tunnel 修复成功"
+                                    # 尝试重新获取并保存域名/UUID/名称
+                                    local current_uuid=$(get_tunnel_uuid)
+                                    local current_tunnel_name=$(cat "$CF_CONFIG_DIR/name.txt" 2>/dev/null || echo "$TUNNEL_NAME")
+                                    local current_cf_domain="${current_tunnel_name}.cfargotunnel.com"
+                                    echo "$current_cf_domain" > "$CF_CONFIG_DIR/domain.txt"
+                                    echo "$current_uuid" > "$CF_CONFIG_DIR/uuid.txt"
+                                    echo "$current_tunnel_name" > "$CF_CONFIG_DIR/name.txt"
+                                    return 0
+                                fi
+                            fi
+                            ;;
+                        "service")
+                            # 重新安装服务
+                            log_info "尝试重新安装 Cloudflare Tunnel 服务..."
+                            if cloudflared service install --config "$CF_CONFIG_DIR/config.yml" 2>/dev/null; then
+                                systemctl enable cloudflared && systemctl start cloudflared
+                                if check_service_status "cloudflared"; then
+                                    echo "complete" > "$CF_CONFIG_DIR/install_status.txt"
+                                    log_info "✅ Cloudflare Tunnel 修复成功"
+                                    return 0
+                                fi
+                            fi
+                            ;;
+                        "dns")
+                            # 重新配置 DNS
+                            log_info "尝试重新配置 DNS 记录..."
+                            local current_tunnel_name=$(cat "$CF_CONFIG_DIR/name.txt" 2>/dev/null || echo "$TUNNEL_NAME")
+                            local current_cf_domain=$(cat "$CF_CONFIG_DIR/domain.txt" 2>/dev/null)
+                            if [ -n "$current_tunnel_name" ] && [ -n "$current_cf_domain" ] && \
+                                retry_with_backoff 3 5 "配置 DNS 记录" cloudflared tunnel route dns "$current_tunnel_name" "$current_cf_domain"; then
+                                log_info "✅ DNS 记录修复成功"
+                                # 尝试启动服务
+                                systemctl enable cloudflared && systemctl start cloudflared
+                                if check_service_status "cloudflared"; then
+                                    echo "complete" > "$CF_CONFIG_DIR/install_status.txt"
+                                    log_info "✅ Cloudflare Tunnel 修复成功"
+                                    return 0
+                                fi
+                            fi
+                            ;;
+                        "config"|"tunnel_create"|"login"|"download")
+                            # 对于这些早期阶段的失败，最好是进行清理后重新安装
+                            log_warn "上次失败发生在早期阶段 ($checkpoint)，建议执行完全卸载后重新安装。"
+                            return 1
+                            ;;
+                    esac
+                    
+                    log_warn "自动修复失败。建议执行 '$0 reinstall'。"
+                fi
+            fi
+        fi
+    else
+        log_debug "未找到安装状态文件，表示这是全新安装"
+    fi
+    return 1
+}
     log_info "检查是否存在不完整的安装..."
     if [ -f "$CF_CONFIG_DIR/install_status.txt" ]; then
         log_debug "找到安装状态文件，检查安装状态..."
