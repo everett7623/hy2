@@ -549,4 +549,4 @@ if [[ $# -gt 0 ]]; then
     manage_service "$1"
 else
     main_install
-fi   检查代码
+fi
