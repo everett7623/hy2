@@ -17,7 +17,7 @@
 1. **运行**
 
 ```bash
-wget -O install_hy2.sh https://raw.githubusercontent.com/everett7623/hy2ipv6/main/install_hy2.sh && chmod +x install_hy2.sh && ./install_hy2.sh
+wget -O hy2.sh https://raw.githubusercontent.com/everett7623/hy2ipv6/main/hy2.sh && chmod +x hy2.sh && ./hy2.sh
 ````
 
 2. **Cloudflare Tunnel 授权**
