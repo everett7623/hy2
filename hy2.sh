@@ -2,7 +2,7 @@
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
 # 版本: 1.0
-# 作者: Jensfrank
+# 作者: everett7623
 # 项目: hy2ipv6
 
 set -e -o pipefail
@@ -135,15 +135,19 @@ get_user_input() {
     
     # 域名输入
     while [[ -z "$DOMAIN" ]]; do
-        read -p "请输入您的域名: " DOMAIN
+        echo -n "请输入您的域名: "
+        read DOMAIN
         if [[ -z "$DOMAIN" ]]; then
             warning_echo "域名不能为空，请重新输入"
+        else
+            info_echo "域名已设置为: $DOMAIN"
         fi
     done
     
     # Cloudflare Token 输入与验证
     while true; do
-        read -p "请输入 Cloudflare API Token: " CF_TOKEN
+        echo -n "请输入 Cloudflare API Token: "
+        read CF_TOKEN
         if [[ -z "$CF_TOKEN" ]]; then
             warning_echo "Token 不能为空，请重新输入"
             continue
@@ -165,23 +169,34 @@ get_user_input() {
     done
     
     # Hysteria 密码
-    read -p "请输入 Hysteria 密码 (回车自动生成): " HY_PASSWORD
+    echo -n "请输入 Hysteria 密码 (回车自动生成): "
+    read HY_PASSWORD
     if [[ -z "$HY_PASSWORD" ]]; then
         HY_PASSWORD=$(openssl rand -base64 16)
         info_echo "自动生成密码: $HY_PASSWORD"
     fi
     
     # ACME 邮箱
-    read -p "请输入 ACME 邮箱 (回车使用默认): " input_email
+    echo -n "请输入 ACME 邮箱 (回车使用默认 $ACME_EMAIL): "
+    read input_email
     if [[ -n "$input_email" ]]; then
         ACME_EMAIL="$input_email"
     fi
     
     # 伪装网址
-    read -p "请输入伪装网址 (回车使用默认): " input_fake
+    echo -n "请输入伪装网址 (回车使用默认 $FAKE_URL): "
+    read input_fake
     if [[ -n "$input_fake" ]]; then
         FAKE_URL="$input_fake"
     fi
+    
+    echo
+    info_echo "配置参数确认:"
+    info_echo "域名: $DOMAIN"
+    info_echo "密码: $HY_PASSWORD"
+    info_echo "邮箱: $ACME_EMAIL"
+    info_echo "伪装: $FAKE_URL"
+    echo
 }
 
 # 获取最新版本和下载链接
@@ -515,10 +530,13 @@ main_install() {
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
+    info_echo "开始环境检查..."
     check_root
     detect_system
     install_dependencies
     detect_network
+    
+    info_echo "环境检查完成，开始用户配置..."
     get_user_input
     
     info_echo "开始安装组件..."
