@@ -498,7 +498,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v2.8)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v2.9)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
