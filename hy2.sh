@@ -553,10 +553,30 @@ install_hysteria_atomic() {
         return 1
     fi
     
-    # 下载并安装 Hysteria2
+    # 下载并安装 Hysteria2 - 支持网络协议回退
     log_info "下载 Hysteria2..."
-    if ! retry_with_backoff 3 5 "下载并执行 Hysteria2 安装脚本" bash <(curl -fsSL https://get.hy2.sh); then
-        log_error "Hysteria2 下载或安装失败"
+    local hysteria_install_success=false
+    
+    # 尝试不同的网络协议下载 Hysteria2 安装脚本
+    local install_methods=(
+        "curl -6 -fsSL https://get.hy2.sh"  # IPv6
+        "curl -4 -fsSL https://get.hy2.sh"  # IPv4
+        "curl -fsSL https://get.hy2.sh"     # 默认协议
+    )
+    
+    for method in "${install_methods[@]}"; do
+        log_info "尝试使用: $method"
+        if retry_with_backoff 3 5 "下载并执行 Hysteria2 安装脚本" bash <($method); then
+            hysteria_install_success=true
+            log_info "✅ Hysteria2 安装脚本执行成功"
+            break
+        else
+            log_warn "使用 $method 失败，尝试下一种方法..."
+        fi
+    done
+    
+    if ! $hysteria_install_success; then
+        log_error "所有下载方法都失败了，无法安装 Hysteria2"
         rm -rf "$temp_dir"
         return 1
     fi
@@ -855,7 +875,30 @@ install_cloudflared_atomic() {
     for url in "${download_urls[@]}"; do
         local filename=$(basename "$url")
         log_info "尝试从源下载: $filename"
-        if timeout 300 wget -q --show-progress "$url" -O "${temp_dir}/${filename}"; then
+        # 尝试下载，优先使用 IPv6，失败则回退到 IPv4
+        local download_cmd_success=false
+        
+        # 首先尝试 IPv6
+        if timeout 300 wget -6 -q --show-progress "$url" -O "${temp_dir}/${filename}" 2>/dev/null; then
+            download_cmd_success=true
+            log_debug "使用 IPv6 下载成功: $filename"
+        else
+            log_warn "IPv6 下载失败，尝试 IPv4: $filename"
+            # 回退到 IPv4
+            if timeout 300 wget -4 -q --show-progress "$url" -O "${temp_dir}/${filename}" 2>/dev/null; then
+                download_cmd_success=true
+                log_debug "使用 IPv4 下载成功: $filename"
+            else
+                log_warn "IPv4 下载也失败，尝试不指定协议版本: $filename"
+                # 最后尝试不指定协议版本
+                if timeout 300 wget -q --show-progress "$url" -O "${temp_dir}/${filename}" 2>/dev/null; then
+                    download_cmd_success=true
+                    log_debug "使用默认协议下载成功: $filename"
+                fi
+            fi
+        fi
+        
+        if $download_cmd_success; then
             if [ -s "${temp_dir}/${filename}" ]; then
                 log_info "✅ 文件下载成功: ${temp_dir}/${filename}"
                 
@@ -1364,10 +1407,36 @@ check_and_repair_installation() {
 pre_install_check() {
     log_info "执行预安装检查..."
     
-    # 检查网络连接
+    # 检查网络连接 - 优先尝试 IPv6，失败则回退到 IPv4
     log_info "检查网络连接到 GitHub API..."
-    if ! timeout 10 curl -s -6 https://api.github.com > /dev/null; then
+    local connection_success=false
+    
+    # 首先尝试 IPv6 连接
+    if timeout 10 curl -s -6 https://api.github.com > /dev/null 2>&1; then
+        log_info "✅ IPv6 连接到 GitHub API 成功"
+        connection_success=true
+    else
+        log_warn "IPv6 连接到 GitHub API 失败，尝试 IPv4..."
+        # 回退到 IPv4 连接
+        if timeout 10 curl -s -4 https://api.github.com > /dev/null 2>&1; then
+            log_info "✅ IPv4 连接到 GitHub API 成功"
+            connection_success=true
+        else
+            log_warn "IPv4 连接也失败，尝试不指定协议版本..."
+            # 最后尝试不指定协议版本
+            if timeout 10 curl -s https://api.github.com > /dev/null 2>&1; then
+                log_info "✅ 连接到 GitHub API 成功"
+                connection_success=true
+            fi
+        fi
+    fi
+    
+    if ! $connection_success; then
         log_error "无法连接到 GitHub API，这可能影响下载Hysteria2和Cloudflare Tunnel。请检查网络或防火墙。"
+        log_info "提示：你可以尝试以下解决方案："
+        log_info "1. 检查防火墙设置"
+        log_info "2. 检查 IPv6 配置"
+        log_info "3. 使用代理或更换网络环境"
         return 1
     fi
     
@@ -1856,11 +1925,24 @@ show_status() {
         local cf_domain=$(cat "$CF_CONFIG_DIR/domain.txt" | tr -d '\n\r')
         echo "Cloudflare Tunnel 域名: $cf_domain"
         
-        # 测试隧道连通性
+        # 测试隧道连通性 - 支持网络协议回退
         log_info "测试 Cloudflare Tunnel 域名连通性..."
-        if timeout 10 curl -s -o /dev/null -w "%{http_code}" "https://$cf_domain" | grep -q "404"; then
-            log_info "✅ Cloudflare Tunnel 域名连通性正常 (收到404响应，表明隧道已连接并转发请求)"
-        else
+        local connectivity_test_success=false
+        local test_methods=(
+            "curl -6 -s -o /dev/null -w %{http_code}"  # IPv6
+            "curl -4 -s -o /dev/null -w %{http_code}"  # IPv4
+            "curl -s -o /dev/null -w %{http_code}"     # 默认协议
+        )
+        
+        for method in "${test_methods[@]}"; do
+            if timeout 10 $method "https://$cf_domain" | grep -q "404"; then
+                log_info "✅ Cloudflare Tunnel 域名连通性正常 (收到404响应，表明隧道已连接并转发请求)"
+                connectivity_test_success=true
+                break
+            fi
+        done
+        
+        if ! $connectivity_test_success; then
             log_warn "⚠️  Cloudflare Tunnel 域名连通性测试失败。请检查DNS设置或隧道配置。"
         fi
     else
@@ -2044,9 +2126,22 @@ test_connection() {
         local cf_domain=$(cat "$CF_CONFIG_DIR/domain.txt" | tr -d '\n\r')
         if [ "$cf_domain" != "N/A" ]; then
             log_info "测试 Cloudflare Tunnel 域名连通性..."
-            if timeout 10 curl -s -o /dev/null -w "%{http_code}" "https://$cf_domain" | grep -q "404"; then
-                log_info "✅ Cloudflare Tunnel 域名连通性正常 (收到404响应)。"
-            else
+            local cf_connectivity_success=false
+            local cf_test_methods=(
+                "curl -6 -s -o /dev/null -w %{http_code}"  # IPv6
+                "curl -4 -s -o /dev/null -w %{http_code}"  # IPv4
+                "curl -s -o /dev/null -w %{http_code}"     # 默认协议
+            )
+            
+            for method in "${cf_test_methods[@]}"; do
+                if timeout 10 $method "https://$cf_domain" | grep -q "404"; then
+                    log_info "✅ Cloudflare Tunnel 域名连通性正常 (收到404响应)。"
+                    cf_connectivity_success=true
+                    break
+                fi
+            done
+            
+            if ! $cf_connectivity_success; then
                 log_warn "⚠️  Cloudflare Tunnel 域名连通性测试失败。请检查Cloudflare DNS设置或隧道服务日志。"
                 test_succeeded=false
             fi
