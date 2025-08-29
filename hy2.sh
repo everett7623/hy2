@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 2.7 (终极版 - 强制证书申请)
+# 版本: 2.8 (终极版 - 简化 Cloudflared 配置)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -257,7 +257,6 @@ install_acme_and_cert() {
         curl https://get.acme.sh | sh -s email="$ACME_EMAIL"
     fi
     
-    # [优化] 先清理可能存在的旧证书目录
     rm -rf "/root/.acme.sh/${DOMAIN}_ecc"
     
     info_echo "申请 SSL 证书 (使用 Let's Encrypt)..."
@@ -265,7 +264,6 @@ install_acme_and_cert() {
     export CF_Account_ID="$CF_ACCOUNT_ID"
     export CF_Zone_ID="$CF_ZONE_ID"
     
-    # [核心修复] 增加 --force 参数，确保每次都重新申请而不是跳过
     if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --force --debug 2; then
         error_echo "SSL 证书申请失败！请检查上面的 acme.sh debug 日志。"
         exit 1
@@ -336,16 +334,10 @@ setup_cloudflared_tunnel() {
     fi
     success_echo "隧道已就绪, ID: $TUNNEL_ID"
     
-    local credential_file="/root/.cloudflared/$TUNNEL_ID.json"
-    if [[ ! -f "$credential_file" ]]; then
-        error_echo "隧道的凭证文件 ($credential_file) 未找到！"
-        exit 1
-    fi
-
     mkdir -p /etc/cloudflared/
+    # [核心修复] 移除 credentials-file 行，让 cloudflared 自动寻找
     cat > /etc/cloudflared/config.yml << EOF
 tunnel: $TUNNEL_ID
-credentials-file: $credential_file
 protocol: quic
 ingress:
   - hostname: $DOMAIN
@@ -514,7 +506,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v2.7)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v2.8)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
@@ -525,7 +517,7 @@ main_install() {
     
     detect_system
     install_dependencies
-    install_cloudflared 
+    install_cloudflared
     detect_network
     
     get_user_input
