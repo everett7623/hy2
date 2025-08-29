@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 2.9 (终极修复版 - 修正 Cloudflared 配置)
+# 版本: 2.9 (终极版 - 全流程修复与优化)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -38,8 +38,28 @@ warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
 
 # --- 核心功能函数 ---
 
-# (此处省略了 check_root, detect_system, install_dependencies, detect_network, get_user_input, install_hysteria2, install_cloudflared, install_acme_and_cert, generate_hysteria_config 等函数，因为它们与 v2.4 版本完全相同)
-# ...
+# 自动清理旧安装的函数
+cleanup_previous_installation() {
+    info_echo "正在检查并清理任何可能存在的旧安装..."
+    
+    systemctl stop hysteria-server cloudflared 2>/dev/null || true
+    systemctl disable hysteria-server cloudflared 2>/dev/null || true
+    
+    if command -v cloudflared &>/dev/null; then
+        cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
+    fi
+    
+    rm -f /etc/systemd/system/hysteria-server.service
+    rm -f /etc/systemd/system/cloudflared.service
+    systemctl daemon-reload
+    
+    rm -f /usr/local/bin/hysteria
+    rm -rf /etc/hysteria2
+    rm -rf /etc/cloudflared
+    rm -f /usr/local/bin/hy2-manage
+    
+    success_echo "旧环境清理完成。"
+}
 
 # 1. 环境检查
 check_root() {
@@ -289,17 +309,15 @@ EOF
     success_echo "Hysteria2 配置文件生成完成"
 }
 
-# [核心修复] 对此函数进行最后一次修正
 setup_cloudflared_tunnel() {
     info_echo "设置 Cloudflare Tunnel..."
     
-    # [优化] 使用颜色高亮提示信息
     warning_echo "--- 浏览器授权 ---"
     warning_echo "请在接下来打开的浏览器窗口中登录并授权您的域名。"
     warning_echo "授权完成后，您可以关闭浏览器标签页返回此终端继续。"
     sleep 3
     if ! cloudflared tunnel login; then
-        error_echo "Cloudflared 登录失败，请检查服务器是否能正常访问网络"; exit 1
+        error_echo "Cloudflared 登录失败"; exit 1
     fi
     
     TUNNEL_ID=$(cloudflared tunnel list -o json | jq -r ".[] | select(.name == \"$TUNNEL_NAME\") | .id" || echo "")
@@ -316,19 +334,9 @@ setup_cloudflared_tunnel() {
     fi
     success_echo "隧道已就绪, ID: $TUNNEL_ID"
     
-    # [核心修复] 确保凭证文件存在，这是生成正确 config.yml 的关键
-    local credential_file="/root/.cloudflared/$TUNNEL_ID.json"
-    if [[ ! -f "$credential_file" ]]; then
-        error_echo "隧道的凭证文件 ($credential_file) 未找到！"
-        error_echo "这可能是 cloudflared 的一个 bug。请尝试清理后重试: cloudflared tunnel delete -f $TUNNEL_NAME"
-        exit 1
-    fi
-
     mkdir -p /etc/cloudflared/
-    # [核心修复] 确保 YAML 格式绝对正确
     cat > /etc/cloudflared/config.yml << EOF
 tunnel: $TUNNEL_ID
-credentials-file: $credential_file
 protocol: quic
 ingress:
   - hostname: $DOMAIN
@@ -339,7 +347,7 @@ EOF
     
     info_echo "创建 DNS 记录指向隧道..."
     if ! cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN"; then
-        warning_echo "自动创建 DNS 记录可能失败，请登录 Cloudflare 检查 $DOMAIN 的 CNAME 记录是否正确指向 $TUNNEL_ID.cfargotunnel.com"
+        warning_echo "自动创建 DNS 记录可能失败，请手动检查"
     fi
     success_echo "DNS 记录配置完成"
 }
@@ -492,7 +500,6 @@ uninstall_all() {
     warning_echo "Cloudflared 本体未卸载, 您可手动移除"
 }
 
-
 # --- 主流程 ---
 main_install() {
     clear
@@ -504,7 +511,6 @@ main_install() {
     
     check_root
     
-    # [核心] 在所有操作开始前，执行清理
     cleanup_previous_installation
     
     detect_system
