@@ -1,442 +1,349 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
+# 版本: 1.0
 # 作者: Jensfrank
-# 版本: 1.0.0
-# 更新日期: 2025-08-29
+# 项目: hy2ipv6
+
+set -e -o pipefail
 
 # 颜色定义
-RED='\033[0;31m'
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+ENDCOLOR='\033[0m'
 
-# 日志级别
-LOG_LEVEL=${LOG_LEVEL:-"INFO"}
-
-# 日志函数
-log_debug() {
-    [[ "$LOG_LEVEL" == "DEBUG" ]] && echo -e "${CYAN}[$(date '+%Y-%m-%d %H:%M:%S')] [DEBUG] $1${NC}"
+# 辅助函数
+info_echo() {
+    echo -e "${BLUE}[INFO]${ENDCOLOR} $1"
 }
 
-log_info() {
-    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1${NC}"
+success_echo() {
+    echo -e "${GREEN}[SUCCESS]${ENDCOLOR} $1"
 }
 
-log_warn() {
-    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $1${NC}"
+error_echo() {
+    echo -e "${RED}[ERROR]${ENDCOLOR} $1"
 }
 
-log_error() {
-    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1${NC}"
+warning_echo() {
+    echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"
 }
 
 # 全局变量
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HYSTERIA_CONFIG_DIR="/etc/hysteria"
-CF_CONFIG_DIR="/etc/cloudflared"
-HYSTERIA_SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
-CLOUDFLARED_SERVICE_FILE="/etc/systemd/system/cloudflared.service"
+IPV6_ADDR=""
+IPV4_ADDR=""
+DOMAIN=""
+CF_TOKEN=""
+HY_PASSWORD=""
+ACME_EMAIL="admin@example.com"
+FAKE_URL="https://www.google.com"
+OS_TYPE=""
+ARCH=""
 
-# 默认配置
-DEFAULT_PORT=443
-DEFAULT_OBFS_PASSWORD=""
-DEFAULT_AUTH_PASSWORD=""
-TUNNEL_NAME=""
-CF_DOMAIN=""
-CF_UUID=""
+# 检查 root 权限
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error_echo "此脚本需要 root 权限运行"
+        exit 1
+    fi
+}
 
 # 检测系统信息
 detect_system() {
-    log_info "检测系统信息..."
+    info_echo "检测系统信息..."
     
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        OS=$ID
-        VER=$VERSION_ID
-    elif type lsb_release >/dev/null 2>&1; then
-        OS=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
-        VER=$(lsb_release -sr)
-    elif [[ -f /etc/lsb-release ]]; then
-        . /etc/lsb-release
-        OS=$(echo $DISTRIB_ID | tr '[:upper:]' '[:lower:]')
-        VER=$DISTRIB_RELEASE
+    if [[ -f /etc/debian_version ]]; then
+        OS_TYPE="debian"
+    elif [[ -f /etc/redhat-release ]]; then
+        OS_TYPE="rhel"
     else
-        log_error "无法检测操作系统"
+        error_echo "不支持的操作系统，仅支持 Debian/Ubuntu/CentOS/RHEL"
         exit 1
     fi
     
-    ARCH=$(uname -m)
-    case $ARCH in
+    case $(uname -m) in
         x86_64)
             ARCH="amd64"
             ;;
         aarch64)
             ARCH="arm64"
             ;;
-        armv7l)
-            ARCH="armv7"
-            ;;
         *)
-            log_error "不支持的架构: $ARCH"
+            error_echo "不支持的架构: $(uname -m)"
             exit 1
             ;;
     esac
     
-    log_info "系统: $OS $VER"
-    log_info "架构: $ARCH"
+    success_echo "系统信息: $OS_TYPE, 架构: $ARCH"
 }
 
-# 检查 root 权限
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        log_error "此脚本需要 root 权限运行"
-        exit 1
-    fi
-}
-
-# 检查网络连接
-check_network() {
-    log_info "检查网络连接..."
-    
-    # 检查 IPv4 连接
-    if ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
-        log_info "IPv4 网络连接正常"
-        IPV4_AVAILABLE=true
-    else
-        log_warn "IPv4 网络连接不可用"
-        IPV4_AVAILABLE=false
-    fi
-    
-    # 检查 IPv6 连接
-    if ping6 -c 1 -W 5 2001:4860:4860::8888 >/dev/null 2>&1; then
-        log_info "IPv6 网络连接正常"
-        IPV6_AVAILABLE=true
-    else
-        log_warn "IPv6 网络连接不可用"
-        IPV6_AVAILABLE=false
-    fi
-    
-    if [[ "$IPV4_AVAILABLE" == false && "$IPV6_AVAILABLE" == false ]]; then
-        log_error "网络连接不可用"
-        exit 1
-    fi
-}
-
-# 安装依赖
+# 安装依赖包
 install_dependencies() {
-    log_info "安装系统依赖..."
+    info_echo "检查并安装依赖包..."
     
-    case $OS in
-        ubuntu|debian)
-            apt update
-            apt install -y curl wget unzip systemd
-            ;;
-        centos|rhel|fedora)
-            if command -v dnf >/dev/null 2>&1; then
-                dnf install -y curl wget unzip systemd
-            else
-                yum install -y curl wget unzip systemd
-            fi
-            ;;
-        *)
-            log_error "不支持的操作系统: $OS"
-            exit 1
-            ;;
-    esac
-}
-
-# 下载文件函数
-download_file() {
-    local url="$1"
-    local output="$2"
-    local max_retries=3
-    local retry_count=0
+    local packages=("curl" "socat" "unzip" "wget" "jq")
     
-    while [[ $retry_count -lt $max_retries ]]; do
-        log_debug "尝试下载 $url (第 $((retry_count + 1)) 次)"
-        
-        if curl -L -o "$output" "$url" --connect-timeout 10 --max-time 300; then
-            log_debug "下载成功: $output"
-            return 0
-        else
-            log_warn "下载失败，重试中..."
-            ((retry_count++))
-            sleep 2
+    for package in "${packages[@]}"; do
+        if ! command -v "$package" &> /dev/null; then
+            info_echo "安装 $package..."
+            case "$OS_TYPE" in
+                "debian")
+                    apt-get update -qq
+                    apt-get install -y "$package"
+                    ;;
+                "rhel")
+                    yum install -y "$package"
+                    ;;
+            esac
         fi
     done
     
-    log_error "下载失败: $url"
-    return 1
+    success_echo "依赖包检查完成"
+}
+
+# 检测网络环境
+detect_network() {
+    info_echo "检测网络环境..."
+    
+    # 检测 IPv6
+    IPV6_ADDR=$(curl -6 --connect-timeout 10 -s ip.sb 2>/dev/null || echo "")
+    
+    # 检测 IPv4
+    IPV4_ADDR=$(curl -4 --connect-timeout 10 -s ip.sb 2>/dev/null || echo "")
+    
+    if [[ -n "$IPV6_ADDR" ]]; then
+        success_echo "检测到 IPv6 地址: $IPV6_ADDR"
+        if [[ -n "$IPV4_ADDR" ]]; then
+            info_echo "检测到 IPv4 地址: $IPV4_ADDR (IPv6 优先模式)"
+        else
+            info_echo "当前为 IPv6 Only 环境"
+        fi
+    elif [[ -n "$IPV4_ADDR" ]]; then
+        success_echo "检测到 IPv4 地址: $IPV4_ADDR (仅 IPv4 模式)"
+    else
+        error_echo "未能检测到公网 IP 地址"
+        exit 1
+    fi
+}
+
+# 获取用户输入
+get_user_input() {
+    echo
+    info_echo "开始配置参数..."
+    
+    # 域名输入
+    while [[ -z "$DOMAIN" ]]; do
+        read -p "请输入您的域名: " DOMAIN
+        if [[ -z "$DOMAIN" ]]; then
+            warning_echo "域名不能为空，请重新输入"
+        fi
+    done
+    
+    # Cloudflare Token 输入与验证
+    while true; do
+        read -p "请输入 Cloudflare API Token: " CF_TOKEN
+        if [[ -z "$CF_TOKEN" ]]; then
+            warning_echo "Token 不能为空，请重新输入"
+            continue
+        fi
+        
+        info_echo "验证 Cloudflare Token..."
+        local verify_result
+        verify_result=$(curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json")
+        
+        if echo "$verify_result" | jq -r '.success' | grep -q "true"; then
+            success_echo "Token 验证成功"
+            break
+        else
+            error_echo "Token 验证失败，请检查 Token 是否正确或权限是否足够"
+            warning_echo "Token 需要包含 Zone:Read, DNS:Edit, Zone Settings:Read 权限"
+        fi
+    done
+    
+    # Hysteria 密码
+    read -p "请输入 Hysteria 密码 (回车自动生成): " HY_PASSWORD
+    if [[ -z "$HY_PASSWORD" ]]; then
+        HY_PASSWORD=$(openssl rand -base64 16)
+        info_echo "自动生成密码: $HY_PASSWORD"
+    fi
+    
+    # ACME 邮箱
+    read -p "请输入 ACME 邮箱 (回车使用默认): " input_email
+    if [[ -n "$input_email" ]]; then
+        ACME_EMAIL="$input_email"
+    fi
+    
+    # 伪装网址
+    read -p "请输入伪装网址 (回车使用默认): " input_fake
+    if [[ -n "$input_fake" ]]; then
+        FAKE_URL="$input_fake"
+    fi
+}
+
+# 获取最新版本和下载链接
+get_latest_version() {
+    local repo="$1"
+    local binary_name="$2"
+    
+    local api_url="https://api.github.com/repos/$repo/releases/latest"
+    local release_info
+    release_info=$(curl -s "$api_url")
+    
+    if [[ "$binary_name" == "hysteria" ]]; then
+        echo "$release_info" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\")) | .browser_download_url" | head -1
+    elif [[ "$binary_name" == "cloudflared" ]]; then
+        echo "$release_info" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\")) | .browser_download_url" | head -1
+    fi
 }
 
 # 安装 Hysteria2
-install_hysteria() {
-    log_info "开始安装 Hysteria2..."
+install_hysteria2() {
+    info_echo "安装 Hysteria2..."
     
-    # 获取最新版本
-    local latest_version
-    if ! latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); then
-        log_error "获取 Hysteria2 最新版本失败"
-        return 1
+    local download_url
+    download_url=$(get_latest_version "apernet/hysteria" "hysteria")
+    
+    if [[ -z "$download_url" ]]; then
+        error_echo "获取 Hysteria2 下载链接失败"
+        exit 1
     fi
     
-    log_info "最新版本: $latest_version"
+    cd /tmp
+    wget -O hysteria2.tar.gz "$download_url"
+    tar -xzf hysteria2.tar.gz
     
-    # 下载 Hysteria2
-    local download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${ARCH}"
-    if ! download_file "$download_url" "/usr/local/bin/hysteria"; then
-        return 1
+    # 查找解压后的二进制文件
+    local binary_file
+    binary_file=$(find . -name "hysteria" -type f | head -1)
+    
+    if [[ -z "$binary_file" ]]; then
+        error_echo "未找到 Hysteria2 二进制文件"
+        exit 1
     fi
     
+    mv "$binary_file" /usr/local/bin/hysteria
     chmod +x /usr/local/bin/hysteria
     
-    # 创建配置目录
-    mkdir -p "$HYSTERIA_CONFIG_DIR"
-    
-    log_info "Hysteria2 安装完成"
-    return 0
-}
-
-# 生成 Hysteria2 配置
-generate_hysteria_config() {
-    log_info "生成 Hysteria2 配置..."
-    
-    # 获取服务器 IP
-    local server_ip
-    if [[ "$IPV6_AVAILABLE" == true ]]; then
-        server_ip=$(curl -s -6 ifconfig.me || curl -s -6 icanhazip.com)
-        if [[ -z "$server_ip" ]]; then
-            log_warn "获取 IPv6 地址失败，尝试获取 IPv4 地址"
-            server_ip=$(curl -s -4 ifconfig.me || curl -s -4 icanhazip.com)
-        fi
-    else
-        server_ip=$(curl -s -4 ifconfig.me || curl -s -4 icanhazip.com)
+    # 验证安装
+    if ! hysteria version &> /dev/null; then
+        error_echo "Hysteria2 安装验证失败"
+        exit 1
     fi
     
-    if [[ -z "$server_ip" ]]; then
-        log_error "无法获取服务器 IP 地址"
-        return 1
-    fi
-    
-    log_info "服务器 IP: $server_ip"
-    
-    # 生成随机密码
-    if [[ -z "$DEFAULT_AUTH_PASSWORD" ]]; then
-        DEFAULT_AUTH_PASSWORD=$(openssl rand -base64 32)
-    fi
-    
-    if [[ -z "$DEFAULT_OBFS_PASSWORD" ]]; then
-        DEFAULT_OBFS_PASSWORD=$(openssl rand -base64 16)
-    fi
-    
-    # 生成配置文件
-    cat > "$HYSTERIA_CONFIG_DIR/config.yaml" << EOF
-listen: :$DEFAULT_PORT
-
-tls:
-  cert: /etc/hysteria/server.crt
-  key: /etc/hysteria/server.key
-
-auth:
-  type: password
-  password: $DEFAULT_AUTH_PASSWORD
-
-masquerade:
-  type: proxy
-  proxy:
-    url: https://bing.com
-    rewriteHost: true
-
-bandwidth:
-  up: 1 gbps
-  down: 1 gbps
-
-ignoreClientBandwidth: false
-
-udpIdleTimeout: 60s
-udpHopInterval: 30s
-
-resolver:
-  type: https
-  https:
-    addr: 8.8.8.8:443
-    timeout: 10s
-
-acl:
-  inline:
-    - reject(geoip:cn)
-
-obfs:
-  type: salamander
-  salamander:
-    password: $DEFAULT_OBFS_PASSWORD
-EOF
-    
-    log_info "Hysteria2 配置生成完成"
-    return 0
-}
-
-# 生成自签名证书
-generate_certificates() {
-    log_info "生成自签名证书..."
-    
-    # 生成私钥
-    openssl genrsa -out "$HYSTERIA_CONFIG_DIR/server.key" 2048
-    
-    # 生成证书
-    openssl req -new -x509 -key "$HYSTERIA_CONFIG_DIR/server.key" \
-        -out "$HYSTERIA_CONFIG_DIR/server.crt" -days 3650 \
-        -subj "/C=US/ST=State/L=City/O=Organization/OU=Unit/CN=hysteria.local"
-    
-    # 设置权限
-    chmod 600 "$HYSTERIA_CONFIG_DIR/server.key"
-    chmod 644 "$HYSTERIA_CONFIG_DIR/server.crt"
-    
-    log_info "证书生成完成"
-    return 0
-}
-
-# 创建 systemd 服务
-create_hysteria_service() {
-    log_info "创建 Hysteria2 systemd 服务..."
-    
-    cat > "$HYSTERIA_SERVICE_FILE" << EOF
-[Unit]
-Description=Hysteria Server Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.yaml
-Restart=always
-RestartSec=3
-LimitNOFILE=1048576
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    systemctl daemon-reload
-    systemctl enable hysteria-server
-    
-    log_info "Hysteria2 服务创建完成"
-    return 0
+    success_echo "Hysteria2 安装完成"
 }
 
 # 安装 Cloudflared
 install_cloudflared() {
-    log_info "开始安装 Cloudflared..."
+    info_echo "安装 Cloudflared..."
     
-    # 下载并安装 cloudflared
-    case $OS in
-        ubuntu|debian)
-            if ! download_file "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}.deb" "/tmp/cloudflared.deb"; then
-                return 1
-            fi
-            dpkg -i /tmp/cloudflared.deb
-            rm -f /tmp/cloudflared.deb
-            ;;
-        centos|rhel|fedora)
-            if ! download_file "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}.rpm" "/tmp/cloudflared.rpm"; then
-                return 1
-            fi
-            rpm -i /tmp/cloudflared.rpm
-            rm -f /tmp/cloudflared.rpm
-            ;;
-        *)
-            # 通用安装方法
-            if ! download_file "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" "/usr/local/bin/cloudflared"; then
-                return 1
-            fi
-            chmod +x /usr/local/bin/cloudflared
-            ;;
-    esac
+    local download_url
+    download_url=$(get_latest_version "cloudflare/cloudflared" "cloudflared")
     
-    log_info "Cloudflared 安装完成"
-    return 0
+    if [[ -z "$download_url" ]]; then
+        error_echo "获取 Cloudflared 下载链接失败"
+        exit 1
+    fi
+    
+    cd /tmp
+    wget -O cloudflared "$download_url"
+    mv cloudflared /usr/local/bin/
+    chmod +x /usr/local/bin/cloudflared
+    
+    # 验证安装
+    if ! cloudflared version &> /dev/null; then
+        error_echo "Cloudflared 安装验证失败"
+        exit 1
+    fi
+    
+    success_echo "Cloudflared 安装完成"
 }
 
-# 配置 Cloudflare Tunnel
-configure_cloudflare_tunnel() {
-    log_info "配置 Cloudflare Tunnel..."
+# 安装 ACME.sh 并申请证书
+install_acme_and_cert() {
+    info_echo "安装 ACME.sh 并申请 SSL 证书..."
     
-    # 创建配置目录
-    mkdir -p "$CF_CONFIG_DIR"
+    # 安装 acme.sh
+    curl https://get.acme.sh | sh -s email="$ACME_EMAIL"
+    source ~/.bashrc
     
-    # 生成随机隧道名称
-    if [[ -z "$TUNNEL_NAME" ]]; then
-        TUNNEL_NAME="hysteria-$(openssl rand -hex 4)"
+    # 设置 Cloudflare API Token
+    export CF_Token="$CF_TOKEN"
+    
+    # 申请证书
+    ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN"
+    
+    # 安装证书
+    mkdir -p /etc/hysteria2/certs
+    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+        --fullchain-file /etc/hysteria2/certs/fullchain.cer \
+        --key-file /etc/hysteria2/certs/private.key
+    
+    # 验证证书文件
+    if [[ ! -f "/etc/hysteria2/certs/fullchain.cer" ]] || [[ ! -f "/etc/hysteria2/certs/private.key" ]]; then
+        error_echo "证书文件生成失败"
+        exit 1
     fi
     
-    log_info "隧道名称: $TUNNEL_NAME"
-    
-    # 登录到 Cloudflare（需要用户手动操作）
-    echo -e "${YELLOW}请在浏览器中完成 Cloudflare 登录...${NC}"
-    cloudflared tunnel login
-    
-    # 创建隧道
-    log_info "创建 Cloudflare 隧道..."
-    cloudflared tunnel create "$TUNNEL_NAME"
-    
-    # 获取隧道 UUID
-    CF_UUID=$(cloudflared tunnel list | grep "$TUNNEL_NAME" | awk '{print $1}')
-    if [[ -z "$CF_UUID" ]]; then
-        log_error "无法获取隧道 UUID"
-        return 1
-    fi
-    
-    log_info "隧道 UUID: $CF_UUID"
-    
-    # 生成域名
-    CF_DOMAIN="${TUNNEL_NAME}.cfargotunnel.com"
-    log_info "隧道域名: $CF_DOMAIN"
-    
-    # 创建配置文件
-    cat > "$CF_CONFIG_DIR/config.yml" << EOF
-tunnel: $CF_UUID
-credentials-file: /root/.cloudflared/$CF_UUID.json
+    success_echo "SSL 证书申请完成"
+}
 
-ingress:
-  - hostname: $CF_DOMAIN
-    service: https://localhost:$DEFAULT_PORT
-    originRequest:
-      noTLSVerify: true
-  - service: http_status:404
+# 生成 Hysteria2 配置
+generate_hysteria_config() {
+    info_echo "生成 Hysteria2 配置..."
+    
+    mkdir -p /etc/hysteria2
+    
+    cat > /etc/hysteria2/config.yaml << EOF
+listen: :443
+
+tls:
+  cert: /etc/hysteria2/certs/fullchain.cer
+  key: /etc/hysteria2/certs/private.key
+
+auth:
+  type: password
+  password: $HY_PASSWORD
+
+masquerade:
+  type: proxy
+  proxy:
+    url: $FAKE_URL
+
+bandwidth:
+  up: 1 gbps
+  down: 1 gbps
 EOF
-    
-    # 创建 DNS 记录
-    log_info "创建 DNS 记录..."
-    cloudflared tunnel route dns "$TUNNEL_NAME" "$CF_DOMAIN"
-    
-    # 保存配置信息
-    echo "$CF_DOMAIN" > "$CF_CONFIG_DIR/domain.txt"
-    echo "$CF_UUID" > "$CF_CONFIG_DIR/uuid.txt"
-    echo "$TUNNEL_NAME" > "$CF_CONFIG_DIR/name.txt"
-    
-    log_info "Cloudflare Tunnel 配置完成"
-    return 0
+
+    success_echo "Hysteria2 配置文件生成完成"
 }
 
-# 创建 Cloudflared 服务
-create_cloudflared_service() {
-    log_info "创建 Cloudflared systemd 服务..."
+# 创建 systemd 服务
+create_systemd_services() {
+    info_echo "创建 systemd 服务..."
     
-    # 检测 cloudflared 的安装位置
-    local cloudflared_path
-    if [ -f "/usr/bin/cloudflared" ]; then
-        cloudflared_path="/usr/bin/cloudflared"
-    elif [ -f "/usr/local/bin/cloudflared" ]; then
-        cloudflared_path="/usr/local/bin/cloudflared"
-    else
-        cloudflared_path="cloudflared"  # 使用 PATH 中的版本
-    fi
-    
-    # 创建 systemd 服务文件
+    # 创建 Hysteria2 服务
+    cat > /etc/systemd/system/hysteria-server.service << EOF
+[Unit]
+Description=Hysteria Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria2/config.yaml
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # 创建 Cloudflared 服务
     cat > /etc/systemd/system/cloudflared.service << EOF
 [Unit]
 Description=Cloudflare Tunnel
@@ -444,296 +351,193 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
-ExecStart=$cloudflared_path tunnel --config $CF_CONFIG_DIR/config.yml run
+ExecStart=/usr/local/bin/cloudflared tunnel --edge-ip-version 6 --url https://localhost:443 --no-autoupdate
 Restart=always
 RestartSec=5
-KillMode=mixed
-KillSignal=SIGINT
-TimeoutStopSec=30
+User=root
+Environment=TUNNEL_TOKEN=$CF_TOKEN
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    
-    # 重新加载 systemd 并启用服务
-    systemctl daemon-reload
-    systemctl enable cloudflared
-    systemctl start cloudflared
-    
-    log_info "Cloudflared 服务创建完成"
-    return 0
+
+    success_echo "systemd 服务文件创建完成"
 }
 
-# 检查服务状态
-check_service_status() {
-    local service_name="$1"
-    if systemctl is-active --quiet "$service_name"; then
-        log_info "$service_name 服务运行正常"
-        return 0
-    else
-        log_error "$service_name 服务未运行"
-        return 1
-    fi
-}
-
-# 启动所有服务
+# 启动服务
 start_services() {
-    log_info "启动服务..."
+    info_echo "启动服务..."
     
-    # 启动 Hysteria2
+    systemctl daemon-reload
+    systemctl enable hysteria-server cloudflared
     systemctl start hysteria-server
-    if ! check_service_status "hysteria-server"; then
-        log_error "Hysteria2 服务启动失败"
-        return 1
-    fi
-    
-    # 启动 Cloudflared
     systemctl start cloudflared
-    if ! check_service_status "cloudflared"; then
-        log_error "Cloudflared 服务启动失败"
-        return 1
+    
+    # 健康检查
+    sleep 3
+    if systemctl is-active hysteria-server &> /dev/null && systemctl is-active cloudflared &> /dev/null; then
+        success_echo "所有服务启动成功"
+    else
+        error_echo "服务启动检查失败"
+        warning_echo "请使用以下命令检查服务状态："
+        warning_echo "  systemctl status hysteria-server"
+        warning_echo "  systemctl status cloudflared"
+        warning_echo "或查看日志："
+        warning_echo "  journalctl -u hysteria-server"
+        warning_echo "  journalctl -u cloudflared"
+        exit 1
+    fi
+}
+
+# 显示安装结果
+show_installation_result() {
+    echo
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
+    echo -e "${GREEN}║                        安装成功！                              ║${ENDCOLOR}"
+    echo -e "${GREEN}╠════════════════════════════════════════════════════════════════╣${ENDCOLOR}"
+    echo -e "${GREEN}║  服务器地址: ${ENDCOLOR}$DOMAIN                                     ${GREEN}║${ENDCOLOR}"
+    echo -e "${GREEN}║  端口:       ${ENDCOLOR}443                                          ${GREEN}║${ENDCOLOR}"
+    echo -e "${GREEN}║  密码:       ${ENDCOLOR}$HY_PASSWORD                                ${GREEN}║${ENDCOLOR}"
+    echo -e "${GREEN}║  协议:       ${ENDCOLOR}hysteria2                                   ${GREEN}║${ENDCOLOR}"
+    echo -e "${GREEN}║  TLS:        ${ENDCOLOR}启用                                        ${GREEN}║${ENDCOLOR}"
+    echo -e "${GREEN}║  伪装网址:   ${ENDCOLOR}$FAKE_URL                                   ${GREEN}║${ENDCOLOR}"
+    echo -e "${GREEN}╠════════════════════════════════════════════════════════════════╣${ENDCOLOR}"
+    echo -e "${GREEN}║  管理命令: hy2-manage [start|stop|restart|status|log|uninstall] ║${ENDCOLOR}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
+    echo
+    
+    # 生成客户端配置
+    echo -e "${BLUE}客户端配置 JSON:${ENDCOLOR}"
+    echo "{"
+    echo "  \"server\": \"$DOMAIN:443\","
+    echo "  \"auth\": \"$HY_PASSWORD\","
+    echo "  \"tls\": {"
+    echo "    \"sni\": \"$DOMAIN\""
+    echo "  },"
+    echo "  \"bandwidth\": {"
+    echo "    \"up\": \"100 mbps\","
+    echo "    \"down\": \"100 mbps\""
+    echo "  }"
+    echo "}"
+}
+
+# 安装管理脚本
+install_management_script() {
+    info_echo "安装管理脚本..."
+    cp "$0" /usr/local/bin/hy2-manage
+    chmod +x /usr/local/bin/hy2-manage
+    success_echo "管理脚本已安装到 /usr/local/bin/hy2-manage"
+}
+
+# 管理功能
+manage_service() {
+    case "$1" in
+        "start")
+            systemctl start hysteria-server cloudflared
+            success_echo "服务已启动"
+            ;;
+        "stop")
+            systemctl stop hysteria-server cloudflared
+            success_echo "服务已停止"
+            ;;
+        "restart")
+            systemctl restart hysteria-server cloudflared
+            success_echo "服务已重启"
+            ;;
+        "status")
+            echo "Hysteria2 状态:"
+            systemctl status hysteria-server --no-pager
+            echo
+            echo "Cloudflared 状态:"
+            systemctl status cloudflared --no-pager
+            ;;
+        "log")
+            echo "实时查看 Hysteria2 日志 (Ctrl+C 退出):"
+            journalctl -u hysteria-server -f
+            ;;
+        "uninstall")
+            uninstall_all
+            ;;
+        *)
+            echo "用法: hy2-manage [start|stop|restart|status|log|uninstall]"
+            exit 1
+            ;;
+    esac
+}
+
+# 完全卸载
+uninstall_all() {
+    warning_echo "开始完全卸载 Hysteria2 和相关组件..."
+    
+    read -p "确定要完全卸载吗？此操作不可逆 (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        info_echo "取消卸载"
+        exit 0
     fi
     
-    log_info "所有服务启动成功"
-    return 0
-}
-
-# 显示配置信息
-show_config() {
-    log_info "安装完成！配置信息如下："
+    # 停止并禁用服务
+    info_echo "停止服务..."
+    systemctl stop hysteria-server cloudflared 2>/dev/null || true
+    systemctl disable hysteria-server cloudflared 2>/dev/null || true
     
-    echo -e "${GREEN}==================== Hysteria2 配置 ====================${NC}"
-    echo -e "${CYAN}服务器地址:${NC} $CF_DOMAIN"
-    echo -e "${CYAN}端口:${NC} $DEFAULT_PORT"
-    echo -e "${CYAN}认证密码:${NC} $DEFAULT_AUTH_PASSWORD"
-    echo -e "${CYAN}混淆密码:${NC} $DEFAULT_OBFS_PASSWORD"
-    echo -e "${CYAN}协议:${NC} hysteria2"
-    echo -e "${CYAN}传输层安全:${NC} TLS"
-    echo -e "${CYAN}SNI:${NC} $CF_DOMAIN"
-    echo -e "${CYAN}跳过证书验证:${NC} true"
-    
-    echo -e "\n${GREEN}==================== 客户端配置示例 ====================${NC}"
-    cat << EOF
-{
-  "server": "$CF_DOMAIN:$DEFAULT_PORT",
-  "auth": "$DEFAULT_AUTH_PASSWORD",
-  "obfs": {
-    "type": "salamander",
-    "salamander": {
-      "password": "$DEFAULT_OBFS_PASSWORD"
-    }
-  },
-  "tls": {
-    "sni": "$CF_DOMAIN",
-    "insecure": true
-  },
-  "bandwidth": {
-    "up": "100 mbps",
-    "down": "100 mbps"
-  },
-  "socks5": {
-    "listen": "127.0.0.1:1080"
-  },
-  "http": {
-    "listen": "127.0.0.1:8080"
-  }
-}
-EOF
-    
-    echo -e "\n${GREEN}==================== 管理命令 ====================${NC}"
-    echo -e "${CYAN}查看 Hysteria2 状态:${NC} systemctl status hysteria-server"
-    echo -e "${CYAN}查看 Cloudflared 状态:${NC} systemctl status cloudflared"
-    echo -e "${CYAN}重启 Hysteria2:${NC} systemctl restart hysteria-server"
-    echo -e "${CYAN}重启 Cloudflared:${NC} systemctl restart cloudflared"
-    echo -e "${CYAN}查看 Hysteria2 日志:${NC} journalctl -u hysteria-server -f"
-    echo -e "${CYAN}查看 Cloudflared 日志:${NC} journalctl -u cloudflared -f"
-}
-
-# 卸载函数
-uninstall() {
-    log_info "开始卸载 Hysteria2 和 Cloudflare Tunnel..."
-    
-    # 停止服务
-    systemctl stop hysteria-server 2>/dev/null
-    systemctl stop cloudflared 2>/dev/null
-    
-    # 禁用服务
-    systemctl disable hysteria-server 2>/dev/null
-    systemctl disable cloudflared 2>/dev/null
-    
-    # 删除服务文件
-    rm -f "$HYSTERIA_SERVICE_FILE"
-    rm -f "$CLOUDFLARED_SERVICE_FILE"
+    # 删除 systemd 服务文件
+    rm -f /etc/systemd/system/hysteria-server.service
+    rm -f /etc/systemd/system/cloudflared.service
+    systemctl daemon-reload
     
     # 删除二进制文件
     rm -f /usr/local/bin/hysteria
     rm -f /usr/local/bin/cloudflared
     
-    # 删除配置目录
-    rm -rf "$HYSTERIA_CONFIG_DIR"
-    rm -rf "$CF_CONFIG_DIR"
-    rm -rf /root/.cloudflared
+    # 删除配置文件
+    rm -rf /etc/hysteria2
     
-    # 重新加载 systemd
-    systemctl daemon-reload
+    # 吊销并删除证书
+    if [[ -f ~/.acme.sh/acme.sh ]]; then
+        info_echo "删除 SSL 证书..."
+        ~/.acme.sh/acme.sh --remove -d "$DOMAIN" 2>/dev/null || true
+    fi
     
-    log_info "卸载完成"
+    # 删除管理脚本自身
+    rm -f /usr/local/bin/hy2-manage
+    
+    success_echo "Hysteria2 已完全卸载"
+    success_echo "感谢使用！"
 }
 
-# 重新安装函数
-reinstall() {
-    log_info "开始重新安装..."
-    uninstall
-    sleep 2
-    main install
-}
-
-# 显示帮助信息
-show_help() {
-    echo -e "${GREEN}Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本${NC}"
-    echo -e "${GREEN}版本: 2.0.0${NC}"
-    echo -e "${GREEN}作者: everett7623${NC}"
-    echo ""
-    echo -e "${CYAN}使用方法:${NC}"
-    echo -e "  $0 [选项]"
-    echo ""
-    echo -e "${CYAN}选项:${NC}"
-    echo -e "  install     安装 Hysteria2 和 Cloudflare Tunnel"
-    echo -e "  uninstall   卸载 Hysteria2 和 Cloudflare Tunnel"
-    echo -e "  reinstall   重新安装"
-    echo -e "  status      查看服务状态"
-    echo -e "  config      显示配置信息"
-    echo -e "  help        显示此帮助信息"
-    echo ""
-    echo -e "${CYAN}环境变量:${NC}"
-    echo -e "  LOG_LEVEL   日志级别 (DEBUG, INFO, WARN, ERROR)"
-    echo -e "  DEFAULT_PORT   Hysteria2 端口 (默认: 443)"
-    echo ""
-    echo -e "${CYAN}示例:${NC}"
-    echo -e "  $0 install"
-    echo -e "  LOG_LEVEL=DEBUG $0 install"
-    echo -e "  DEFAULT_PORT=8443 $0 install"
-}
-
-# 查看状态
-show_status() {
-    log_info "服务状态:"
+# 主安装流程
+main_install() {
+    clear
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
+    echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
+    echo -e "${GREEN}║                        一键安装脚本                             ║${ENDCOLOR}"
+    echo -e "${GREEN}║                     Version: 1.0                               ║${ENDCOLOR}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
+    echo
     
-    echo -e "\n${CYAN}Hysteria2 服务状态:${NC}"
-    systemctl status hysteria-server --no-pager
-    
-    echo -e "\n${CYAN}Cloudflared 服务状态:${NC}"
-    systemctl status cloudflared --no-pager
-}
-
-# 清理函数
-cleanup_and_exit() {
-    local exit_code=${1:-0}
-    log_debug "清理临时文件..."
-    rm -f /tmp/cloudflared.deb /tmp/cloudflared.rpm
-    exit $exit_code
-}
-
-# 信号处理
-trap 'cleanup_and_exit 130' INT
-trap 'cleanup_and_exit 143' TERM
-
-# 主安装函数
-install_all() {
-    log_info "开始安装 Hysteria2 + Cloudflare Tunnel..."
-    
-    # 检查系统
-    detect_system
     check_root
-    check_network
-    
-    # 安装依赖
+    detect_system
     install_dependencies
+    detect_network
+    get_user_input
     
-    # 安装 Hysteria2
-    if ! install_hysteria; then
-        log_error "Hysteria2 安装失败"
-        cleanup_and_exit 1
-    fi
+    info_echo "开始安装组件..."
+    install_hysteria2
+    install_cloudflared
+    install_acme_and_cert
+    generate_hysteria_config
+    create_systemd_services
+    start_services
+    install_management_script
     
-    # 生成证书
-    if ! generate_certificates; then
-        log_error "证书生成失败"
-        cleanup_and_exit 1
-    fi
-    
-    # 生成配置
-    if ! generate_hysteria_config; then
-        log_error "Hysteria2 配置生成失败"
-        cleanup_and_exit 1
-    fi
-    
-    # 创建服务
-    if ! create_hysteria_service; then
-        log_error "Hysteria2 服务创建失败"
-        cleanup_and_exit 1
-    fi
-    
-    # 安装 Cloudflared
-    if ! install_cloudflared; then
-        log_error "Cloudflared 安装失败"
-        cleanup_and_exit 1
-    fi
-    
-    # 配置 Cloudflare Tunnel
-    if ! configure_cloudflare_tunnel; then
-        log_error "Cloudflare Tunnel 配置失败"
-        cleanup_and_exit 1
-    fi
-    
-    # 创建 Cloudflared 服务
-    if ! create_cloudflared_service; then
-        log_error "Cloudflared 服务创建失败"
-        cleanup_and_exit 1
-    fi
-    
-    # 启动服务
-    if ! start_services; then
-        log_error "服务启动失败"
-        cleanup_and_exit 1
-    fi
-    
-    # 显示配置
-    show_config
-    
-    log_info "安装完成！"
+    show_installation_result
 }
 
-# 主函数
-main() {
-    case "${1:-install}" in
-        install)
-            install_all
-            ;;
-        uninstall)
-            uninstall
-            ;;
-        reinstall)
-            reinstall
-            ;;
-        status)
-            show_status
-            ;;
-        config)
-            show_config
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            log_error "未知选项: $1"
-            show_help
-            cleanup_and_exit 1
-            ;;
-    esac
-    cleanup_and_exit 0
-}
-
-# 运行主函数
-main "$@"
+# 主入口
+if [[ $# -eq 0 ]]; then
+    # 无参数，执行安装
+    main_install
+else
+    # 有参数，执行管理功能
+    manage_service "$1"
+fi
