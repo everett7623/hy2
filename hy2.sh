@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 2.4 (终极修复版)
+# 版本: 2.4 (终极修复版 - 修正Hysteria安装逻辑)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -177,8 +177,8 @@ install_hysteria2() {
     local download_url
     # 优先匹配精确名称，更可靠
     download_url=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r ".assets[] | select(.name == \"hysteria-linux-$ARCH\") | .browser_download_url")
+    # 如果精确匹配失败，则使用旧的模糊匹配作为备用方案
     if [[ -z "$download_url" ]]; then
-        # 如果精确匹配失败，则使用旧的模糊匹配作为备用方案
         warning_echo "精确文件名匹配失败，尝试模糊匹配..."
         download_url=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\") and (contains(\"avx\") | not)) | .browser_download_url")
     fi
@@ -194,6 +194,7 @@ install_hysteria2() {
     wget -qO /usr/local/bin/hysteria "$download_url"
     chmod +x /usr/local/bin/hysteria
     
+    # 验证安装
     if ! command -v hysteria &> /dev/null; then
         error_echo "Hysteria2 安装验证失败"
         exit 1
