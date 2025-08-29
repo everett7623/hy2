@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 3.2 (Final)
+# 版本: 3.3 (Final)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -415,37 +415,43 @@ show_installation_result() {
     echo "DOMAIN=$DOMAIN" > /etc/hysteria2/uninstall_info.env
     echo "TUNNEL_NAME=$TUNNEL_NAME" >> /etc/hysteria2/uninstall_info.env
     
+    local FAKE_URL_HOST
+    FAKE_URL_HOST=$(echo "$FAKE_URL" | awk -F/ '{print $3}')
+    
     echo
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║                        安装成功！                              ║${ENDCOLOR}"
     echo -e "${GREEN}╠════════════════════════════════════════════════════════════════╣${ENDCOLOR}"
-    echo -e "${GREEN}║  服务器地址: ${ENDCOLOR}$DOMAIN${GREEN}║${ENDCOLOR}"
-    echo -e "${GREEN}║  端口:       ${ENDCOLOR}443${GREEN}║${ENDCOLOR}"
-    echo -e "${GREEN}║  密码:       ${ENDCOLOR}$HY_PASSWORD${GREEN}║${ENDCOLOR}"
-    echo -e "${GREEN}║  协议:       ${ENDCOLOR}hysteria2${GREEN}║${ENDCOLOR}"
-    echo -e "${GREEN}║  TLS SNI:    ${ENDCOLOR}$DOMAIN${GREEN}║${ENDCOLOR}"
-    echo -e "${GREEN}║  伪装网址:   ${ENDCOLOR}$FAKE_URL${GREEN}║${ENDCOLOR}"
+    echo -e "${GREEN}║  服务器地址: ${YELLOW}$DOMAIN${GREEN}                                    ║${ENDCOLOR}"
+    echo -e "${GREEN}║  端口:       ${YELLOW}443${GREEN}                                          ║${ENDCOLOR}"
+    echo -e "${GREEN}║  密码:       ${YELLOW}$HY_PASSWORD${GREEN}                 ║${ENDCOLOR}"
+    echo -e "${GREEN}║  TLS SNI:    ${YELLOW}$DOMAIN${GREEN}                                    ║${ENDCOLOR}"
+    echo -e "${GREEN}║  伪装网址:   ${YELLOW}$FAKE_URL${GREEN}                       ║${ENDCOLOR}"
     echo -e "${GREEN}╠════════════════════════════════════════════════════════════════╣${ENDCOLOR}"
-    echo -e "${GREEN}║  管理命令: hy2-manage [start|stop|restart|status|log|uninstall] ║${ENDCOLOR}"
+    echo -e "${GREEN}║  管理命令: ${YELLOW}hy2-manage [start|stop|restart|status|log|uninstall]${GREEN} ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
-    echo -e "${BLUE}客户端配置 JSON (可用于 V2RayN / Nekoray 等):${ENDCOLOR}"
-    echo "{\"server\":\"$DOMAIN:443\",\"auth\":\"$HY_PASSWORD\",\"tls\":{\"sni\":\"$DOMAIN\",\"insecure\":false},\"masquerade\":\"$FAKE_URL\"}"
+    local share_link="hysteria2://${HY_PASSWORD}@${DOMAIN}:443?sni=${DOMAIN}&obfs=https&obfs-addr=${FAKE_URL}#${DOMAIN}"
+    echo -e "${BLUE}分享链接 (V2RayN / Nekobox):${ENDCOLOR}"
+    echo -e "${YELLOW}${share_link}${ENDCOLOR}"
+    echo
+    
+    echo -e "${BLUE}Clash.Meta YAML 配置 (单行):${ENDCOLOR}"
+    echo -e "${YELLOW}- { name: '${DOMAIN}', type: hysteria2, server: ${DOMAIN}, port: 443, password: ${HY_PASSWORD}, alpn: [h3], sni: ${FAKE_URL_HOST}, skip-cert-verify: true, fast-open: true }${ENDCOLOR}"
+    echo
 }
 
 install_management_script() {
     info_echo "安装管理脚本..."
-    # [核心修复] 使用更稳健的方式来复制管理脚本
-    # 这种方式兼容所有执行方法 (./hy2.sh, bash hy2.sh, curl|bash)
-    # 它依赖于用户通过 wget -O hy2.sh 下载脚本的事实
-    if [[ -f "hy2.sh" ]]; then
-        cp "hy2.sh" /usr/local/bin/hy2-manage
+    if [[ -f "$0" ]] && [[ "$0" != "bash" && -s "$0" ]]; then
+        cp "$0" /usr/local/bin/hy2-manage
         chmod +x /usr/local/bin/hy2-manage
         success_echo "管理脚本已安装到 /usr/local/bin/hy2-manage"
     else
-        warning_echo "未能找到 hy2.sh 文件，无法安装管理命令。"
-        warning_echo "请确保您是通过 'wget -O hy2.sh ...' 下载后运行脚本的。"
+        warning_echo "未能正确定位脚本文件，无法安装管理命令。"
+        warning_echo "这通常在使用 'curl | bash' 方式时发生。"
+        warning_echo "推荐使用 'wget' 下载后运行，以便使用管理功能。"
     fi
 }
 
@@ -550,7 +556,6 @@ main_install() {
 
 # 脚本入口
 if [[ $# -gt 0 ]]; then
-    # 确保管理命令也能以 root 权限执行
     check_root
     manage_service "$1"
 else
