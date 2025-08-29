@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 2.0 (修复增强版)
+# 版本: 2.1 (修复下载链接问题)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -121,7 +121,6 @@ detect_network() {
 get_user_input() {
     echo
     info_echo "开始配置参数..."
-    # 确保输入来自终端, 避免管道输入导致的问题
     exec < /dev/tty
     
     read -rp "请输入您的域名 (例如: hy2.example.com): " DOMAIN
@@ -139,7 +138,6 @@ get_user_input() {
         fi
         
         info_echo "正在通过域名验证 Cloudflare Token 权限..."
-        # 提取根域名以验证 Zone
         local root_domain
         root_domain=$(echo "$DOMAIN" | awk -F. '{print $(NF-1)"."$NF}')
         local api_result
@@ -172,7 +170,8 @@ get_user_input() {
 install_hysteria2() {
     info_echo "安装 Hysteria2..."
     local download_url
-    download_url=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\")) | .browser_download_url")
+    # [核心修复] 使用 head -n 1 确保只选择第一个匹配的链接，避免下载 AVX 版本
+    download_url=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\")) | .browser_download_url" | head -n 1)
     if [[ -z "$download_url" ]]; then
         error_echo "获取 Hysteria2 下载链接失败"
         exit 1
@@ -238,7 +237,7 @@ install_acme_and_cert() {
     info_echo "申请 SSL 证书 (使用 Let's Encrypt)..."
     export CF_Token="$CF_TOKEN"
     export CF_Account_ID="$CF_ACCOUNT_ID"
-    export CF_Zone_ID="$CF_Zone_ID"
+    export CF_Zone_ID="$CF_ZONE_ID"
     
     if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --debug 2; then
         error_echo "SSL 证书申请失败！请检查上面的 acme.sh debug 日志。"
@@ -286,7 +285,6 @@ EOF
 setup_cloudflared_tunnel() {
     info_echo "设置 Cloudflare Tunnel..."
     
-    # 清理旧凭证，避免冲突
     rm -f /root/.cloudflared/cert.pem
     
     info_echo "请在接下来打开的浏览器窗口中登录并授权您的域名..."
@@ -295,7 +293,6 @@ setup_cloudflared_tunnel() {
         error_echo "Cloudflared 登录失败，请检查服务器是否能正常访问网络"; exit 1
     fi
     
-    # 检查同名隧道是否存在，不存在则创建
     TUNNEL_ID=$(cloudflared tunnel list -o json | jq -r ".[] | select(.name == \"$TUNNEL_NAME\") | .id" || echo "")
     if [[ -z "$TUNNEL_ID" ]]; then
         info_echo "创建新的隧道: $TUNNEL_NAME"
@@ -307,7 +304,6 @@ setup_cloudflared_tunnel() {
     fi
     success_echo "隧道已就绪, ID: $TUNNEL_ID"
     
-    # 创建隧道配置文件
     mkdir -p /etc/cloudflared/
     cat > /etc/cloudflared/config.yml << EOF
 tunnel: $TUNNEL_ID
@@ -383,7 +379,8 @@ start_services() {
 
 # 5. 后续操作
 show_installation_result() {
-    # 读取配置文件中的变量，确保卸载时可用
+    # 保存卸载所需信息
+    mkdir -p /etc/hysteria2
     echo "DOMAIN=$DOMAIN" > /etc/hysteria2/uninstall_info.env
     echo "TUNNEL_NAME=$TUNNEL_NAME" >> /etc/hysteria2/uninstall_info.env
     
@@ -425,8 +422,11 @@ install_management_script() {
 manage_service() {
     case "$1" in
         start|stop|restart|status)
+            echo "正在对 hysteria-server 执行 $1 操作..."
             systemctl "$1" hysteria-server
+            echo "正在对 cloudflared 执行 $1 操作..."
             systemctl "$1" cloudflared
+            success_echo "操作完成"
             ;;
         log)
             journalctl -u hysteria-server -f
@@ -449,11 +449,12 @@ uninstall_all() {
         exit 0
     fi
     
-    # 从配置文件加载卸载所需信息
     if [[ -f /etc/hysteria2/uninstall_info.env ]]; then
         source /etc/hysteria2/uninstall_info.env
     else
         warning_echo "未找到卸载信息文件，将尽力清理..."
+        read -rp "请输入您当时安装时使用的域名: " DOMAIN
+        TUNNEL_NAME="hysteria-tunnel"
     fi
 
     systemctl stop hysteria-server cloudflared 2>/dev/null || true
@@ -464,7 +465,6 @@ uninstall_all() {
     systemctl daemon-reload
     
     rm -f /usr/local/bin/hysteria
-    # 不卸载 cloudflared，因为它可能是系统包，由用户决定
     
     if [[ -n "$DOMAIN" ]] && command -v ~/.acme.sh/acme.sh &> /dev/null; then
         info_echo "吊销并删除 SSL 证书..."
@@ -475,7 +475,7 @@ uninstall_all() {
     if [[ -n "$TUNNEL_NAME" ]] && command -v cloudflared &>/dev/null; then
         info_echo "删除 Cloudflare Tunnel..."
         cloudflared tunnel cleanup "$TUNNEL_NAME" 2>/dev/null || true
-        cloudflared tunnel delete "$TUNNEL_NAME" 2>/dev/null || true
+        cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
     fi
     
     rm -rf /etc/hysteria2 /etc/cloudflared
@@ -490,13 +490,14 @@ uninstall_all() {
 
 # --- 主流程 ---
 main() {
+    # 如果脚本有参数，则执行管理功能
     if [[ $# -gt 0 ]]; then
         manage_service "$1"
-    else
+    else # 否则，执行安装流程
         clear
         echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
         echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-        echo -e "${GREEN}║                        一键安装脚本 (v2.0)                      ║${ENDCOLOR}"
+        echo -e "${GREEN}║                      一键安装脚本 (v2.1)                        ║${ENDCOLOR}"
         echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
         echo
         
