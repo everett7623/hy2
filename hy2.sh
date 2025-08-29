@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 2.6 (终极版 - 集成自动清理)
+# 版本: 2.7 (终极版 - 强制证书申请)
 # 作者: everett7623 & Gemini
 # 项目: hy2ipv6
 
@@ -42,17 +42,13 @@ warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
 cleanup_previous_installation() {
     info_echo "正在检查并清理任何可能存在的旧安装..."
     
-    # 停止并禁用服务 (忽略任何错误)
     systemctl stop hysteria-server cloudflared 2>/dev/null || true
     systemctl disable hysteria-server cloudflared 2>/dev/null || true
     
-    # 删除旧的隧道 (如果 cloudflared 已安装)
     if command -v cloudflared &>/dev/null; then
-        # -f 标志可以强制删除，无需确认
         cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
     fi
     
-    # 删除服务和配置文件
     rm -f /etc/systemd/system/hysteria-server.service
     rm -f /etc/systemd/system/cloudflared.service
     systemctl daemon-reload
@@ -261,21 +257,28 @@ install_acme_and_cert() {
         curl https://get.acme.sh | sh -s email="$ACME_EMAIL"
     fi
     
+    # [优化] 先清理可能存在的旧证书目录
+    rm -rf "/root/.acme.sh/${DOMAIN}_ecc"
+    
     info_echo "申请 SSL 证书 (使用 Let's Encrypt)..."
     export CF_Token="$CF_TOKEN"
     export CF_Account_ID="$CF_ACCOUNT_ID"
     export CF_Zone_ID="$CF_ZONE_ID"
     
-    if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --debug 2; then
+    # [核心修复] 增加 --force 参数，确保每次都重新申请而不是跳过
+    if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --force --debug 2; then
         error_echo "SSL 证书申请失败！请检查上面的 acme.sh debug 日志。"
         exit 1
     fi
     
     info_echo "安装证书到指定目录..."
     mkdir -p /etc/hysteria2/certs
-    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+    if ! ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --fullchain-file /etc/hysteria2/certs/fullchain.cer \
-        --key-file /etc/hysteria2/certs/private.key
+        --key-file /etc/hysteria2/certs/private.key; then
+        error_echo "证书安装步骤失败！"
+        exit 1
+    fi
     
     if [[ ! -s "/etc/hysteria2/certs/fullchain.cer" ]] || [[ ! -s "/etc/hysteria2/certs/private.key" ]]; then
         error_echo "证书文件安装失败或为空"
@@ -503,16 +506,15 @@ uninstall_all() {
     rm -f /usr/local/bin/hy2-manage
     
     success_echo "Hysteria2 相关配置已完全卸载"
-    warning_echo "Cloudflared 本体未卸载, 您可根据需要手动移除"
+    warning_echo "Cloudflared 本体未卸载, 您可手动移除"
 }
-
 
 # --- 主流程 ---
 main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v2.6)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v2.7)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
@@ -523,7 +525,7 @@ main_install() {
     
     detect_system
     install_dependencies
-    install_cloudflared # 提前安装，确保 tunnel delete 命令可用
+    install_cloudflared 
     detect_network
     
     get_user_input
