@@ -37,8 +37,8 @@ IPV4_ADDR=""
 DOMAIN=""
 CF_TOKEN=""
 HY_PASSWORD=""
-ACME_EMAIL="admin@example.com"
-FAKE_URL="https://www.google.com"
+ACME_EMAIL="user$(shuf -i 1000-9999 -n 1)@gmail.com"
+FAKE_URL="https://www.bing.com"
 OS_TYPE=""
 ARCH=""
 
@@ -231,15 +231,46 @@ install_hysteria2() {
     fi
     
     cd /tmp
+    rm -rf hysteria2* hysteria 2>/dev/null || true
+    
+    info_echo "下载 Hysteria2..."
     wget -O hysteria2.tar.gz "$download_url"
-    tar -xzf hysteria2.tar.gz
     
-    # 查找解压后的二进制文件
-    local binary_file
-    binary_file=$(find . -name "hysteria" -type f | head -1)
+    # 检查文件类型并相应解压
+    if file hysteria2.tar.gz | grep -q "gzip"; then
+        tar -xzf hysteria2.tar.gz 2>/dev/null || {
+            # 如果 tar 失败，尝试 gunzip + tar
+            mv hysteria2.tar.gz hysteria2.gz
+            gunzip hysteria2.gz
+            tar -xf hysteria2 2>/dev/null || {
+                # 最后尝试直接重命名（某些版本可能是单个二进制文件）
+                mv hysteria2 hysteria
+            }
+        }
+    else
+        # 可能是直接的二进制文件
+        mv hysteria2.tar.gz hysteria
+        chmod +x hysteria
+    fi
     
-    if [[ -z "$binary_file" ]]; then
+    # 查找 hysteria 二进制文件
+    local binary_file=""
+    if [[ -f "./hysteria" ]]; then
+        binary_file="./hysteria"
+    else
+        binary_file=$(find . -name "hysteria*" -type f -executable 2>/dev/null | head -1)
+        if [[ -z "$binary_file" ]]; then
+            # 如果找不到可执行文件，查找所有文件
+            binary_file=$(find . -name "*hysteria*" -type f | head -1)
+            if [[ -n "$binary_file" ]]; then
+                chmod +x "$binary_file"
+            fi
+        fi
+    fi
+    
+    if [[ -z "$binary_file" ]] || [[ ! -f "$binary_file" ]]; then
         error_echo "未找到 Hysteria2 二进制文件"
+        ls -la /tmp/
         exit 1
     fi
     
@@ -247,7 +278,7 @@ install_hysteria2() {
     chmod +x /usr/local/bin/hysteria
     
     # 验证安装
-    if ! hysteria version &> /dev/null; then
+    if ! /usr/local/bin/hysteria version &> /dev/null; then
         error_echo "Hysteria2 安装验证失败"
         exit 1
     fi
@@ -268,12 +299,28 @@ install_cloudflared() {
     fi
     
     cd /tmp
+    rm -rf cloudflared* 2>/dev/null || true
+    
+    info_echo "下载 Cloudflared..."
     wget -O cloudflared "$download_url"
+    
+    # 如果下载的是压缩文件，尝试解压
+    if file cloudflared | grep -q "gzip\|tar"; then
+        mv cloudflared cloudflared.tar.gz
+        tar -xzf cloudflared.tar.gz 2>/dev/null || gunzip cloudflared.tar.gz 2>/dev/null || true
+        # 查找解压后的文件
+        local binary_file
+        binary_file=$(find . -name "*cloudflared*" -type f | head -1)
+        if [[ -n "$binary_file" ]]; then
+            mv "$binary_file" cloudflared
+        fi
+    fi
+    
+    chmod +x cloudflared
     mv cloudflared /usr/local/bin/
-    chmod +x /usr/local/bin/cloudflared
     
     # 验证安装
-    if ! cloudflared version &> /dev/null; then
+    if ! /usr/local/bin/cloudflared version &> /dev/null; then
         error_echo "Cloudflared 安装验证失败"
         exit 1
     fi
