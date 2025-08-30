@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 菜单式安装脚本
-# 版本: 4.3 (UI 优化 + 核心功能修复)
+# 版本: 4.5 (最终指引优化版)
 # 作者: Jensfrank & AI Assistant 优化
 # 项目: hy2ipv6
 
@@ -50,7 +50,7 @@ show_menu() {
     local ipv4_display="${IPV4_ADDR:-N/A}"
     local ipv6_display="${IPV6_ADDR:-N/A}"
     
-    echo -e "${BG_PURPLE} Hysteria2 + IPv6 + Cloudflare Tunnel Management Script (v4.3) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 + IPv6 + Cloudflare Tunnel Management Script (v4.5) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}IPv4:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR}"
     echo -e " ${YELLOW}IPv6:${ENDCOLOR} ${GREEN}${ipv6_display}${ENDCOLOR}"
@@ -80,7 +80,6 @@ test_connectivity() {
     fi
     source /etc/hysteria2/uninstall_info.env
 
-    # 1. 检查服务状态
     info_echo "1. 检查核心服务状态..."
     local services_ok=true
     if systemctl is-active --quiet hysteria-server; then
@@ -100,7 +99,6 @@ test_connectivity() {
     fi
     if ! $services_ok; then return 1; fi
 
-    # 2. 检查端口监听
     info_echo "2. 检查端口监听..."
     if ss -ulnp | grep -q ":443.*hysteria"; then
         success_echo "  - Hysteria2 正在监听 UDP 443 端口。"
@@ -109,37 +107,27 @@ test_connectivity() {
         return 1
     fi
     
-    # 3. 检查域名解析 (如果适用)
     info_echo "3. 检查域名解析..."
     if [[ -n "$DOMAIN" ]]; then
         if nslookup "$DOMAIN" >/dev/null 2>&1; then
             success_echo "  - 域名 '$DOMAIN' 解析正常。"
-            if [[ "$MODE" == "direct" ]]; then
-                warning_echo "  - 直连模式下，请确保域名解析到您服务器的公网 IP: ${IPV4_ADDR:-$IPV6_ADDR}"
-            fi
         else
             error_echo "  - 域名 '$DOMAIN' 解析失败！请检查您的 DNS 设置。"
         fi
     fi
     
-    # 4. 检查 Cloudflare Tunnel 连接状态
     if [[ "$MODE" == "tunnel" ]]; then
         info_echo "4. 检查 Cloudflare Tunnel 连接..."
         if journalctl -u cloudflared --since="5 minutes ago" | grep -q "Connected to"; then
             success_echo "  - Cloudflare Tunnel 已成功连接到 Cloudflare 网络。"
         else
             warning_echo "  - Cloudflare Tunnel 在最近5分钟内未报告成功连接。"
-            echo "    最近的 Cloudflared 日志:"
             journalctl -u cloudflared -n 5 --no-pager
         fi
     fi
     
     echo
     success_echo "连通性测试完成。"
-    info_echo "如果仍然无法连接，请重点检查："
-    echo "  - 客户端配置是否与服务器信息完全一致 (特别是密码和 SNI)。"
-    echo "  - 本地网络环境是否允许 UDP 流量通过。"
-    echo "  - (直连模式) 服务器的公网 IP 是否正确，且防火墙已放行 UDP 443。"
 }
 
 # --- 核心功能函数 ---
@@ -200,7 +188,7 @@ complete_cleanup() {
             apt-get purge -y cloudflared 2>/dev/null || true
             rm -f /etc/apt/sources.list.d/cloudflared.list /usr/share/keyrings/cloudflare-main.gpg
             ;;
-        "centos" | "rhel" | "fedora" | "almalinux" | "rocky")
+        *)
             yum remove -y cloudflared 2>/dev/null || true
             rm -f /etc/yum.repos.d/cloudflared-ascii.repo
             ;;
@@ -289,7 +277,6 @@ detect_network() {
     IPV6_ADDR=$(curl -6 --connect-timeout 10 -s ip.sb || echo "")
 }
 
-# 配置防火墙规则
 configure_firewall() {
     info_echo "配置防火墙规则以允许 UDP/443 端口..."
     if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
@@ -307,7 +294,6 @@ configure_firewall() {
 get_user_input() {
     echo
     info_echo "开始配置参数..."
-    # [FIXED] 强制从终端读取输入
     exec < /dev/tty
     read -rp "请输入您的域名 (例如: hy2.example.com): " DOMAIN
     if [[ -z "$DOMAIN" ]]; then error_echo "域名不能为空"; exit 1; fi
@@ -352,18 +338,12 @@ install_hysteria2() {
     info_echo "安装 Hysteria2..."
     local api_url="https://api.github.com/repos/apernet/hysteria/releases/latest"
     local download_url
-    
-    # 优先精确匹配标准版本
     download_url=$(curl -s "$api_url" | jq -r ".assets[] | select(.name == \"hysteria-linux-$ARCH\") | .browser_download_url")
-    
-    # 如果精确匹配失败，则进行模糊匹配并排除 AVX 版本
     if [[ -z "$download_url" ]]; then
         warning_echo "标准版本未找到，尝试通用版本..."
         download_url=$(curl -s "$api_url" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\") and (contains(\"avx\") | not)) | .browser_download_url")
     fi
-
     if [[ -z "$download_url" ]]; then error_echo "获取 Hysteria2 下载链接失败"; exit 1; fi
-    
     wget -qO /usr/local/bin/hysteria "$download_url"
     chmod +x /usr/local/bin/hysteria
     success_echo "Hysteria2 安装完成, 版本: $(hysteria --version | head -n 1)"
@@ -551,6 +531,8 @@ show_installation_result() {
     cat /etc/hysteria2/client_info.txt
     if [[ "$1" == "direct" ]]; then
         warning_echo "注意: 直连模式使用自签名证书，客户端需要开启 'skip-cert-verify' 或 'insecure' 选项"
+    else
+        warning_echo "DNS 记录全球同步可能需要几分钟，请耐心等待后再尝试连接。"
     fi
 }
 
@@ -646,7 +628,6 @@ run_install() {
     check_port_443
     detect_network
     
-    # 清空 CLOUDFLARED_PATH 确保旧模式不影响新模式
     CLOUDFLARED_PATH="" 
 
     if [[ "$mode" == "direct" ]]; then
@@ -654,6 +635,19 @@ run_install() {
         install_hysteria2
         generate_self_signed_cert
     else
+        # [OPTIMIZED] Updated pre-check warning for Cloudflare Tunnel mode
+        echo -e "${YELLOW}==================== 重要提示 ====================${ENDCOLOR}"
+        info_echo "Cloudflare Tunnel 模式依赖于 HTTP/3 (QUIC) 协议。"
+        success_echo "好消息是: 目前所有 Cloudflare 区域 (包括免费版)"
+        success_echo "都已默认开启此功能，您通常无需任何操作。"
+        warning_echo "如果连接失败，请优先检查客户端 DNS 缓存或等待几分钟。"
+        echo -e "${YELLOW}====================================================${ENDCOLOR}"
+        read -rp "理解并继续? (Y/n): " confirm
+        if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
+            info_echo "安装已取消"
+            return 0
+        fi
+
         install_cloudflared
         get_user_input_with_cf
         install_hysteria2
@@ -676,7 +670,6 @@ main_menu() {
     check_root
     detect_network
     while true; do
-        # [FIXED] 强制从终端读取输入，解决 curl | bash 问题
         exec < /dev/tty
         show_menu
         read -rp "请选择操作 [0-8]: " choice
