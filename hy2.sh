@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 菜单式安装脚本
-# 版本: 4.2 (最终优化版)
+# 版本: 4.3 (UI 优化 + 核心功能修复)
 # 作者: Jensfrank & AI Assistant 优化
 # 项目: hy2ipv6
 
@@ -18,6 +18,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
+BG_PURPLE='\033[45m'
 ENDCOLOR='\033[0m'
 
 # 全局变量
@@ -31,7 +32,7 @@ FAKE_URL=""
 CF_ZONE_ID=""
 CF_ACCOUNT_ID=""
 TUNNEL_ID=""
-readonly TUNNEL_NAME="hysteria-tunnel" # 使用 readonly 定义常量
+readonly TUNNEL_NAME="hysteria-tunnel"
 IPV4_ADDR=""
 IPV6_ADDR=""
 CLOUDFLARED_PATH=""
@@ -43,25 +44,29 @@ success_echo() { echo -e "${GREEN}[SUCCESS]${ENDCOLOR} $1"; }
 error_echo() { echo -e "${RED}[ERROR]${ENDCOLOR} $1"; }
 warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
 
-# 显示主菜单
+# 显示主菜单 (全新UI)
 show_menu() {
     clear
-    echo -e "${PURPLE}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
-    echo -e "${PURPLE}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${PURPLE}║                      菜单式安装脚本 (v4.2)                      ║${ENDCOLOR}"
-    echo -e "${PURPLE}╠════════════════════════════════════════════════════════════════╣${ENDCOLOR}"
-    echo -e "${PURPLE}║                                                                ║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}1.${ENDCOLOR} 安装 Hysteria2 (直连模式)                          ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}2.${ENDCOLOR} 安装 Hysteria2 + Cloudflare Tunnel (CDN模式)       ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}3.${ENDCOLOR} 卸载 Hysteria2 (保留Cloudflare)                    ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}4.${ENDCOLOR} 卸载 Hysteria2 + Cloudflare Tunnel                 ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}5.${ENDCOLOR} 完全清理 (卸载所有组件)                          ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}6.${ENDCOLOR} 服务管理 (启动/停止/重启/状态/日志)                ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}7.${ENDCOLOR} 显示配置信息                                      ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}8.${ENDCOLOR} 测试连通性                                        ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║  ${CYAN}0.${ENDCOLOR} 退出                                              ${PURPLE}║${ENDCOLOR}"
-    echo -e "${PURPLE}║                                                                ║${ENDCOLOR}"
-    echo -e "${PURPLE}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
+    local ipv4_display="${IPV4_ADDR:-N/A}"
+    local ipv6_display="${IPV6_ADDR:-N/A}"
+    
+    echo -e "${BG_PURPLE} Hysteria2 + IPv6 + Cloudflare Tunnel Management Script (v4.3) ${ENDCOLOR}"
+    echo
+    echo -e " ${YELLOW}IPv4:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR}"
+    echo -e " ${YELLOW}IPv6:${ENDCOLOR} ${GREEN}${ipv6_display}${ENDCOLOR}"
+    echo -e "${PURPLE}----------------------------------------------------------------${ENDCOLOR}"
+    echo -e " ${CYAN}1.${ENDCOLOR} 安装 Hysteria2 (直连模式)"
+    echo -e " ${CYAN}2.${ENDCOLOR} 安装 Hysteria2 + Cloudflare Tunnel (CDN模式)"
+    echo -e "${PURPLE}----------------------------------------------------------------${ENDCOLOR}"
+    echo -e " ${CYAN}3.${ENDCOLOR} 卸载 Hysteria2 (保留Cloudflare)"
+    echo -e " ${CYAN}4.${ENDCOLOR} 卸载 Hysteria2 + Cloudflare Tunnel"
+    echo -e " ${CYAN}5.${ENDCOLOR} 完全清理 (卸载所有组件)"
+    echo -e "${PURPLE}----------------------------------------------------------------${ENDCOLOR}"
+    echo -e " ${CYAN}6.${ENDCOLOR} 服务管理"
+    echo -e " ${CYAN}7.${ENDCOLOR} 显示配置信息"
+    echo -e " ${CYAN}8.${ENDCOLOR} 测试连通性"
+    echo -e "${PURPLE}----------------------------------------------------------------${ENDCOLOR}"
+    echo -e " ${CYAN}0.${ENDCOLOR} 退出"
     echo
 }
 
@@ -239,17 +244,14 @@ install_dependencies() {
         "ubuntu" | "debian")
             essential_packages+=("netcat-openbsd")
             ;;
-        *) # For CentOS, RHEL, etc.
+        *) 
             essential_packages+=("nc")
             ;;
     esac
     
     for pkg in "${essential_packages[@]}"; do
-        # Check for command existence, translating package name to command if necessary
         local cmd_to_check="$pkg"
-        if [[ "$pkg" == "netcat-openbsd" ]]; then
-            cmd_to_check="nc"
-        fi
+        [[ "$pkg" == "netcat-openbsd" ]] && cmd_to_check="nc"
 
         if ! command -v "$cmd_to_check" &>/dev/null; then
             packages_to_install+=("$pkg")
@@ -283,24 +285,18 @@ check_port_443() {
 }
 
 detect_network() {
-    info_echo "检测网络环境..."
     IPV4_ADDR=$(curl -4 --connect-timeout 10 -s ip.sb || echo "")
     IPV6_ADDR=$(curl -6 --connect-timeout 10 -s ip.sb || echo "")
-    if [[ -z "$IPV4_ADDR" && -z "$IPV6_ADDR" ]]; then
-        error_echo "未能检测到公网 IP 地址, 脚本无法继续"
-        exit 1
-    fi
-    info_echo "公网 IPv4: ${IPV4_ADDR:-N/A}, 公网 IPv6: ${IPV6_ADDR:-N/A}"
 }
 
 # 配置防火墙规则
 configure_firewall() {
     info_echo "配置防火墙规则以允许 UDP/443 端口..."
     if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
-        ufw allow 443/udp
+        ufw allow 443/udp >/dev/null
     elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
         firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1
-        firewall-cmd --reload
+        firewall-cmd --reload >/dev/null
     elif command -v iptables &>/dev/null; then
         iptables -I INPUT 1 -p udp --dport 443 -j ACCEPT
     fi
@@ -311,6 +307,7 @@ configure_firewall() {
 get_user_input() {
     echo
     info_echo "开始配置参数..."
+    # [FIXED] 强制从终端读取输入
     exec < /dev/tty
     read -rp "请输入您的域名 (例如: hy2.example.com): " DOMAIN
     if [[ -z "$DOMAIN" ]]; then error_echo "域名不能为空"; exit 1; fi
@@ -354,10 +351,14 @@ get_user_input_with_cf() {
 install_hysteria2() {
     info_echo "安装 Hysteria2..."
     local api_url="https://api.github.com/repos/apernet/hysteria/releases/latest"
-    # [OPTIMIZED] 优先精确匹配，失败则回退到排除 avx 的模糊匹配，更稳健
-    local download_url=$(curl -s "$api_url" | jq -r ".assets[] | select(.name == \"hysteria-linux-$ARCH\") | .browser_download_url")
+    local download_url
+    
+    # 优先精确匹配标准版本
+    download_url=$(curl -s "$api_url" | jq -r ".assets[] | select(.name == \"hysteria-linux-$ARCH\") | .browser_download_url")
+    
+    # 如果精确匹配失败，则进行模糊匹配并排除 AVX 版本
     if [[ -z "$download_url" ]]; then
-        warning_echo "精确文件名匹配失败，尝试模糊匹配..."
+        warning_echo "标准版本未找到，尝试通用版本..."
         download_url=$(curl -s "$api_url" | jq -r ".assets[] | select(.name | contains(\"linux-$ARCH\") and (contains(\"avx\") | not)) | .browser_download_url")
     fi
 
@@ -563,36 +564,48 @@ service_management() {
             systemctl is-active --quiet cloudflared && echo -e "${GREEN}✓ Cloudflared : 运行中${ENDCOLOR}" || echo -e "${RED}✗ Cloudflared : 未运行${ENDCOLOR}"
         fi
         echo
-        read -rp "请选择操作: [1]启动 [2]停止 [3]重启 [4]Hysteria日志 [5]Cloudflare日志 [0]返回: " choice
+        echo -e "${PURPLE}----------------------------------------${ENDCOLOR}"
+        echo " 1. 启动服务      2. 停止服务      3. 重启服务"
+        echo " 4. Hysteria 日志 5. Cloudflare 日志"
+        echo " 0. 返回主菜单"
+        echo -e "${PURPLE}----------------------------------------${ENDCOLOR}"
+
+        read -rp "请选择操作: " choice
         case $choice in
             1)
                 info_echo "正在启动服务..."
                 systemctl start hysteria-server
                 [[ -f /etc/systemd/system/cloudflared.service ]] && systemctl start cloudflared
+                success_echo "操作完成" && sleep 1
                 ;;
             2)
                 info_echo "正在停止服务..."
                 [[ -f /etc/systemd/system/cloudflared.service ]] && systemctl stop cloudflared
                 systemctl stop hysteria-server
+                success_echo "操作完成" && sleep 1
                 ;;
             3)
-                info_echo "正在重启服务..."
+                info_echo "正在重启服务 (安全顺序)..."
                 [[ -f /etc/systemd/system/cloudflared.service ]] && systemctl stop cloudflared
                 systemctl restart hysteria-server
                 sleep 2
                 [[ -f /etc/systemd/system/cloudflared.service ]] && systemctl start cloudflared
+                success_echo "操作完成" && sleep 1
                 ;;
             4)
-                journalctl -u hysteria-server -n 100 --no-pager -f
+                info_echo "按 Ctrl+C 退出日志查看" && sleep 1
+                journalctl -u hysteria-server -f --no-pager
                 ;;
             5)
                 if [[ -f /etc/systemd/system/cloudflared.service ]]; then
-                    journalctl -u cloudflared -n 100 --no-pager -f
+                    info_echo "按 Ctrl+C 退出日志查看" && sleep 1
+                    journalctl -u cloudflared -f --no-pager
                 else
                     error_echo "Cloudflared 服务未安装。" && sleep 2
                 fi
                 ;;
             0) return ;;
+            *) error_echo "无效输入" && sleep 1 ;;
         esac
     done
 }
@@ -661,7 +674,10 @@ run_install() {
 # 主菜单逻辑
 main_menu() {
     check_root
+    detect_network
     while true; do
+        # [FIXED] 强制从终端读取输入，解决 curl | bash 问题
+        exec < /dev/tty
         show_menu
         read -rp "请选择操作 [0-8]: " choice
         case $choice in
