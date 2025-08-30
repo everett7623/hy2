@@ -55,23 +55,23 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') [$level] $message" >> /var/log/hysteria2_install.log 2>/dev/null || true
 }
 
-info_echo() { 
+info_echo() {
     echo -e "${BLUE}[INFO]${ENDCOLOR} $1"
     log_message "INFO" "$1"
 }
 
-success_echo() { 
+success_echo() {
     echo -e "${GREEN}[SUCCESS]${ENDCOLOR} $1"
     log_message "SUCCESS" "$1"
 }
 
-error_echo() { 
+error_echo() {
     # 错误信息输出到 stderr
     echo -e "${RED}[ERROR]${ENDCOLOR} $1" >&2
     log_message "ERROR" "$1"
 }
 
-warning_echo() { 
+warning_echo() {
     echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"
     log_message "WARNING" "$1"
 }
@@ -1203,4 +1203,4 @@ main() {
 }
 
 # --- 脚本入口 ---
-main "$@"```
+main "$@"
