@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 菜单式安装脚本
-# 版本: 4.5 (最终指引优化版)
+# 版本: 4.6 (最终版)
 # 作者: Jensfrank & AI Assistant 优化
 # 项目: hy2ipv6
 
@@ -50,7 +50,7 @@ show_menu() {
     local ipv4_display="${IPV4_ADDR:-N/A}"
     local ipv6_display="${IPV6_ADDR:-N/A}"
     
-    echo -e "${BG_PURPLE} Hysteria2 + IPv6 + Cloudflare Tunnel Management Script (v4.5) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 + IPv6 + Cloudflare Tunnel Management Script (v4.6) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}IPv4:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR}"
     echo -e " ${YELLOW}IPv6:${ENDCOLOR} ${GREEN}${ipv6_display}${ENDCOLOR}"
@@ -58,7 +58,7 @@ show_menu() {
     echo -e " ${CYAN}1.${ENDCOLOR} 安装 Hysteria2 (直连模式)"
     echo -e " ${CYAN}2.${ENDCOLOR} 安装 Hysteria2 + Cloudflare Tunnel (CDN模式)"
     echo -e "${PURPLE}----------------------------------------------------------------${ENDCOLOR}"
-    echo -e " ${CYAN}3.${ENDCOLOR} 卸载 Hysteria2 (保留Cloudflare)"
+    echo -e " ${CYAN}3.${ENDCOLOR} 卸载 Hysteria2 服务"
     echo -e " ${CYAN}4.${ENDCOLOR} 卸载 Hysteria2 + Cloudflare Tunnel"
     echo -e " ${CYAN}5.${ENDCOLOR} 完全清理 (卸载所有组件)"
     echo -e "${PURPLE}----------------------------------------------------------------${ENDCOLOR}"
@@ -594,8 +594,14 @@ service_management() {
 
 # 卸载功能
 uninstall_hysteria_only() {
-    warning_echo "开始卸载 Hysteria2 (保留 Cloudflare)..."
-    read -rp "确定? (y/N): " confirm && [[ "$confirm" != "y" ]] && return 0
+    warning_echo "开始卸载 Hysteria2 服务..."
+    info_echo "此操作不会移除 Cloudflared 相关组件 (如已安装)。"
+    read -rp "确定要卸载 Hysteria2 吗? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        info_echo "取消卸载"
+        return
+    fi
+    
     systemctl disable --now hysteria-server 2>/dev/null || true
     rm -f /etc/systemd/system/hysteria-server.service
     systemctl daemon-reload
@@ -606,7 +612,11 @@ uninstall_hysteria_only() {
 
 uninstall_all() {
     warning_echo "开始卸载 Hysteria2 和 Cloudflare Tunnel..."
-    read -rp "确定? (y/N): " confirm && [[ "$confirm" != "y" ]] && return 0
+    read -rp "确定? (y/N): " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        info_echo "取消卸载"
+        return
+    fi
     if [[ -f /etc/hysteria2/uninstall_info.env ]]; then source /etc/hysteria2/uninstall_info.env; fi
     systemctl disable --now hysteria-server cloudflared 2>/dev/null || true
     rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/cloudflared.service
@@ -635,7 +645,6 @@ run_install() {
         install_hysteria2
         generate_self_signed_cert
     else
-        # [OPTIMIZED] Updated pre-check warning for Cloudflare Tunnel mode
         echo -e "${YELLOW}==================== 重要提示 ====================${ENDCOLOR}"
         info_echo "Cloudflare Tunnel 模式依赖于 HTTP/3 (QUIC) 协议。"
         success_echo "好消息是: 目前所有 Cloudflare 区域 (包括免费版)"
