@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 3.8 (竞态条件修复版)
+# 版本: 3.9 (协议检查修复版)
 # 作者: everett7623 & Gemini & Claude优化 & AI Assistant 进一步优化
 # 项目: hy2ipv6
 
@@ -119,10 +119,12 @@ install_dependencies() {
 }
 
 check_port_443() {
-    info_echo "检查端口 443 是否可用..."
-    if ss -tlnp | grep -q ":443" || netstat -tlnp | grep -q ":443"; then
-        error_echo "端口 443 已被其他进程占用。"
+    info_echo "检查 UDP 端口 443 是否可用..."
+    # 同时检查 TCP 和 UDP，确保端口完全空闲
+    if ss -l -n | grep -q ":443\s"; then
+        error_echo "端口 443 (TCP 或 UDP) 已被其他进程占用。"
         warning_echo "请停止占用该端口的服务后重试。"
+        ss -lpn | grep ":443\s"
         exit 1
     fi
     success_echo "端口 443 可用。"
@@ -401,12 +403,13 @@ start_services() {
     systemctl daemon-reload
     systemctl enable --now hysteria-server
     
-    # [FIXED] 使用轮询检查代替固定 sleep，解决竞态条件问题
+    # [FIXED] 使用 -u 参数检查 UDP 端口，解决协议检查错误
     local port_check_timeout=15
     local port_found=false
-    info_echo "正在等待 Hysteria2 监听端口 443 (最长 ${port_check_timeout} 秒)..."
+    info_echo "正在等待 Hysteria2 监听 UDP 端口 443 (最长 ${port_check_timeout} 秒)..."
     for ((i=1; i<=port_check_timeout; i++)); do
-        if ss -tlnp | grep -q ":443.*hysteria"; then
+        # 使用 ss -ulnp 检查 UDP 监听端口
+        if ss -ulnp | grep -q ":443.*hysteria"; then
             port_found=true
             break
         fi
@@ -416,12 +419,12 @@ start_services() {
     echo # 换行
 
     if [[ "$port_found" != true ]]; then
-        error_echo "Hysteria2 未能成功监听端口 443！"
-        error_echo "请检查端口是否被占用或配置是否有误"
+        error_echo "Hysteria2 未能成功监听 UDP 端口 443！"
+        error_echo "请检查端口是否被占用或配置是否有误。"
         journalctl -u hysteria-server -n 20 --no-pager
         exit 1
     fi
-    success_echo "Hysteria2 服务启动成功并监听端口 443"
+    success_echo "Hysteria2 服务启动成功并监听 UDP 端口 443"
 
     systemctl enable --now cloudflared
     info_echo "等待 Cloudflared 隧道连接 (8秒)..."
@@ -497,8 +500,9 @@ show_status() {
     systemctl is-active --quiet hysteria-server && echo -e "${GREEN}✓ Hysteria2   : 运行中${ENDCOLOR}" || echo -e "${RED}✗ Hysteria2   : 未运行${ENDCOLOR}"
     systemctl is-active --quiet cloudflared && echo -e "${GREEN}✓ Cloudflared : 运行中${ENDCOLOR}" || echo -e "${RED}✗ Cloudflared : 未运行${ENDCOLOR}"
     echo
-    echo -e "${BLUE}端口监听状态:${ENDCOLOR}"
-    ss -tlnp | grep ":443" || echo "未检测到 443 端口监听"
+    echo -e "${BLUE}端口监听状态 (UDP):${ENDCOLOR}"
+    # [FIXED] 使用 -u 参数检查 UDP 端口
+    ss -ulnp | grep ":443" || echo "未检测到 UDP 443 端口监听"
 }
 
 CMD=$1
@@ -591,7 +595,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v3.8)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v3.9)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
