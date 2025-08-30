@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 3.7 (最终审查版)
+# 版本: 3.8 (竞态条件修复版)
 # 作者: everett7623 & Gemini & Claude优化 & AI Assistant 进一步优化
 # 项目: hy2ipv6
 
@@ -399,23 +399,30 @@ EOF
 start_services() {
     info_echo "启动并检查服务..."
     systemctl daemon-reload
-    
     systemctl enable --now hysteria-server
-    info_echo "等待 Hysteria2 服务稳定 (3秒)..."
-    sleep 3
     
-    if ! systemctl is-active --quiet hysteria-server; then
-        error_echo "Hysteria2 服务启动失败！请检查日志："
-        journalctl -u hysteria-server -n 20 --no-pager
-        exit 1
-    fi
-    if ! ss -tlnp | grep -q ":443.*hysteria"; then
+    # [FIXED] 使用轮询检查代替固定 sleep，解决竞态条件问题
+    local port_check_timeout=15
+    local port_found=false
+    info_echo "正在等待 Hysteria2 监听端口 443 (最长 ${port_check_timeout} 秒)..."
+    for ((i=1; i<=port_check_timeout; i++)); do
+        if ss -tlnp | grep -q ":443.*hysteria"; then
+            port_found=true
+            break
+        fi
+        echo -n "."
+        sleep 1
+    done
+    echo # 换行
+
+    if [[ "$port_found" != true ]]; then
         error_echo "Hysteria2 未能成功监听端口 443！"
+        error_echo "请检查端口是否被占用或配置是否有误"
         journalctl -u hysteria-server -n 20 --no-pager
         exit 1
     fi
     success_echo "Hysteria2 服务启动成功并监听端口 443"
-    
+
     systemctl enable --now cloudflared
     info_echo "等待 Cloudflared 隧道连接 (8秒)..."
     sleep 8
@@ -426,7 +433,6 @@ start_services() {
         exit 1
     fi
     
-    # [IMPROVED] 最终连接性验证
     if journalctl -u cloudflared --since="30 seconds ago" | grep -q "Connected to"; then
         success_echo "Cloudflared 隧道已成功连接到 Cloudflare 网络"
         success_echo "Hysteria2 和 Cloudflared 服务均已成功启动"
@@ -435,6 +441,7 @@ start_services() {
         warning_echo "节点可能仍可使用，但建议使用 'hy2-manage cflog' 检查详细日志。"
     fi
 }
+
 
 # 5. 后续操作
 show_installation_result() {
@@ -584,7 +591,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v3.7)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v3.8)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
