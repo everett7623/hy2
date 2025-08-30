@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 3.3 (Final)
-# 作者: everett7623 & Gemini
+# 版本: 3.4 (优化版)
+# 作者: everett7623 & Gemini & Claude优化
 # 项目: hy2ipv6
 
 set -e -o pipefail
@@ -28,6 +28,8 @@ CF_ZONE_ID=""
 CF_ACCOUNT_ID=""
 TUNNEL_ID=""
 TUNNEL_NAME="hysteria-tunnel"
+IPV4_ADDR=""
+IPV6_ADDR=""
 
 # --- 辅助函数 ---
 
@@ -95,7 +97,7 @@ detect_system() {
 
 install_dependencies() {
     info_echo "检查并安装依赖包..."
-    local packages=("curl" "socat" "unzip" "wget" "jq")
+    local packages=("curl" "socat" "unzip" "wget" "jq" "net-tools")
     case "$OS_TYPE" in
         "ubuntu" | "debian")
             apt-get update -qq
@@ -121,15 +123,17 @@ install_dependencies() {
 
 detect_network() {
     info_echo "检测网络环境..."
-    local IPV6_ADDR
-    IPV6_ADDR=$(curl -6 --connect-timeout 10 -s ip.sb 2>/dev/null || echo "")
-    local IPV4_ADDR
+    
+    # 检测 IPv4
     IPV4_ADDR=$(curl -4 --connect-timeout 10 -s ip.sb 2>/dev/null || echo "")
+    
+    # 检测 IPv6
+    IPV6_ADDR=$(curl -6 --connect-timeout 10 -s ip.sb 2>/dev/null || echo "")
 
     if [[ -n "$IPV6_ADDR" ]]; then
         success_echo "检测到 IPv6 地址: $IPV6_ADDR"
         if [[ -n "$IPV4_ADDR" ]]; then
-            info_echo "检测到 IPv4 地址: $IPV4_ADDR (双栈网络, 将优先使用 IPv6)"
+            info_echo "检测到 IPv4 地址: $IPV4_ADDR (双栈网络)"
         else
             info_echo "当前为 IPv6 Only 环境"
         fi
@@ -283,6 +287,12 @@ install_acme_and_cert() {
         error_echo "证书文件安装失败或为空"
         exit 1
     fi
+    
+    # 设置正确的权限
+    chown -R root:root /etc/hysteria2/certs/
+    chmod 600 /etc/hysteria2/certs/private.key
+    chmod 644 /etc/hysteria2/certs/fullchain.cer
+    
     success_echo "SSL 证书申请并安装完成"
 }
 
@@ -290,8 +300,25 @@ install_acme_and_cert() {
 generate_hysteria_config() {
     info_echo "生成 Hysteria2 配置..."
     mkdir -p /etc/hysteria2
+    
+    # 根据网络环境选择监听地址
+    local listen_addr
+    if [[ -n "$IPV4_ADDR" && -n "$IPV6_ADDR" ]]; then
+        # 双栈环境：优先监听 IPv4（兼容性更好）
+        listen_addr="0.0.0.0:443"
+        info_echo "双栈环境，Hysteria2 监听 IPv4 地址: 0.0.0.0:443"
+    elif [[ -n "$IPV4_ADDR" ]]; then
+        # 仅 IPv4
+        listen_addr="0.0.0.0:443"
+        info_echo "IPv4 环境，Hysteria2 监听: 0.0.0.0:443"
+    else
+        # 仅 IPv6
+        listen_addr="[::]:443"
+        info_echo "IPv6 环境，Hysteria2 监听: [::]:443"
+    fi
+    
     cat > /etc/hysteria2/config.yaml << EOF
-listen: :443
+listen: $listen_addr
 tls:
   cert: /etc/hysteria2/certs/fullchain.cer
   key: /etc/hysteria2/certs/private.key
@@ -338,12 +365,23 @@ setup_cloudflared_tunnel() {
     success_echo "隧道已就绪, ID: $TUNNEL_ID"
     
     mkdir -p /etc/cloudflared/
+    
+    # 根据 Hysteria2 的监听地址配置 Cloudflare Tunnel
+    local service_addr
+    if [[ -n "$IPV4_ADDR" ]]; then
+        service_addr="udp://127.0.0.1:443"
+        info_echo "配置 Cloudflare Tunnel 连接到 IPv4 地址"
+    else
+        service_addr="udp://[::1]:443"
+        info_echo "配置 Cloudflare Tunnel 连接到 IPv6 地址"
+    fi
+    
     cat > /etc/cloudflared/config.yml << EOF
 tunnel: $TUNNEL_ID
 protocol: quic
 ingress:
   - hostname: $DOMAIN
-    service: udp://127.0.0.1:443
+    service: $service_addr
   - service: http_status:404
 EOF
     success_echo "隧道配置文件创建完成"
@@ -375,7 +413,8 @@ EOF
     cat > /etc/systemd/system/cloudflared.service << EOF
 [Unit]
 Description=Cloudflare Tunnel
-After=network.target
+After=network.target hysteria-server.service
+Wants=hysteria-server.service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/cloudflared tunnel --edge-ip-version 6 --config /etc/cloudflared/config.yml --no-autoupdate run
@@ -391,22 +430,77 @@ EOF
 start_services() {
     info_echo "启动并检查服务..."
     systemctl daemon-reload
-    systemctl enable --now hysteria-server cloudflared
     
-    info_echo "等待服务稳定 (5秒)..."
-    sleep 5
+    # 先启动 Hysteria2，再启动 Cloudflared
+    systemctl enable hysteria-server
+    systemctl start hysteria-server
     
+    info_echo "等待 Hysteria2 服务稳定 (3秒)..."
+    sleep 3
+    
+    # 验证 Hysteria2 启动成功并监听端口
     if ! systemctl is-active --quiet hysteria-server; then
         error_echo "Hysteria2 服务启动失败！请检查日志："
         journalctl -u hysteria-server -n 20 --no-pager
         exit 1
     fi
+    
+    # 检查端口监听
+    local port_check_timeout=10
+    local port_found=false
+    for ((i=1; i<=port_check_timeout; i++)); do
+        if netstat -tlnp | grep -q ":443.*hysteria" || ss -tlnp | grep -q ":443.*hysteria"; then
+            port_found=true
+            break
+        fi
+        sleep 1
+    done
+    
+    if [[ "$port_found" != true ]]; then
+        error_echo "Hysteria2 未能成功监听端口 443！"
+        error_echo "请检查端口是否被占用或配置是否有误"
+        journalctl -u hysteria-server -n 20 --no-pager
+        exit 1
+    fi
+    
+    success_echo "Hysteria2 服务启动成功并监听端口 443"
+    
+    # 启动 Cloudflared
+    systemctl enable cloudflared
+    systemctl start cloudflared
+    
+    info_echo "等待 Cloudflared 服务稳定 (5秒)..."
+    sleep 5
+    
     if ! systemctl is-active --quiet cloudflared; then
         error_echo "Cloudflared 服务启动失败！请检查日志："
         journalctl -u cloudflared -n 20 --no-pager
         exit 1
     fi
+    
     success_echo "Hysteria2 和 Cloudflared 服务均已成功启动"
+}
+
+# 验证服务连接性
+verify_services() {
+    info_echo "验证服务连接性..."
+    
+    # 显示监听端口
+    info_echo "当前监听端口情况："
+    netstat -tlnp | grep ":443" || ss -tlnp | grep ":443" || warning_echo "未检测到 443 端口监听"
+    
+    # 检查 Cloudflared 连接状态（等待几秒让连接稳定）
+    sleep 3
+    local cf_errors
+    cf_errors=$(journalctl -u cloudflared --since="10 seconds ago" | grep -i "connection refused\|error" | wc -l)
+    
+    if [[ "$cf_errors" -gt 0 ]]; then
+        warning_echo "检测到 Cloudflared 连接问题，正在检查..."
+        journalctl -u cloudflared --since="30 seconds ago" | tail -10
+        warning_echo "如果上述错误持续出现，请检查配置或重启服务"
+    else
+        success_echo "服务连接验证通过"
+    fi
 }
 
 # 5. 后续操作
@@ -440,39 +534,143 @@ show_installation_result() {
     echo -e "${BLUE}Clash.Meta YAML 配置 (单行):${ENDCOLOR}"
     echo -e "${YELLOW}- { name: '${DOMAIN}', type: hysteria2, server: ${DOMAIN}, port: 443, password: ${HY_PASSWORD}, alpn: [h3], sni: ${FAKE_URL_HOST}, skip-cert-verify: true, fast-open: true }${ENDCOLOR}"
     echo
+    
+    # 显示服务状态
+    echo -e "${BLUE}服务状态:${ENDCOLOR}"
+    systemctl is-active hysteria-server >/dev/null && echo -e "${GREEN}✓ Hysteria2 服务正在运行${ENDCOLOR}" || echo -e "${RED}✗ Hysteria2 服务未运行${ENDCOLOR}"
+    systemctl is-active cloudflared >/dev/null && echo -e "${GREEN}✓ Cloudflared 服务正在运行${ENDCOLOR}" || echo -e "${RED}✗ Cloudflared 服务未运行${ENDCOLOR}"
+    echo
 }
 
 install_management_script() {
     info_echo "安装管理脚本..."
-    if [[ -f "$0" ]] && [[ "$0" != "bash" && -s "$0" ]]; then
-        cp "$0" /usr/local/bin/hy2-manage
-        chmod +x /usr/local/bin/hy2-manage
-        success_echo "管理脚本已安装到 /usr/local/bin/hy2-manage"
-    else
-        warning_echo "未能正确定位脚本文件，无法安装管理命令。"
-        warning_echo "这通常在使用 'curl | bash' 方式时发生。"
-        warning_echo "推荐使用 'wget' 下载后运行，以便使用管理功能。"
-    fi
+    
+    # 创建增强的管理脚本
+    cat > /usr/local/bin/hy2-manage << 'EOF'
+#!/bin/bash
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+ENDCOLOR='\033[0m'
+
+info_echo() { echo -e "${BLUE}[INFO]${ENDCOLOR} $1"; }
+success_echo() { echo -e "${GREEN}[SUCCESS]${ENDCOLOR} $1"; }
+error_echo() { echo -e "${RED}[ERROR]${ENDCOLOR} $1"; }
+warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
+
+case "$1" in
+    start)
+        info_echo "启动 Hysteria2 服务..."
+        systemctl start hysteria-server
+        sleep 2
+        info_echo "启动 Cloudflared 服务..."
+        systemctl start cloudflared
+        success_echo "服务启动完成"
+        ;;
+    stop)
+        info_echo "停止 Cloudflared 服务..."
+        systemctl stop cloudflared
+        info_echo "停止 Hysteria2 服务..."
+        systemctl stop hysteria-server
+        success_echo "服务停止完成"
+        ;;
+    restart)
+        info_echo "重启服务..."
+        systemctl stop cloudflared
+        systemctl restart hysteria-server
+        sleep 3
+        systemctl start cloudflared
+        success_echo "服务重启完成"
+        ;;
+    status)
+        echo -e "${BLUE}服务状态:${ENDCOLOR}"
+        systemctl is-active hysteria-server >/dev/null && echo -e "${GREEN}✓ Hysteria2: 运行中${ENDCOLOR}" || echo -e "${RED}✗ Hysteria2: 未运行${ENDCOLOR}"
+        systemctl is-active cloudflared >/dev/null && echo -e "${GREEN}✓ Cloudflared: 运行中${ENDCOLOR}" || echo -e "${RED}✗ Cloudflared: 未运行${ENDCOLOR}"
+        echo
+        echo -e "${BLUE}端口监听状态:${ENDCOLOR}"
+        netstat -tlnp | grep ":443" || echo "未检测到 443 端口监听"
+        ;;
+    log)
+        info_echo "显示 Hysteria2 实时日志 (Ctrl+C 退出)..."
+        journalctl -u hysteria-server -f
+        ;;
+    cflog)
+        info_echo "显示 Cloudflared 实时日志 (Ctrl+C 退出)..."
+        journalctl -u cloudflared -f
+        ;;
+    test)
+        info_echo "测试服务连接性..."
+        echo -e "${BLUE}Hysteria2 进程:${ENDCOLOR}"
+        ps aux | grep hysteria | grep -v grep || echo "未找到 hysteria 进程"
+        echo -e "${BLUE}端口监听:${ENDCOLOR}"
+        netstat -tlnp | grep ":443" || echo "未检测到 443 端口监听"
+        echo -e "${BLUE}最近的 Cloudflared 错误:${ENDCOLOR}"
+        journalctl -u cloudflared --since="5 minutes ago" | grep -i error | tail -5 || echo "未发现错误"
+        ;;
+    uninstall)
+        if [[ -f /etc/hysteria2/uninstall_info.env ]]; then
+            source /etc/hysteria2/uninstall_info.env
+        fi
+        warning_echo "开始完全卸载 Hysteria2 和相关组件..."
+        read -rp "确定要完全卸载吗？此操作不可逆 (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            info_echo "取消卸载"; exit 0
+        fi
+        
+        systemctl stop hysteria-server cloudflared 2>/dev/null || true
+        systemctl disable hysteria-server cloudflared 2>/dev/null || true
+        
+        rm -f /etc/systemd/system/hysteria-server.service
+        rm -f /etc/systemd/system/cloudflared.service
+        systemctl daemon-reload
+        
+        rm -f /usr/local/bin/hysteria
+        
+        if [[ -n "$DOMAIN" ]] && command -v ~/.acme.sh/acme.sh &> /dev/null; then
+            ~/.acme.sh/acme.sh --remove -d "$DOMAIN" --debug 2 || true
+        fi
+        
+        if [[ -n "$TUNNEL_NAME" ]] && command -v cloudflared &>/dev/null; then
+            cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
+        fi
+        
+        rm -rf /etc/hysteria2 /etc/cloudflared
+        rm -f /usr/local/bin/hy2-manage
+        
+        success_echo "Hysteria2 相关配置已完全卸载"
+        warning_echo "Cloudflared 本体未卸载, 您可手动移除"
+        ;;
+    *)
+        echo "用法: hy2-manage [start|stop|restart|status|log|cflog|test|uninstall]"
+        echo
+        echo "命令说明:"
+        echo "  start     - 启动服务"
+        echo "  stop      - 停止服务"
+        echo "  restart   - 重启服务"
+        echo "  status    - 查看服务状态"
+        echo "  log       - 查看 Hysteria2 实时日志"
+        echo "  cflog     - 查看 Cloudflared 实时日志"
+        echo "  test      - 测试服务连接性"
+        echo "  uninstall - 完全卸载"
+        exit 1
+        ;;
+esac
+EOF
+    
+    chmod +x /usr/local/bin/hy2-manage
+    success_echo "增强管理脚本已安装到 /usr/local/bin/hy2-manage"
 }
 
 # 6. 管理与卸载
 manage_service() {
     case "$1" in
-        start|stop|restart|status)
-            echo "正在对 hysteria-server 执行 $1 操作..."
-            systemctl "$1" hysteria-server
-            echo "正在对 cloudflared 执行 $1 操作..."
-            systemctl "$1" cloudflared
-            success_echo "操作完成"
-            ;;
-        log)
-            journalctl -u hysteria-server -f
-            ;;
-        uninstall)
-            uninstall_all
+        start|stop|restart|status|log|cflog|test|uninstall)
+            /usr/local/bin/hy2-manage "$1"
             ;;
         *)
-            echo "用法: hy2-manage [start|stop|restart|status|log|uninstall]"
+            echo "用法: hy2-manage [start|stop|restart|status|log|cflog|test|uninstall]"
             exit 1
             ;;
     esac
@@ -522,7 +720,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v3.2)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v3.4)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
@@ -549,6 +747,7 @@ main_install() {
     setup_cloudflared_tunnel
     create_systemd_services
     start_services
+    verify_services
     install_management_script
     
     show_installation_result
