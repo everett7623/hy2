@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 菜单式安装脚本
-# 版本: 5.0 (优化版)
+# 版本: 5.1 (优化版)
 # 作者: Jensfrank & AI Assistant 优化增强
 # 项目: hy2ipv6
 
