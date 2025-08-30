@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 + IPv6 + Cloudflare Tunnel 一键安装脚本
-# 版本: 3.6 (修复优化版)
+# 版本: 3.7 (最终审查版)
 # 作者: everett7623 & Gemini & Claude优化 & AI Assistant 进一步优化
 # 项目: hy2ipv6
 
@@ -47,20 +47,16 @@ warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
 cleanup_previous_installation() {
     info_echo "正在检查并清理任何可能存在的旧安装..."
     
-    # 停止并禁用服务，忽略不存在的错误
     systemctl stop hysteria-server cloudflared 2>/dev/null || true
     systemctl disable hysteria-server cloudflared 2>/dev/null || true
     
-    # 如果 cloudflared 命令存在，尝试删除隧道
     if command -v cloudflared &>/dev/null; then
         cloudflared tunnel delete -f "$TUNNEL_NAME" 2>/dev/null || true
     fi
     
-    # 删除 systemd 服务文件
     rm -f /etc/systemd/system/hysteria-server.service /etc/systemd/system/cloudflared.service
     systemctl daemon-reload
     
-    # 删除相关程序和配置文件
     rm -f /usr/local/bin/hysteria /usr/local/bin/hy2-manage
     rm -rf /etc/hysteria2 /etc/cloudflared /root/.cloudflared
     
@@ -382,12 +378,11 @@ User=root
 WantedBy=multi-user.target
 EOF
 
-    # 使用 BindsTo 加强服务依赖，确保 Hysteria 停止时 Cloudflared 也随之停止
-    # 使用动态获取的 cloudflared 路径增加稳健性
     cat > /etc/systemd/system/cloudflared.service << EOF
 [Unit]
 Description=Cloudflare Tunnel
 After=network.target hysteria-server.service
+# BindsTo 建立强依赖：如果 hysteria-server 停止，cloudflared 也会被停止。
 BindsTo=hysteria-server.service
 [Service]
 Type=simple
@@ -405,8 +400,7 @@ start_services() {
     info_echo "启动并检查服务..."
     systemctl daemon-reload
     
-    systemctl enable hysteria-server
-    systemctl start hysteria-server
+    systemctl enable --now hysteria-server
     info_echo "等待 Hysteria2 服务稳定 (3秒)..."
     sleep 3
     
@@ -422,10 +416,9 @@ start_services() {
     fi
     success_echo "Hysteria2 服务启动成功并监听端口 443"
     
-    systemctl enable cloudflared
-    systemctl start cloudflared
-    info_echo "等待 Cloudflared 服务稳定 (5秒)..."
-    sleep 5
+    systemctl enable --now cloudflared
+    info_echo "等待 Cloudflared 隧道连接 (8秒)..."
+    sleep 8
     
     if ! systemctl is-active --quiet cloudflared; then
         error_echo "Cloudflared 服务启动失败！请检查日志："
@@ -433,11 +426,13 @@ start_services() {
         exit 1
     fi
     
-    if journalctl -u cloudflared --since="10 seconds ago" | grep -q "connection refused"; then
-        warning_echo "Cloudflared 日志中检测到 'connection refused'，可能连接本地 Hysteria 服务失败。"
-        warning_echo "请使用 'hy2-manage cflog' 检查详细日志。"
-    else
+    # [IMPROVED] 最终连接性验证
+    if journalctl -u cloudflared --since="30 seconds ago" | grep -q "Connected to"; then
+        success_echo "Cloudflared 隧道已成功连接到 Cloudflare 网络"
         success_echo "Hysteria2 和 Cloudflared 服务均已成功启动"
+    else
+        warning_echo "Cloudflared 日志中未检测到成功的连接信息。"
+        warning_echo "节点可能仍可使用，但建议使用 'hy2-manage cflog' 检查详细日志。"
     fi
 }
 
@@ -468,7 +463,6 @@ EOF
     echo -e "${YELLOW}${share_link}${ENDCOLOR}"
     echo
     
-    # [FIXED] 使用 Hysteria2 正确的 masquerade 字段
     echo -e "${BLUE}Clash.Meta YAML 配置 (单行):${ENDCOLOR}"
     echo -e "${YELLOW}- { name: '${DOMAIN}', type: hysteria2, server: '${DOMAIN}', port: 443, password: '${HY_PASSWORD}', sni: '${DOMAIN}', masquerade: '${FAKE_URL}' }${ENDCOLOR}"
     echo
@@ -493,14 +487,17 @@ warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
 
 show_status() {
     echo -e "${BLUE}服务状态:${ENDCOLOR}"
-    systemctl is-active --quiet hysteria-server && echo -e "${GREEN}✓ Hysteria2: 运行中${ENDCOLOR}" || echo -e "${RED}✗ Hysteria2: 未运行${ENDCOLOR}"
-    systemctl is-active --quiet cloudflared && echo -e "${GREEN}✓ Cloudflared: 运行中${ENDCOLOR}" || echo -e "${RED}✗ Cloudflared: 未运行${ENDCOLOR}"
+    systemctl is-active --quiet hysteria-server && echo -e "${GREEN}✓ Hysteria2   : 运行中${ENDCOLOR}" || echo -e "${RED}✗ Hysteria2   : 未运行${ENDCOLOR}"
+    systemctl is-active --quiet cloudflared && echo -e "${GREEN}✓ Cloudflared : 运行中${ENDCOLOR}" || echo -e "${RED}✗ Cloudflared : 未运行${ENDCOLOR}"
     echo
     echo -e "${BLUE}端口监听状态:${ENDCOLOR}"
     ss -tlnp | grep ":443" || echo "未检测到 443 端口监听"
 }
 
-case "$1" in
+CMD=$1
+shift
+
+case "$CMD" in
     start)
         info_echo "启动 Hysteria2 和 Cloudflared 服务..."
         systemctl start hysteria-server
@@ -513,7 +510,6 @@ case "$1" in
         success_echo "服务停止完成"
         ;;
     restart)
-        # [IMPROVED] 重启逻辑更稳健
         info_echo "正在重启服务 (采用安全顺序)..."
         info_echo "正在停止 Cloudflared..."
         systemctl stop cloudflared
@@ -536,11 +532,11 @@ case "$1" in
         ;;
     log)
         info_echo "显示 Hysteria2 实时日志 (Ctrl+C 退出)..."
-        journalctl -u hysteria-server -f --no-pager
+        journalctl -u hysteria-server -f --no-pager "$@"
         ;;
     cflog)
         info_echo "显示 Cloudflared 实时日志 (Ctrl+C 退出)..."
-        journalctl -u cloudflared -f --no-pager
+        journalctl -u cloudflared -f --no-pager "$@"
         ;;
     uninstall)
         if [[ -f /etc/hysteria2/uninstall_info.env ]]; then
@@ -588,7 +584,7 @@ main_install() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${ENDCOLOR}"
     echo -e "${GREEN}║             Hysteria2 + IPv6 + Cloudflare Tunnel               ║${ENDCOLOR}"
-    echo -e "${GREEN}║                      一键安装脚本 (v3.6)                        ║${ENDCOLOR}"
+    echo -e "${GREEN}║                      一键安装脚本 (v3.7)                        ║${ENDCOLOR}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${ENDCOLOR}"
     echo
     
