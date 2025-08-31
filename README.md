@@ -4,7 +4,7 @@
 
 ## ✨ 功能特性
 
-- ✅ **纯净安装**: 移除 Cloudflare Tunnel，减少故障点
+- ✅ **纯净安装**: 纯净版Hysteria2安装
 - ✅ **IPv6 优化**: 完美支持 IPv6 Only VPS
 - ✅ **双证书模式**: 支持自签名证书和 Let's Encrypt 证书
 - ✅ **智能配置**: 自动检测网络环境并优化配置
@@ -16,7 +16,11 @@
 
 ### 一键安装
 ```bash
-wget -O pure_hy2.sh https://raw.githubusercontent.com/everett7623/hy2ipv6/main/pure_hy2.sh && chmod +x pure_hy2.sh && ./pure_hy2.sh
+wget -O hy2.sh https://raw.githubusercontent.com/everett7623/hy2ipv6/main/hy2.sh && chmod +x hy2.sh && ./hy2.sh
+```
+
+```bash
+wget -O- https://raw.githubusercontent.com/everett7623/hy2ipv6/main/hy2.sh | sudo bash
 ```
 
 ### 安装选项
