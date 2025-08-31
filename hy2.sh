@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 3.9 (域名解析提示与用户确认增强版)
+# 版本: 3.9 (密码生成逻辑终极修复版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
@@ -65,7 +65,6 @@ show_menu() {
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
     echo -e " ${CYAN}安装选项:${ENDCOLOR}"
-    # 增强：在菜单中直接提示域名要求
     echo -e "   1. 安装 Hysteria2 (自签名证书 - ${GREEN}域名无需解析${ENDCOLOR})"
     echo -e "   2. 安装 Hysteria2 (Let's Encrypt 证书 - ${YELLOW}域名必须解析${ENDCOLOR})"
     echo -e "   3. 安装 Shadowsocks (仅 IPv6)"
@@ -111,7 +110,6 @@ check_port() {
 # Hysteria2 功能模块
 ################################################################################
 
-# 新增：显示 Hysteria2 安装前置条件的函数
 hy2_display_prerequisites() {
     local mode="$1"
     clear
@@ -119,25 +117,20 @@ hy2_display_prerequisites() {
     echo -e "               ${CYAN}Hysteria2 安装前置条件说明${ENDCOLOR}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
     echo
-
     if [[ "$mode" == "self" ]]; then
         info_echo "您选择了 [自签名证书] 模式。"
-        success_echo "在此模式下，您输入的域名（例如 hy2.17ai.de）只是一个“标签”，用于生成证书和客户端连接时的 SNI 字段。"
-        success_echo "它不需要在公共 DNS 上解析到您服务器的 IP。"
-    else # acme
+        success_echo "在此模式下，您输入的域名只是一个“标签”，用于证书和客户端连接时的 SNI 字段。"
+        success_echo "它【不需要】在公共 DNS 上解析到您服务器的 IP。"
+    else
         warning_echo "您选择了 [Let's Encrypt 证书] 模式。"
         warning_echo "在此模式下，您的域名【必须】满足以下条件："
         info_echo "1. 域名的 NS (Name Server) 记录【必须】已指向 Cloudflare 并完成托管。"
         info_echo "2. 域名【必须】能被公网正确访问（证书颁发机构需要验证）。"
         error_echo "如果这些条件未满足，证书申请一定会失败！"
     fi
-    
     echo
     read -rp "您已了解并希望继续吗? (Y/n): " confirm
-    if [[ "$confirm" =~ ^[nN]$ ]]; then
-        info_echo "安装已取消。"
-        return 1
-    fi
+    if [[ "$confirm" =~ ^[nN]$ ]]; then info_echo "安装已取消。"; return 1; fi
     return 0
 }
 
@@ -156,7 +149,11 @@ hy2_get_user_input() {
     info_echo "开始配置 Hysteria2..."
     while true; do read -rp "请输入您的域名 (用于SNI): " DOMAIN; if [[ -n "$DOMAIN" && "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then break; else error_echo "域名格式不正确"; fi; done
     read -rsp "请输入 Hysteria2 密码 (回车自动生成): " HY_PASSWORD; echo
-    if [[ -z "$HY_PASSWORD" ]]; then HY_PASSWORD=$(openssl rand -base64 16); info_echo "自动生成密码: $HY_PASSWORD"; fi
+    if [[ -z "$HY_PASSWORD" ]]; then
+        # 终极 Bug 修复：使用绝对安全的方式生成密码，只包含字母和数字
+        HY_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+        info_echo "自动生成安全密码: $HY_PASSWORD"
+    fi
     read -rp "请输入伪装网址 (默认: https://www.bing.com): " FAKE_URL; FAKE_URL=${FAKE_URL:-https://www.bing.com}
     if [[ "$USE_ACME" == true ]]; then
         local default_email="user$(shuf -i 1000-9999 -n 1)@gmail.com"; read -rp "请输入 ACME 邮箱 (默认: ${default_email}): " ACME_EMAIL; ACME_EMAIL=${ACME_EMAIL:-$default_email}
@@ -260,6 +257,9 @@ EOF
 
 hy2_run_install() {
     local cert_type="$1"
+    # 调用新增的说明和确认函数
+    hy2_display_prerequisites "$cert_type" || return 0
+    
     if systemctl list-unit-files hysteria-server.service &>/dev/null; then
         warning_echo "检测到 Hysteria2 已安装，继续将覆盖。"; read -rp "确定吗? (y/N): " confirm && [[ ! "$confirm" =~ ^[yY]$ ]] && return
         hy2_uninstall
@@ -304,7 +304,7 @@ ss_get_user_input() {
     exec </dev/tty; info_echo "开始配置 Shadowsocks (IPv6-Only)..."
     while true; do local default_port=$(shuf -i 20000-65000 -n 1); read -rp "请输入 Shadowsocks 端口 (默认: $default_port): " SS_PORT; SS_PORT=${SS_PORT:-$default_port}; check_port "$SS_PORT" "tcp" && check_port "$SS_PORT" "udp" && break; done
     read -rsp "请输入 Shadowsocks 密码 (回车自动生成): " SS_PASSWORD; echo
-    if [[ -z "$SS_PASSWORD" ]]; then SS_PASSWORD=$(openssl rand -base64 16); info_echo "自动生成密码: $SS_PASSWORD"; fi
+    if [[ -z "$SS_PASSWORD" ]]; then SS_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16); info_echo "自动生成安全密码: $SS_PASSWORD"; fi
     info_echo "请选择加密方式:"; echo "1. aes-256-gcm (推荐)"; echo "2. chacha20-ietf-poly1305"; echo "3. xchacha20-ietf-poly1305"
     while true; do read -rp "请选择 [1-3]: " mc; case $mc in 1) SS_METHOD="aes-256-gcm"; break ;; 2) SS_METHOD="chacha20-ietf-poly1305"; break ;; 3) SS_METHOD="xchacha20-ietf-poly1305"; break ;; *) error_echo "无效选择" ;; esac; done
     success_echo "已选择加密方式: $SS_METHOD"
