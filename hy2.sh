@@ -1,10 +1,11 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 4.1 (Hysteria2 安装逻辑重构版)
+# 版本: 4.2 (Hysteria2 安装逻辑终极加固版)
 
 # --- 脚本行为设置 ---
-set -e -o pipefail
+# set -e # 暂时禁用，以进行更精细的错误控制
+set -o pipefail
 
 # --- 颜色定义 ---
 GREEN='\033[0;32m'
@@ -59,7 +60,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v4.1) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v4.2) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -116,7 +117,7 @@ check_port() {
 
 
 ################################################################################
-# Hysteria2 功能模块 (全新重构逻辑)
+# Hysteria2 功能模块 (终极加固逻辑)
 ################################################################################
 
 hy2_get_user_input() {
@@ -176,23 +177,47 @@ hy2_get_user_input() {
             fi
         done
     fi
+    return 0
 }
 
+# ---【核心逻辑变更】---
+# 增加了强制下载验证，确保核心文件一定存在
 hy2_install_core() {
-    info_echo "正在安装/更新 Hysteria2核心..."
+    info_echo "正在安装/更新 Hysteria2 核心..."
     local api_url="https://api.github.com/repos/apernet/hysteria/releases/latest"
     local dl_url
     dl_url=$(curl -s "$api_url" | jq -r ".assets[] | select(.name==\"hysteria-linux-$ARCH\") | .browser_download_url")
     
     if [[ -z "$dl_url" || "$dl_url" == "null" ]]; then
-        error_echo "无法从 GitHub API 获取 Hysteria2 ($ARCH) 的下载链接。"
+        error_echo "从 GitHub API 获取 Hysteria2 ($ARCH) 的下载链接失败。"
         return 1
     fi
     
-    wget -qO /usr/local/bin/hysteria "$dl_url"
+    info_echo "正在从 $dl_url 下载..."
+    if ! wget -O /usr/local/bin/hysteria "$dl_url"; then
+        error_echo "Hysteria2 核心文件下载失败！请检查网络连接。"
+        return 1
+    fi
+    
+    # 【强制验证】检查文件是否存在且大小不为零
+    if [[ ! -s /usr/local/bin/hysteria ]]; then
+        error_echo "Hysteria2 核心下载失败！文件不存在或大小为零。"
+        error_echo "请检查您的网络连接是否可以访问 GitHub，或手动下载后上传至 /usr/local/bin/"
+        return 1
+    fi
+    
     chmod +x /usr/local/bin/hysteria
     
-    success_echo "Hysteria2 核心安装成功 版本: $(${GREEN}/usr/local/bin/hysteria version | head -n1${ENDCOLOR})"
+    # 【语法修复】先获取版本号，再带颜色输出
+    local hy2_version
+    hy2_version=$(/usr/local/bin/hysteria version | head -n1)
+    if [[ -z "$hy2_version" ]]; then
+        error_echo "Hysteria2 核心文件已下载，但无法正常运行。"
+        return 1
+    fi
+    
+    success_echo "Hysteria2 核心安装成功 版本: ${GREEN}${hy2_version}${ENDCOLOR}"
+    return 0
 }
 
 hy2_get_certificate() {
@@ -202,10 +227,17 @@ hy2_get_certificate() {
         if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
             info_echo "首次运行，正在安装 acme.sh..."
             curl https://get.acme.sh | sh -s email="$ACME_EMAIL"
+            if [ $? -ne 0 ]; then
+                error_echo "acme.sh 安装失败。"
+                return 1
+            fi
         fi
         
         export CF_Token="$CF_TOKEN"
-        ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --force --ecc
+        if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --force --ecc; then
+            error_echo "Let's Encrypt 证书申请失败。"
+            return 1
+        fi
         
         ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc \
             --fullchain-file /etc/hysteria2/certs/fullchain.cer \
@@ -220,10 +252,9 @@ hy2_get_certificate() {
     
     chmod 600 /etc/hysteria2/certs/private.key
     success_echo "证书配置完成。"
+    return 0
 }
 
-# ---【核心逻辑变更】---
-# 使用 cat << EOF 替代 awk，确保生成的 YAML 文件格式 100% 正确
 hy2_generate_config() {
     info_echo "正在生成 Hysteria2 配置文件..."
     local listen_addr="0.0.0.0:443"
@@ -247,6 +278,7 @@ masquerade:
     rewriteHost: true
 EOF
     success_echo "配置文件 /etc/hysteria2/config.yaml 生成成功。"
+    return 0
 }
 
 hy2_setup_service() {
@@ -286,10 +318,10 @@ EOF
         echo "-------------------- Journalctl Log --------------------"
         journalctl -u hysteria-server -n 20 --no-pager
         echo "------------------------------------------------------"
-        warning_echo "常见原因: 1. 配置文件(/etc/hysteria2/config.yaml)有误。 2. 证书文件路径不正确。"
         return 1
     fi
     success_echo "Hysteria2 服务已成功启动并设为开机自启。"
+    return 0
 }
 
 hy2_display_result() {
@@ -351,7 +383,7 @@ hy2_run_install_main() {
 
     check_port 443 "udp" || return 1
     
-    # 执行安装流程
+    # 链式调用，任何一步失败则终止
     hy2_get_user_input && \
     hy2_install_core && \
     hy2_get_certificate && \
@@ -545,9 +577,9 @@ main() {
     check_root
     detect_system
     # 提前安装通用依赖
-    if ! command -v jq >/dev/null || ! command -v curl >/dev/null; then
-        info_echo "首次运行，正在安装通用依赖 (curl, jq)..."
-        case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y curl jq ;; *) command -v dnf &>/dev/null && dnf install -y curl jq || yum install -y curl jq ;; esac
+    if ! command -v jq >/dev/null || ! command -v curl >/dev/null || ! command -v wget >/dev/null; then
+        info_echo "首次运行，正在安装通用依赖 (curl, wget, jq)..."
+        case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y curl wget jq ;; *) command -v dnf &>/dev/null && dnf install -y curl wget jq || yum install -y curl wget jq ;; esac
     fi
 
     while true; do
