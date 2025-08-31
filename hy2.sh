@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 3.3 (逻辑修复与健壮性增强版)
+# 版本: 3.4 (YAML生成修复与健壮性增强版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
@@ -59,7 +59,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.3) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.4) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -102,6 +102,9 @@ detect_system() {
 }
 
 detect_network() {
+    # 每次检测前重置变量
+    IPV4_ADDR=""
+    IPV6_ADDR=""
     info_echo "检测网络配置..."
     local ipv4_svcs=("https://api.ipify.org" "https://ipv4.icanhazip.com" "https://ip.sb")
     local ipv6_svcs=("https://api64.ipify.org" "https://ipv6.icanhazip.com" "https://ipv6.ip.sb")
@@ -220,24 +223,34 @@ hy2_generate_self_signed_cert() {
     chmod 600 /etc/hysteria2/certs/private.key
 }
 
+# 关键 Bug 修复：使用模板和 sed 替换来安全地生成配置文件
 hy2_generate_config() {
     info_echo "生成 Hysteria2 配置文件..."
     mkdir -p /etc/hysteria2
     local listen_addr=$([[ -n "$IPV6_ADDR" ]] && echo "[::]:443" || echo "0.0.0.0:443")
-    cat > /etc/hysteria2/config.yaml << EOF
-listen: ${listen_addr}
+    
+    # 使用带单引号的 'EOF' 来创建一个不展开变量的模板
+    cat > /etc/hysteria2/config.yaml << 'EOF'
+listen: LISTEN_ADDR_PLACEHOLDER
 tls:
   cert: /etc/hysteria2/certs/fullchain.cer
   key: /etc/hysteria2/certs/private.key
 auth:
   type: password
-  password: "${HY_PASSWORD}"
+  password: "PASSWORD_PLACEHOLDER"
 masquerade:
   type: proxy
   proxy:
-    url: "${FAKE_URL}"
+    url: "FAKE_URL_PLACEHOLDER"
     rewriteHost: true
 EOF
+
+    # 使用 sed 安全地替换占位符
+    sed -i "s|LISTEN_ADDR_PLACEHOLDER|${listen_addr}|g" /etc/hysteria2/config.yaml
+    sed -i "s|PASSWORD_PLACEHOLDER|${HY_PASSWORD}|g" /etc/hysteria2/config.yaml
+    sed -i "s|FAKE_URL_PLACEHOLDER|${FAKE_URL}|g" /etc/hysteria2/config.yaml
+    
+    success_echo "配置文件生成完成"
 }
 
 hy2_create_service() {
@@ -267,16 +280,26 @@ hy2_configure_firewall() {
 }
 
 hy2_start_service() {
-    info_echo "启动 Hysteria2 服务..."
+    info_echo "正在启动 Hysteria2 服务..."
+    
+    # 增强：启动前先用 Hysteria2 自带的检查功能验证配置文件
+    if ! /usr/local/bin/hysteria server --config /etc/hysteria2/config.yaml --check >/dev/null 2>&1; then
+        error_echo "Hysteria2 配置文件语法验证失败！请检查输入。"
+        /usr/local/bin/hysteria server --config /etc/hysteria2/config.yaml --check
+        return 1
+    fi
+    success_echo "配置文件语法验证通过"
+
     systemctl enable --now hysteria-server
-    sleep 2 # 等待服务进程启动
+    sleep 2
+    
     if systemctl is-active --quiet hysteria-server && ss -ulnp | grep -q ":443.*hysteria"; then
         success_echo "Hysteria2 服务启动成功"
-        return 0 # 返回成功
+        return 0
     else
         error_echo "Hysteria2 服务启动失败！正在显示诊断信息..."
         journalctl -u hysteria-server -n 20 --no-pager
-        return 1 # 返回失败
+        return 1
     fi
 }
 
@@ -297,7 +320,6 @@ $share_link
 EOF
 }
 
-# 逻辑修复：重构安装流程以确保可靠性
 hy2_run_install() {
     local cert_type="$1"
     if systemctl list-unit-files hysteria-server.service &>/dev/null; then
@@ -307,21 +329,17 @@ hy2_run_install() {
     USE_ACME=$([[ "$cert_type" == "acme" ]] && echo true || echo false)
     check_port 443 udp || return 1
     
-    # 步骤 1: 准备工作
-    hy2_install_dependencies && hy2_get_user_input && hy2_install || return 1
+    # 逻辑修复：确保所有步骤都成功才继续
+    hy2_install_dependencies && hy2_get_user_input && hy2_install || { error_echo "Hysteria2 准备阶段失败。"; return 1; }
     
-    # 步骤 2: 证书
     if $USE_ACME; then hy2_install_acme_cert; else hy2_generate_self_signed_cert; fi
     
-    # 步骤 3: 配置
-    hy2_generate_config && hy2_create_service && hy2_configure_firewall || return 1
+    hy2_generate_config && hy2_create_service && hy2_configure_firewall || { error_echo "Hysteria2 配置阶段失败。"; return 1; }
     
-    # 步骤 4: 启动并验证
     if hy2_start_service; then
-        # 只有在服务成功启动后才保存信息和显示成功
         hy2_save_info "$cert_type"
         clear
-        success_echo "Hysteria2 安装完成！"
+        success_echo "Hysteria2 安装成功！"
         cat /root/hysteria2_info.txt
     else
         error_echo "Hysteria2 安装失败，服务未能成功启动。请检查上面的错误日志。"
@@ -468,7 +486,7 @@ ss_run_install() {
         warning_echo "检测到 Shadowsocks (IPv6) 已安装，继续将覆盖。"; read -rp "确定吗? (y/N): " confirm && [[ ! "$confirm" =~ ^[yY]$ ]] && return
         ss_uninstall
     fi
-    ss_check_ipv6 && ss_install_dependencies && ss_get_user_input && ss_generate_config && ss_create_service && ss_configure_firewall || return 1
+    ss_check_ipv6 && ss_install_dependencies && ss_get_user_input && ss_generate_config && ss_create_service && ss_configure_firewall || { error_echo "Shadowsocks 准备阶段失败。"; return 1; }
     if ss_start_service; then
         ss_save_info
         clear
@@ -552,9 +570,9 @@ uninstall_services() {
         echo "0. 返回主菜单"
         read -rp "请选择: " choice
         case $choice in
-            1) hy2_uninstall; success_echo "Hysteria2 卸载完成" ;;
-            2) ss_uninstall; success_echo "Shadowsocks (IPv6) 卸载完成" ;;
-            3) warning_echo "将卸载所有服务及其依赖！"; read -rp "确定吗? (y/N): " confirm && [[ "$confirm" =~ ^[yY]$ ]] && { hy2_uninstall; ss_uninstall; success_echo "清理完成"; } ;;
+            1) read -rp "确定要卸载 Hysteria2 吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && hy2_uninstall && success_echo "Hysteria2 卸载完成" ;;
+            2) read -rp "确定要卸载 Shadowsocks (IPv6) 吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && ss_uninstall && success_echo "Shadowsocks (IPv6) 卸载完成" ;;
+            3) warning_echo "将卸载所有服务及其依赖！"; read -rp "确定吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && { hy2_uninstall; ss_uninstall; success_echo "清理完成"; } ;;
             0) return ;;
             *) error_echo "无效选择" ;;
         esac
