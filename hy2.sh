@@ -1,10 +1,9 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 4.2 (Hysteria2 安装逻辑终极加固版)
+# 版本: 4.3 (Hysteria2 核心执行失败诊断版)
 
 # --- 脚本行为设置 ---
-# set -e # 暂时禁用，以进行更精细的错误控制
 set -o pipefail
 
 # --- 颜色定义 ---
@@ -60,7 +59,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v4.2) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v4.3) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -115,9 +114,8 @@ check_port() {
     return 0
 }
 
-
 ################################################################################
-# Hysteria2 功能模块 (终极加固逻辑)
+# Hysteria2 功能模块 (终极诊断版)
 ################################################################################
 
 hy2_get_user_input() {
@@ -181,7 +179,7 @@ hy2_get_user_input() {
 }
 
 # ---【核心逻辑变更】---
-# 增加了强制下载验证，确保核心文件一定存在
+# 捕获并显示程序执行失败时的详细系统错误信息
 hy2_install_core() {
     info_echo "正在安装/更新 Hysteria2 核心..."
     local api_url="https://api.github.com/repos/apernet/hysteria/releases/latest"
@@ -199,23 +197,33 @@ hy2_install_core() {
         return 1
     fi
     
-    # 【强制验证】检查文件是否存在且大小不为零
     if [[ ! -s /usr/local/bin/hysteria ]]; then
         error_echo "Hysteria2 核心下载失败！文件不存在或大小为零。"
-        error_echo "请检查您的网络连接是否可以访问 GitHub，或手动下载后上传至 /usr/local/bin/"
         return 1
     fi
     
     chmod +x /usr/local/bin/hysteria
     
-    # 【语法修复】先获取版本号，再带颜色输出
-    local hy2_version
-    hy2_version=$(/usr/local/bin/hysteria version | head -n1)
-    if [[ -z "$hy2_version" ]]; then
-        error_echo "Hysteria2 核心文件已下载，但无法正常运行。"
+    # 【终极诊断逻辑】
+    # 尝试执行，并捕获所有输出（stdout & stderr）和退出码
+    local exec_output
+    local exit_code
+    exec_output=$(/usr/local/bin/hysteria version 2>&1)
+    exit_code=$?
+
+    # 如果退出码不为 0 (成功)，则说明执行失败
+    if [ $exit_code -ne 0 ]; then
+        error_echo "Hysteria2 核心文件已下载，但执行失败！"
+        warning_echo "这通常是由于【系统环境不兼容】(如 glibc 版本过低) 或【CPU 架构不匹配】导致的。"
+        echo -e "${RED}--- 来自操作系统的详细错误信息 ---${ENDCOLOR}"
+        echo "$exec_output"
+        echo -e "${RED}---------------------------------${ENDCOLOR}"
+        warning_echo "请根据以上错误信息，判断是否需要升级您的操作系统。"
+        warning_echo "例如，CentOS 7/Debian 9 等老旧系统无法运行最新的 Hysteria2。"
         return 1
     fi
     
+    local hy2_version=$(echo "$exec_output" | head -n1)
     success_echo "Hysteria2 核心安装成功 版本: ${GREEN}${hy2_version}${ENDCOLOR}"
     return 0
 }
@@ -226,8 +234,7 @@ hy2_get_certificate() {
         info_echo "正在使用 acme.sh 申请 Let's Encrypt 证书..."
         if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
             info_echo "首次运行，正在安装 acme.sh..."
-            curl https://get.acme.sh | sh -s email="$ACME_EMAIL"
-            if [ $? -ne 0 ]; then
+            if ! curl https://get.acme.sh | sh -s email="$ACME_EMAIL"; then
                 error_echo "acme.sh 安装失败。"
                 return 1
             fi
@@ -390,7 +397,7 @@ hy2_run_install_main() {
     hy2_generate_config && \
     hy2_setup_service && \
     hy2_display_result "$cert_mode" || {
-        error_echo "Hysteria2 安装过程中发生错误，已终止。"
+        error_echo "Hysteria2 安装过程中发生致命错误，已终止。"
     }
 }
 
