@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Hysteria2 + IPv6 安装脚本
+# Pure Hysteria2 + IPv6 安装脚本
 # 版本: 2.0 (纯净版)
 
 set -e -o pipefail
@@ -38,7 +38,7 @@ show_menu() {
     local ipv4_display="${IPV4_ADDR:-N/A}"
     local ipv6_display="${IPV6_ADDR:-N/A}"
     
-    echo -e "${BG_PURPLE} Pure Hysteria2 Management Script (v6.0) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Pure Hysteria2 Management Script (v2.0) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} / ${GREEN}${ipv6_display}${ENDCOLOR}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
