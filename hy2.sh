@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 3.2 (完整修复版)
+# 版本: 3.3 (逻辑修复与健壮性增强版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
@@ -59,7 +59,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.2) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.3) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -115,10 +115,6 @@ detect_network() {
         IPV6_ADDR=$(curl -6 -s --connect-timeout 3 "$svc" 2>/dev/null | grep -Eo '^[0-9a-fA-F:]+$' || true)
         [[ -n "$IPV6_ADDR" ]] && break
     done
-    
-    if [[ -z "$IPV4_ADDR" && -z "$IPV6_ADDR" ]]; then
-        warning_echo "未能检测到任何公网IP地址，部分功能可能受限"
-    fi
 }
 
 check_port() {
@@ -161,7 +157,6 @@ hy2_install_dependencies() {
     fi
 }
 
-# 修复：恢复了正确的 hy2_get_user_input 函数，并修复了其中的 Cloudflare Token 验证 Bug
 hy2_get_user_input() {
     exec </dev/tty
     info_echo "开始配置 Hysteria2..."
@@ -184,10 +179,9 @@ hy2_get_user_input() {
         read -rp "请输入 ACME 邮箱 (默认: user@example.com): " ACME_EMAIL
         ACME_EMAIL=${ACME_EMAIL:-user@example.com}
         while true; do
-            read -rsp "请输入 Cloudflare API Token (用于 DNS 验证): " CF_TOKEN; echo
+            read -rsp "请输入 Cloudflare API Token: " CF_TOKEN; echo
             [[ -n "$CF_TOKEN" ]] || { error_echo "Token 不能为空"; continue; }
             info_echo "正在验证 Token..."
-            # 关键 Bug 修复：直接使用 $DOMAIN 进行 API 查询，不再猜测根域名
             local api_result=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
             if echo "$api_result" | jq -e '.success==true and .result[0].id' >/dev/null; then
                 success_echo "Token 验证成功 (Zone: $(echo "$api_result" | jq -r '.result[0].name'))"; break
@@ -275,11 +269,14 @@ hy2_configure_firewall() {
 hy2_start_service() {
     info_echo "启动 Hysteria2 服务..."
     systemctl enable --now hysteria-server
-    sleep 2
-    if ss -ulnp | grep -q ":443.*hysteria"; then
+    sleep 2 # 等待服务进程启动
+    if systemctl is-active --quiet hysteria-server && ss -ulnp | grep -q ":443.*hysteria"; then
         success_echo "Hysteria2 服务启动成功"
+        return 0 # 返回成功
     else
-        error_echo "Hysteria2 服务启动失败！"; journalctl -u hysteria-server -n 10 --no-pager; return 1;
+        error_echo "Hysteria2 服务启动失败！正在显示诊断信息..."
+        journalctl -u hysteria-server -n 20 --no-pager
+        return 1 # 返回失败
     fi
 }
 
@@ -300,6 +297,7 @@ $share_link
 EOF
 }
 
+# 逻辑修复：重构安装流程以确保可靠性
 hy2_run_install() {
     local cert_type="$1"
     if systemctl list-unit-files hysteria-server.service &>/dev/null; then
@@ -308,10 +306,27 @@ hy2_run_install() {
     fi
     USE_ACME=$([[ "$cert_type" == "acme" ]] && echo true || echo false)
     check_port 443 udp || return 1
+    
+    # 步骤 1: 准备工作
     hy2_install_dependencies && hy2_get_user_input && hy2_install || return 1
+    
+    # 步骤 2: 证书
     if $USE_ACME; then hy2_install_acme_cert; else hy2_generate_self_signed_cert; fi
-    hy2_generate_config && hy2_create_service && hy2_configure_firewall && hy2_start_service && hy2_save_info "$cert_type"
-    clear && success_echo "Hysteria2 安装完成！" && cat /root/hysteria2_info.txt
+    
+    # 步骤 3: 配置
+    hy2_generate_config && hy2_create_service && hy2_configure_firewall || return 1
+    
+    # 步骤 4: 启动并验证
+    if hy2_start_service; then
+        # 只有在服务成功启动后才保存信息和显示成功
+        hy2_save_info "$cert_type"
+        clear
+        success_echo "Hysteria2 安装完成！"
+        cat /root/hysteria2_info.txt
+    else
+        error_echo "Hysteria2 安装失败，服务未能成功启动。请检查上面的错误日志。"
+        return 1
+    fi
 }
 
 hy2_uninstall() {
@@ -355,7 +370,6 @@ ss_install_dependencies() {
     fi
 }
 
-# 补全：完整的 ss_get_user_input 函数
 ss_get_user_input() {
     exec </dev/tty
     info_echo "开始配置 Shadowsocks (IPv6-Only)..."
@@ -428,6 +442,7 @@ ss_start_service() {
     sleep 2
     if systemctl is-active --quiet ss-ipv6; then
         success_echo "Shadowsocks 服务启动成功"
+        return 0
     else
         error_echo "服务启动失败！"; journalctl -u ss-ipv6 -n 10 --no-pager; return 1;
     fi
@@ -453,10 +468,17 @@ ss_run_install() {
         warning_echo "检测到 Shadowsocks (IPv6) 已安装，继续将覆盖。"; read -rp "确定吗? (y/N): " confirm && [[ ! "$confirm" =~ ^[yY]$ ]] && return
         ss_uninstall
     fi
-    ss_check_ipv6 && ss_install_dependencies && ss_get_user_input && ss_generate_config && ss_create_service && ss_configure_firewall && ss_start_service && ss_save_info || return 1
-    clear && success_echo "Shadowsocks (IPv6-Only) 安装完成！"
-    cat /root/ss_ipv6_info.txt
-    echo; info_echo "配置二维码:"; qrencode -t UTF8 "$(grep "ss://" /root/ss_ipv6_info.txt)"
+    ss_check_ipv6 && ss_install_dependencies && ss_get_user_input && ss_generate_config && ss_create_service && ss_configure_firewall || return 1
+    if ss_start_service; then
+        ss_save_info
+        clear
+        success_echo "Shadowsocks (IPv6-Only) 安装完成！"
+        cat /root/ss_ipv6_info.txt
+        echo; info_echo "配置二维码:"; qrencode -t UTF8 "$(grep "ss://" /root/ss_ipv6_info.txt)"
+    else
+        error_echo "Shadowsocks 安装失败，服务未能成功启动。"
+        return 1
+    fi
 }
 
 ss_uninstall() {
@@ -582,7 +604,6 @@ main() {
             0) info_echo "感谢使用!"; exit 0 ;;
             *) error_echo "无效选择"; sleep 1 ;;
         esac
-        # 安装或显示信息后暂停，管理类菜单内部有自己的暂停逻辑
         [[ "$main_choice" =~ ^[123578]$ ]] && read -rp "按回车返回主菜单..."
     done
 }
