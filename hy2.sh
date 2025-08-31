@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 3.7 (YAML 生成逻辑重构与最终修复版)
+# 版本: 3.9 (域名解析提示与用户确认增强版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
@@ -59,14 +59,15 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.7) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.9) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
     echo -e " ${CYAN}安装选项:${ENDCOLOR}"
-    echo -e "   1. 安装 Hysteria2 (自签名证书)"
-    echo -e "   2. 安装 Hysteria2 (Let's Encrypt 证书)"
+    # 增强：在菜单中直接提示域名要求
+    echo -e "   1. 安装 Hysteria2 (自签名证书 - ${GREEN}域名无需解析${ENDCOLOR})"
+    echo -e "   2. 安装 Hysteria2 (Let's Encrypt 证书 - ${YELLOW}域名必须解析${ENDCOLOR})"
     echo -e "   3. 安装 Shadowsocks (仅 IPv6)"
     echo
     echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
@@ -110,14 +111,43 @@ check_port() {
 # Hysteria2 功能模块
 ################################################################################
 
+# 新增：显示 Hysteria2 安装前置条件的函数
+hy2_display_prerequisites() {
+    local mode="$1"
+    clear
+    echo -e "${PURPLE}================================================================${ENDCOLOR}"
+    echo -e "               ${CYAN}Hysteria2 安装前置条件说明${ENDCOLOR}"
+    echo -e "${PURPLE}================================================================${ENDCOLOR}"
+    echo
+
+    if [[ "$mode" == "self" ]]; then
+        info_echo "您选择了 [自签名证书] 模式。"
+        success_echo "在此模式下，您输入的域名（例如 hy2.17ai.de）只是一个“标签”，用于生成证书和客户端连接时的 SNI 字段。"
+        success_echo "它不需要在公共 DNS 上解析到您服务器的 IP。"
+    else # acme
+        warning_echo "您选择了 [Let's Encrypt 证书] 模式。"
+        warning_echo "在此模式下，您的域名【必须】满足以下条件："
+        info_echo "1. 域名的 NS (Name Server) 记录【必须】已指向 Cloudflare 并完成托管。"
+        info_echo "2. 域名【必须】能被公网正确访问（证书颁发机构需要验证）。"
+        error_echo "如果这些条件未满足，证书申请一定会失败！"
+    fi
+    
+    echo
+    read -rp "您已了解并希望继续吗? (Y/n): " confirm
+    if [[ "$confirm" =~ ^[nN]$ ]]; then
+        info_echo "安装已取消。"
+        return 1
+    fi
+    return 0
+}
+
 hy2_install_dependencies() {
     info_echo "为 Hysteria2 安装依赖..."
     local pkgs_to_install=(); declare -A pkg_map
-    case "$OS_TYPE" in "ubuntu"|"debian") pkg_map=([curl]="curl" [wget]="wget" [jq]="jq" [openssl]="openssl" [nslookup]="dnsutils") ;; *) pkg_map=([curl]="curl" [wget]="wget" [jq]="jq" [openssl]="openssl" [nslookup]="bind-utils") ;; esac
+    case "$OS_TYPE" in "ubuntu"|"debian") pkg_map=([curl]="curl" [wget]="wget" [jq]="jq" [openssl]="openssl" [nslookup]="dnsutils" [awk]="gawk") ;; *) pkg_map=([curl]="curl" [wget]="wget" [jq]="jq" [openssl]="openssl" [nslookup]="bind-utils" [awk]="gawk") ;; esac
     for cmd in "${!pkg_map[@]}"; do command -v "$cmd" &>/dev/null || pkgs_to_install+=("${pkg_map[$cmd]}"); done
     if [[ ${#pkgs_to_install[@]} -gt 0 ]]; then
-        info_echo "需要安装: ${pkgs_to_install[*]}"
-        case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y "${pkgs_to_install[@]}" ;; *) command -v dnf &>/dev/null && dnf install -y "${pkgs_to_install[@]}" || yum install -y "${pkgs_to_install[@]}" ;; esac || { error_echo "依赖安装失败"; return 1; }
+        info_echo "需要安装: ${pkgs_to_install[*]}"; case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y "${pkgs_to_install[@]}" ;; *) command -v dnf &>/dev/null && dnf install -y "${pkgs_to_install[@]}" || yum install -y "${pkgs_to_install[@]}" ;; esac || { error_echo "依赖安装失败"; return 1; }
     fi
 }
 
@@ -162,28 +192,24 @@ hy2_generate_self_signed_cert() {
     chmod 600 /etc/hysteria2/certs/private.key
 }
 
-# 核心 Bug 修复：使用 printf 重构配置生成，100% 安全
 hy2_generate_config() {
-    info_echo "生成 Hysteria2 配置文件..."
-    mkdir -p /etc/hysteria2
-    local listen_addr=$([[ -n "$IPV6_ADDR" ]] && echo "[::]:443" || echo "0.0.0.0:443")
-    
-    # 使用 printf 逐行生成，确保特殊字符被原样写入
-    printf '%s\n' \
-        "listen: ${listen_addr}" \
-        "tls:" \
-        "  cert: /etc/hysteria2/certs/fullchain.cer" \
-        "  key: /etc/hysteria2/certs/private.key" \
-        "auth:" \
-        "  type: password" \
-        "  password: \"${HY_PASSWORD}\"" \
-        "masquerade:" \
-        "  type: proxy" \
-        "  proxy:" \
-        "    url: \"${FAKE_URL}\"" \
-        "    rewriteHost: true" \
-        > /etc/hysteria2/config.yaml
-
+    info_echo "生成 Hysteria2 配置文件..."; mkdir -p /etc/hysteria2; local listen_addr=$([[ -n "$IPV6_ADDR" ]] && echo "[::]:443" || echo "0.0.0.0:443")
+    awk -v listen="$listen_addr" -v pass="$HY_PASSWORD" -v url="$FAKE_URL" '
+    { gsub(/__LISTEN_ADDR__/, listen); gsub(/__HY_PASSWORD__/, pass); gsub(/__FAKE_URL__/, url); print; }
+    ' > /etc/hysteria2/config.yaml << 'EOF'
+listen: __LISTEN_ADDR__
+tls:
+  cert: /etc/hysteria2/certs/fullchain.cer
+  key: /etc/hysteria2/certs/private.key
+auth:
+  type: password
+  password: "__HY_PASSWORD__"
+masquerade:
+  type: proxy
+  proxy:
+    url: "__FAKE_URL__"
+    rewriteHost: true
+EOF
     success_echo "配置文件生成完成"
 }
 
@@ -204,24 +230,16 @@ EOF
 }
 
 hy2_configure_firewall() {
-    info_echo "为 Hysteria2 配置防火墙..."
-    if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then ufw allow 443/udp comment "Hysteria2" >/dev/null;
+    info_echo "为 Hysteria2 配置防火墙..."; if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then ufw allow 443/udp comment "Hysteria2" >/dev/null;
     elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null; fi
 }
 
 hy2_start_service() {
-    info_echo "正在启动 Hysteria2 服务..."
-    systemctl enable --now hysteria-server
-    sleep 2
+    info_echo "正在启动 Hysteria2 服务..."; systemctl enable --now hysteria-server; sleep 2
     if systemctl is-active --quiet hysteria-server && ss -ulnp | grep -q ":443.*hysteria"; then
         success_echo "Hysteria2 服务启动成功"; return 0;
     else
-        error_echo "Hysteria2 服务启动失败！正在显示诊断信息..."
-        echo "-------------------- Journalctl Log --------------------"
-        journalctl -u hysteria-server -n 20 --no-pager
-        echo "------------------------------------------------------"
-        warning_echo "常见原因: 1. 配置文件(/etc/hysteria2/config.yaml)有误。 2. 证书文件路径不正确。"
-        return 1;
+        error_echo "Hysteria2 服务启动失败！正在显示诊断信息..."; echo "-------------------- Journalctl Log --------------------"; journalctl -u hysteria-server -n 20 --no-pager; echo "------------------------------------------------------"; warning_echo "常见原因: 1. 配置文件(/etc/hysteria2/config.yaml)有误。 2. 证书文件路径不正确。"; return 1;
     fi
 }
 
@@ -266,7 +284,7 @@ hy2_uninstall() {
 
 
 ################################################################################
-# Shadowsocks (IPv6-Only) 功能模块
+# Shadowsocks (IPv6-Only) 功能模块 (无改动)
 ################################################################################
 
 ss_check_ipv6() {
@@ -278,8 +296,7 @@ ss_install_dependencies() {
     info_echo "为 Shadowsocks 安装依赖..."; local pkgs_to_install=(); local deps=("shadowsocks-libev" "qrencode")
     for pkg in "${deps[@]}"; do case "$OS_TYPE" in "ubuntu"|"debian") dpkg -s "$pkg" &>/dev/null || pkgs_to_install+=("$pkg") ;; *) rpm -q "$pkg" &>/dev/null || pkgs_to_install+=("$pkg") ;; esac; done
     if [[ ${#pkgs_to_install[@]} -gt 0 ]]; then
-        info_echo "需要安装: ${pkgs_to_install[*]}"
-        case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y "${pkgs_to_install[@]}" ;; *) command -v dnf &>/dev/null && dnf install -y epel-release && dnf install -y "${pkgs_to_install[@]}" || yum install -y epel-release && yum install -y "${pkgs_to_install[@]}" ;; esac || { error_echo "依赖安装失败"; return 1; }
+        info_echo "需要安装: ${pkgs_to_install[*]}"; case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y "${pkgs_to_install[@]}" ;; *) command -v dnf &>/dev/null && dnf install -y epel-release && dnf install -y "${pkgs_to_install[@]}" || yum install -y epel-release && yum install -y "${pkgs_to_install[@]}" ;; esac || { error_echo "依赖安装失败"; return 1; }
     fi
 }
 
