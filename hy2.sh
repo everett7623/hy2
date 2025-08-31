@@ -135,7 +135,7 @@ tls:
   key: /etc/hysteria2/certs/private.key
 auth:
   type: password
-  password: $HY_PASSWORD
+  password: "$HY_PASSWORD"
 masquerade:
   type: proxy
   proxy:
@@ -153,6 +153,7 @@ After=network.target
 [Service]
 ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria2/config.yaml
 Restart=always
+RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -168,10 +169,12 @@ EOF
 hy2_uninstall() {
     info_echo "正在卸载 Hysteria2..."; systemctl disable --now hysteria-server >/dev/null 2>&1 || true
     if [[ -f /etc/hysteria2/certs/fullchain.cer ]]; then
-        local domain_in_cert=$(openssl x509 -in /etc/hysteria2/certs/fullchain.cer -noout -subject | sed -n 's/.*CN = \([^,]*\).*/\1/p')
+        # 尝试从证书中提取域名，以便后续尝试移除ACME证书
+        local domain_in_cert
+        domain_in_cert=$(openssl x509 -in /etc/hysteria2/certs/fullchain.cer -noout -subject 2>/dev/null | sed -n 's/.*CN = \([^,]*\).*/\1/p')
         if [[ -n "$domain_in_cert" ]] && command -v ~/.acme.sh/acme.sh &> /dev/null; then
              info_echo "正在尝试移除 $domain_in_cert 的 ACME 证书..."
-             ~/.acme.sh/acme.sh --remove -d "$domain_in_cert" >/dev/null 2>&1 || true
+             ~/.acme.sh/acme.sh --remove -d "$domain_in_cert" --ecc >/dev/null 2>&1 || true
         fi
     fi
     rm -f /etc/systemd/system/hysteria-server.service /usr/local/bin/hysteria
@@ -209,7 +212,7 @@ hy2_display_result_self_signed() {
     echo -e "端口:       ${GREEN}443${ENDCOLOR}"
     echo -e "密码:       ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     echo -e "SNI:        ${GREEN}$DOMAIN${ENDCOLOR}"
-    echo -e "允许不安全: ${YELLOW}true (必须勾选)${ENDCOLOR}"
+    echo -e "允许不安全: ${YELLOW}true (客户端必须勾选)${ENDCOLOR}"
 }
 hy2_run_install_self_signed() {
     hy2_install_dependencies && \
@@ -219,7 +222,7 @@ hy2_run_install_self_signed() {
     hy2_generate_config && \
     hy2_setup_service && \
     hy2_display_result_self_signed || {
-        error_echo "Hysteria2 安装过程中发生错误。"
+        error_echo "Hysteria2 (自签名模式) 安装失败。"
     }
 }
 
@@ -236,7 +239,7 @@ hy2_get_user_input_acme() {
         if echo "$api_result" | jq -e '.success == true and .result[0].id' > /dev/null; then
             CF_ZONE_ID=$(echo "$api_result" | jq -r '.result[0].id'); CF_ACCOUNT_ID=$(echo "$api_result" | jq -r '.result[0].account.id'); success_echo "Token 验证成功！"; break
         else
-            error_echo "Token 验证失败或权限不足！"
+            error_echo "Token 验证失败或权限不足！请检查 Token 是否拥有对 '$root_domain' 的 'Zone:Read' 和 'DNS:Edit' 权限。"
         fi
     done
     read -rsp "请输入 Hysteria 密码 (回车自动生成): " HY_PASSWORD; echo
@@ -249,11 +252,12 @@ hy2_install_acme_and_cert() {
     info_echo "安装 ACME.sh 并申请 SSL 证书..."
     if ! command -v ~/.acme.sh/acme.sh &> /dev/null; then curl https://get.acme.sh | sh -s email="$ACME_EMAIL"; fi
     export CF_Token="$CF_TOKEN"; export CF_Account_ID="$CF_ACCOUNT_ID"; export CF_Zone_ID="$CF_ZONE_ID"
-    if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --force; then
-        error_echo "SSL 证书申请失败！"; return 1
+    info_echo "正在通过 DNS API 申请证书，此过程可能需要1-2分钟，请稍候..."
+    if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$DOMAIN" --server letsencrypt --force --ecc; then
+        error_echo "SSL 证书申请失败！请检查 acme.sh 的日志输出。"; return 1
     fi
     mkdir -p /etc/hysteria2/certs
-    if ! ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --fullchain-file /etc/hysteria2/certs/fullchain.cer --key-file /etc/hysteria2/certs/private.key; then
+    if ! ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --fullchain-file /etc/hysteria2/certs/fullchain.cer --key-file /etc/hysteria2/certs/private.key; then
         error_echo "证书安装步骤失败！"; return 1
     fi
     success_echo "SSL 证书申请并安装完成"
@@ -266,8 +270,9 @@ hy2_display_result_acme() {
     echo -e "端口:       ${GREEN}443${ENDCOLOR}"
     echo -e "密码:       ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     echo -e "SNI:        ${GREEN}$DOMAIN${ENDCOLOR}"
+    echo -e "允许不安全: ${GREEN}false (客户端不应勾选)${ENDCOLOR}"
     echo
-    info_echo "请确保您的域名 ($DOMAIN) 已解析到此服务器的 IP: ${IPV4_ADDR:-$IPV6_ADDR}"
+    info_echo "请确保您的域名 ($DOMAIN) 已正确解析到此服务器的 IP: ${IPV4_ADDR:-$IPV6_ADDR}"
 }
 hy2_run_install_acme() {
     hy2_install_dependencies && \
@@ -277,10 +282,9 @@ hy2_run_install_acme() {
     hy2_generate_config && \
     hy2_setup_service && \
     hy2_display_result_acme || {
-        error_echo "Hysteria2 安装过程中发生错误。"
+        error_echo "Hysteria2 (ACME 模式) 安装失败。"
     }
 }
-
 
 ################################################################################
 # Shadowsocks (IPv6-Only) 功能模块 (代码完全保留)
