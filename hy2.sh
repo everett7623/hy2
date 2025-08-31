@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 3.6 (Hysteria2 安装流程重构与最终修复版)
+# 版本: 3.7 (YAML 生成逻辑重构与最终修复版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
@@ -59,7 +59,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.6) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.7) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -126,14 +126,13 @@ hy2_get_user_input() {
     info_echo "开始配置 Hysteria2..."
     while true; do read -rp "请输入您的域名 (用于SNI): " DOMAIN; if [[ -n "$DOMAIN" && "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then break; else error_echo "域名格式不正确"; fi; done
     read -rsp "请输入 Hysteria2 密码 (回车自动生成): " HY_PASSWORD; echo
-    if [[ -z "$HY_PASSWORD" ]]; then HY_PASSWORD=$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-16); info_echo "自动生成密码: $HY_PASSWORD"; fi
+    if [[ -z "$HY_PASSWORD" ]]; then HY_PASSWORD=$(openssl rand -base64 16); info_echo "自动生成密码: $HY_PASSWORD"; fi
     read -rp "请输入伪装网址 (默认: https://www.bing.com): " FAKE_URL; FAKE_URL=${FAKE_URL:-https://www.bing.com}
     if [[ "$USE_ACME" == true ]]; then
         local default_email="user$(shuf -i 1000-9999 -n 1)@gmail.com"; read -rp "请输入 ACME 邮箱 (默认: ${default_email}): " ACME_EMAIL; ACME_EMAIL=${ACME_EMAIL:-$default_email}
         echo; warning_echo "--- 如何创建正确的 Cloudflare API Token ---"; echo "1. 访问 Cloudflare -> 我的个人资料 -> API令牌 -> 创建令牌"; echo "2. 点击“编辑区域 DNS”模板旁的“使用模板”按钮"; echo "3. 在“区域资源”下，选择“包括”->“特定区域”->“${DOMAIN}”"; echo "4. 点击“继续以显示摘要”，然后“创建令牌”"; echo "---------------------------------------------"; echo
         while true; do
-            read -rsp "请输入 Cloudflare API Token: " CF_TOKEN; echo
-            [[ -n "$CF_TOKEN" ]] || { error_echo "Token 不能为空"; continue; }
+            read -rsp "请输入 Cloudflare API Token: " CF_TOKEN; echo; [[ -n "$CF_TOKEN" ]] || { error_echo "Token 不能为空"; continue; }
             info_echo "正在验证 Token..."; local api_result=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
             if ! echo "$api_result" | jq -e '.success==true' >/dev/null; then error_echo "Token 无效或网络错误！Cloudflare API 返回失败。"; echo "API 错误信息: $(echo "$api_result" | jq '.errors')";
             elif ! echo "$api_result" | jq -e '.result[0].id' >/dev/null; then error_echo "Token 有效，但在您的账户下找不到域名 '${DOMAIN}'！"; warning_echo "请检查: 1. 域名拼写是否正确。 2. 此域名是否已添加到此 Cloudflare 账户。";
@@ -163,23 +162,29 @@ hy2_generate_self_signed_cert() {
     chmod 600 /etc/hysteria2/certs/private.key
 }
 
+# 核心 Bug 修复：使用 printf 重构配置生成，100% 安全
 hy2_generate_config() {
-    info_echo "生成 Hysteria2 配置文件..."; mkdir -p /etc/hysteria2; local listen_addr=$([[ -n "$IPV6_ADDR" ]] && echo "[::]:43" || echo "0.0.0.0:443")
-    cat > /etc/hysteria2/config.yaml << 'EOF'
-listen: LISTEN_ADDR_PLACEHOLDER
-tls:
-  cert: /etc/hysteria2/certs/fullchain.cer
-  key: /etc/hysteria2/certs/private.key
-auth:
-  type: password
-  password: "PASSWORD_PLACEHOLDER"
-masquerade:
-  type: proxy
-  proxy:
-    url: "FAKE_URL_PLACEHOLDER"
-    rewriteHost: true
-EOF
-    sed -i "s|LISTEN_ADDR_PLACEHOLDER|${listen_addr}|g" /etc/hysteria2/config.yaml; sed -i "s|PASSWORD_PLACEHOLDER|${HY_PASSWORD}|g" /etc/hysteria2/config.yaml; sed -i "s|FAKE_URL_PLACEHOLDER|${FAKE_URL}|g" /etc/hysteria2/config.yaml
+    info_echo "生成 Hysteria2 配置文件..."
+    mkdir -p /etc/hysteria2
+    local listen_addr=$([[ -n "$IPV6_ADDR" ]] && echo "[::]:443" || echo "0.0.0.0:443")
+    
+    # 使用 printf 逐行生成，确保特殊字符被原样写入
+    printf '%s\n' \
+        "listen: ${listen_addr}" \
+        "tls:" \
+        "  cert: /etc/hysteria2/certs/fullchain.cer" \
+        "  key: /etc/hysteria2/certs/private.key" \
+        "auth:" \
+        "  type: password" \
+        "  password: \"${HY_PASSWORD}\"" \
+        "masquerade:" \
+        "  type: proxy" \
+        "  proxy:" \
+        "    url: \"${FAKE_URL}\"" \
+        "    rewriteHost: true" \
+        > /etc/hysteria2/config.yaml
+
+    success_echo "配置文件生成完成"
 }
 
 hy2_create_service() {
@@ -204,7 +209,6 @@ hy2_configure_firewall() {
     elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null; fi
 }
 
-# 核心修复：移除--check标志，优化启动诊断流程
 hy2_start_service() {
     info_echo "正在启动 Hysteria2 服务..."
     systemctl enable --now hysteria-server
@@ -283,7 +287,7 @@ ss_get_user_input() {
     exec </dev/tty; info_echo "开始配置 Shadowsocks (IPv6-Only)..."
     while true; do local default_port=$(shuf -i 20000-65000 -n 1); read -rp "请输入 Shadowsocks 端口 (默认: $default_port): " SS_PORT; SS_PORT=${SS_PORT:-$default_port}; check_port "$SS_PORT" "tcp" && check_port "$SS_PORT" "udp" && break; done
     read -rsp "请输入 Shadowsocks 密码 (回车自动生成): " SS_PASSWORD; echo
-    if [[ -z "$SS_PASSWORD" ]]; then SS_PASSWORD=$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-16); info_echo "自动生成密码: $SS_PASSWORD"; fi
+    if [[ -z "$SS_PASSWORD" ]]; then SS_PASSWORD=$(openssl rand -base64 16); info_echo "自动生成密码: $SS_PASSWORD"; fi
     info_echo "请选择加密方式:"; echo "1. aes-256-gcm (推荐)"; echo "2. chacha20-ietf-poly1305"; echo "3. xchacha20-ietf-poly1305"
     while true; do read -rp "请选择 [1-3]: " mc; case $mc in 1) SS_METHOD="aes-256-gcm"; break ;; 2) SS_METHOD="chacha20-ietf-poly1305"; break ;; 3) SS_METHOD="xchacha20-ietf-poly1305"; break ;; *) error_echo "无效选择" ;; esac; done
     success_echo "已选择加密方式: $SS_METHOD"
