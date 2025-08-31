@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 5.0 (Hysteria2 源码编译版 - 终极解决方案)
+# 版本: 5.1 (Hysteria2 源码编译路径修正版 - 最终版)
 
 # --- 脚本行为设置 ---
 set -o pipefail
@@ -54,14 +54,14 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v5.0) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v5.1) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
     echo -e " ${CYAN}安装选项:${ENDCOLOR}"
-    echo -e "   1. 安装 Hysteria2 (自签名证书 - ${GREEN}推荐，最稳定${ENDCOLOR})"
-    echo -e "   2. 安装 Hysteria2 (Let's Encrypt 证书 - ${YELLOW}需域名解析和Cloudflare API${ENDCOLOR})"
+    echo -e "   1. 安装 Hysteria2 (源码编译 - ${GREEN}推荐，解决一切兼容性问题${ENDCOLOR})"
+    echo -e "   2. 安装 Hysteria2 (Let's Encrypt - ${YELLOW}开发中...${ENDCOLOR})"
     echo -e "   3. 安装 Shadowsocks (仅 IPv6)"
     echo
     echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
@@ -104,7 +104,7 @@ check_port() {
 }
 
 ################################################################################
-# Hysteria2 功能模块 (100% 重设 - 源码编译)
+# Hysteria2 功能模块 (100% 重设 - 源码编译 - 路径修正)
 ################################################################################
 
 # 步骤 1: 安装编译环境
@@ -131,7 +131,7 @@ hy2_install_build_deps() {
     return 0
 }
 
-# 步骤 2: 从源码编译 Hysteria2
+# 步骤 2: 从源码编译 Hysteria2 (路径修正)
 hy2_build_from_source() {
     info_echo "正在从 GitHub 下载 Hysteria2 最新源码..."
     rm -rf /tmp/hysteria
@@ -140,19 +140,29 @@ hy2_build_from_source() {
         return 1
     fi
     
-    cd /tmp/hysteria/app/server
-    info_echo "正在编译 Hysteria2 服务端..."
+    # --- 【核心修正】---
+    # Hysteria2 v2.6.0 之后，编译路径已变更为 cmd/hysteria/
+    local build_path="/tmp/hysteria/cmd/hysteria"
+    if [ ! -d "$build_path" ]; then
+        error_echo "未找到预期的编译目录: $build_path"
+        error_echo "可能是 Hysteria2 项目结构再次发生变化，请联系脚本作者更新。"
+        return 1
+    fi
+    cd "$build_path"
+    
+    info_echo "正在编译 Hysteria2 (位于 $build_path)..."
     if ! go build; then
-        error_echo "Hysteria2 编译失败！"
+        error_echo "Hysteria2 编译失败！请检查上面的 Go 编译错误信息。"
         return 1
     fi
     
     info_echo "正在将编译好的文件安装到 /usr/local/bin/ ..."
-    if [[ -f server ]]; then
-        mv server /usr/local/bin/hysteria
+    # 编译后的文件名为 hysteria
+    if [[ -f hysteria ]]; then
+        mv hysteria /usr/local/bin/hysteria
         chmod +x /usr/local/bin/hysteria
     else
-        error_echo "未找到编译后的 'server' 文件！"
+        error_echo "未找到编译后的 'hysteria' 文件！"
         return 1
     fi
 
@@ -160,7 +170,7 @@ hy2_build_from_source() {
     rm -rf /tmp/hysteria # 清理源码
 
     local hy2_version
-    hy2_version=$(/usr/local/bin/hysteria version)
+    hy2_version=$(/usr/local/bin/hysteria version | head -n 1)
     success_echo "Hysteria2 源码编译并安装成功！版本: ${GREEN}${hy2_version}${ENDCOLOR}"
     return 0
 }
@@ -296,6 +306,11 @@ EOF
 # 主安装流程 (自签名证书)
 hy2_install_self_signed() {
     info_echo "开始 Hysteria2 (自签名) 安装流程..."
+    
+    if [[ -f /etc/systemd/system/hysteria-server.service ]]; then
+        warning_echo "检测到 Hysteria2 已安装。"; read -rp "确定要覆盖安装吗? (y/N): " confirm && [[ ! "$confirm" =~ ^[yY]$ ]] && return
+        hy2_uninstall
+    fi
     
     hy2_install_build_deps && \
     hy2_build_from_source && \
