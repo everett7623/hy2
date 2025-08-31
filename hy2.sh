@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 3.9 (密码生成逻辑终极修复版)
+# 版本: 4.0 (密码生成逻辑终极修复版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
@@ -59,7 +59,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.9) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v4.0) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -257,9 +257,7 @@ EOF
 
 hy2_run_install() {
     local cert_type="$1"
-    # 调用新增的说明和确认函数
     hy2_display_prerequisites "$cert_type" || return 0
-    
     if systemctl list-unit-files hysteria-server.service &>/dev/null; then
         warning_echo "检测到 Hysteria2 已安装，继续将覆盖。"; read -rp "确定吗? (y/N): " confirm && [[ ! "$confirm" =~ ^[yY]$ ]] && return
         hy2_uninstall
