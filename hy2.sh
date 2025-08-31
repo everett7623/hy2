@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 4.0 (密码生成逻辑终极修复版)
+# Sürüm: 4.0 (密码生成逻辑终极修复版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
