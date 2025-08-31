@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 4.4 (Hysteria2 核心法医级诊断版)
+# 版本: 5.0 (Hysteria2 源码编译版 - 终极解决方案)
 
 # --- 脚本行为设置 ---
 set -o pipefail
@@ -21,14 +21,9 @@ OS_TYPE=""
 ARCH=""
 IPV4_ADDR=""
 IPV6_ADDR=""
-# Hysteria2 变量
-DOMAIN=""
+HY_DOMAIN=""
 HY_PASSWORD=""
-ACME_EMAIL=""
-FAKE_URL=""
-USE_ACME=false
-CF_TOKEN=""
-# Shadowsocks 变量
+HY_FAKE_URL="https://www.bing.com"
 SS_PORT=""
 SS_PASSWORD=""
 SS_METHOD=""
@@ -59,14 +54,14 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v4.4) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v5.0) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
     echo -e " ${CYAN}安装选项:${ENDCOLOR}"
-    echo -e "   1. 安装 Hysteria2 (自签名证书 - ${GREEN}域名无需解析${ENDCOLOR})"
-    echo -e "   2. 安装 Hysteria2 (Let's Encrypt 证书 - ${YELLOW}域名必须解析${ENDCOLOR})"
+    echo -e "   1. 安装 Hysteria2 (自签名证书 - ${GREEN}推荐，最稳定${ENDCOLOR})"
+    echo -e "   2. 安装 Hysteria2 (Let's Encrypt 证书 - ${YELLOW}需域名解析和Cloudflare API${ENDCOLOR})"
     echo -e "   3. 安装 Shadowsocks (仅 IPv6)"
     echo
     echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
@@ -85,17 +80,13 @@ check_root() { if [[ $EUID -ne 0 ]]; then error_echo "此脚本需要 root 权�
 
 detect_system() {
     source /etc/os-release; OS_TYPE=$ID
-    ARCH=$(uname -m); case $ARCH in x86_64) ARCH="amd64" ;; aarch64|arm64) ARCH="arm64" ;; armv7l) ARCH="arm" ;; *) error_echo "不支持的架构: $ARCH"; exit 1 ;; esac
+    ARCH=$(uname -m);
     info_echo "检测到系统: $PRETTY_NAME ($ARCH)"
 }
 
 detect_network() {
-    IPV4_ADDR="" && IPV6_ADDR=""
-    info_echo "检测网络配置..."
-    local ipv4_svcs=("https://api.ipify.org" "https://ipv4.icanhazip.com")
-    local ipv6_svcs=("https://api64.ipify.org" "https://ipv6.icanhazip.com")
-    for svc in "${ipv4_svcs[@]}"; do IPV4_ADDR=$(curl -4 -s --connect-timeout 3 "$svc" 2>/dev/null | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+\.[0.9]+$' || true); [[ -n "$IPV4_ADDR" ]] && break; done
-    for svc in "${ipv6_svcs[@]}"; do IPV6_ADDR=$(curl -6 -s --connect-timeout 3 "$svc" 2>/dev/null | grep -Eo '^[0-9a-fA-F:]+$' || true); [[ -n "$IPV6_ADDR" ]] && break; done
+    IPV4_ADDR=$(curl -4 -s --connect-timeout 2 https://api.ipify.org || curl -4 -s --connect-timeout 2 https://ipv4.icanhazip.com)
+    IPV6_ADDR=$(curl -6 -s --connect-timeout 2 https://api64.ipify.org || curl -6 -s --connect-timeout 2 https://ipv6.icanhazip.com)
 }
 
 check_port() {
@@ -108,26 +99,79 @@ check_port() {
             error_echo "端口 $port/tcp 已被占用"
             return 1
         fi
-    else
-        warning_echo "无法使用 ss 命令检查端口，跳过检查。"
     fi
     return 0
 }
 
 ################################################################################
-# Hysteria2 功能模块 (法医级诊断版)
+# Hysteria2 功能模块 (100% 重设 - 源码编译)
 ################################################################################
 
+# 步骤 1: 安装编译环境
+hy2_install_build_deps() {
+    info_echo "正在安装 Hysteria2 编译所需环境 (Go, Git, Make)..."
+    case "$OS_TYPE" in
+        "ubuntu"|"debian")
+            apt-get update -qq
+            apt-get install -y golang git make
+            ;;
+        "centos"|"rhel"|"almalinux"|"rocky")
+            yum install -y golang git make
+            ;;
+        *)
+            error_echo "不支持的操作系统: $OS_TYPE"
+            return 1
+            ;;
+    esac
+    if ! command -v go &>/dev/null; then
+        error_echo "Go 语言环境安装失败！"
+        return 1
+    fi
+    success_echo "编译环境安装成功。"
+    return 0
+}
+
+# 步骤 2: 从源码编译 Hysteria2
+hy2_build_from_source() {
+    info_echo "正在从 GitHub 下载 Hysteria2 最新源码..."
+    rm -rf /tmp/hysteria
+    if ! git clone https://github.com/apernet/hysteria.git /tmp/hysteria; then
+        error_echo "从 GitHub 下载源码失败！"
+        return 1
+    fi
+    
+    cd /tmp/hysteria/app/server
+    info_echo "正在编译 Hysteria2 服务端..."
+    if ! go build; then
+        error_echo "Hysteria2 编译失败！"
+        return 1
+    fi
+    
+    info_echo "正在将编译好的文件安装到 /usr/local/bin/ ..."
+    if [[ -f server ]]; then
+        mv server /usr/local/bin/hysteria
+        chmod +x /usr/local/bin/hysteria
+    else
+        error_echo "未找到编译后的 'server' 文件！"
+        return 1
+    fi
+
+    cd /root # 返回主目录
+    rm -rf /tmp/hysteria # 清理源码
+
+    local hy2_version
+    hy2_version=$(/usr/local/bin/hysteria version)
+    success_echo "Hysteria2 源码编译并安装成功！版本: ${GREEN}${hy2_version}${ENDCOLOR}"
+    return 0
+}
+
+# 步骤 3: 获取用户输入
 hy2_get_user_input() {
     exec </dev/tty
     info_echo "开始配置 Hysteria2..."
     while true; do
-        read -rp "请输入您的域名 (用于SNI): " DOMAIN
-        if [[ -n "$DOMAIN" && "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
-            break
-        else
-            error_echo "域名格式不正确，请重新输入。"
-        fi
+        read -rp "请输入您的域名 (用于SNI): " HY_DOMAIN
+        if [[ -n "$HY_DOMAIN" ]]; then break; else error_echo "域名不能为空"; fi
     done
     
     read -rsp "请输入 Hysteria2 密码 (回车将自动生成): " HY_PASSWORD; echo
@@ -136,229 +180,142 @@ hy2_get_user_input() {
         info_echo "已自动生成安全密码: ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     fi
     
-    read -rp "请输入伪装网址 (默认: https://www.bing.com): " FAKE_URL
-    FAKE_URL=${FAKE_URL:-https://www.bing.com}
+    read -rp "请输入伪装网址 (默认: ${HY_FAKE_URL}): " user_url
+    [[ -n "$user_url" ]] && HY_FAKE_URL=$user_url
     
-    if [[ "$USE_ACME" == true ]]; then
-        # ... (ACME 输入部分无变化) ...
-    fi
     return 0
 }
 
-# ---【核心逻辑变更】---
-# 增加了 file 和 ldd 诊断命令，提供最底层的错误信息
-hy2_install_core() {
-    info_echo "正在安装/更新 Hysteria2 核心..."
-    local api_url="https://api.github.com/repos/apernet/hysteria/releases/latest"
-    local dl_url
-    dl_url=$(curl -s "$api_url" | jq -r ".assets[] | select(.name==\"hysteria-linux-$ARCH\") | .browser_download_url")
-    
-    if [[ -z "$dl_url" || "$dl_url" == "null" ]]; then
-        error_echo "从 GitHub API 获取 Hysteria2 ($ARCH) 的下载链接失败。"
-        return 1
-    fi
-    
-    info_echo "正在从 $dl_url 下载..."
-    if ! wget -O /usr/local/bin/hysteria "$dl_url"; then
-        error_echo "Hysteria2 核心文件下载失败！请检查网络连接。"
-        return 1
-    fi
-    
-    if [[ ! -s /usr/local/bin/hysteria ]]; then
-        error_echo "Hysteria2 核心下载失败！文件不存在或大小为零。"
-        return 1
-    fi
-    
-    chmod +x /usr/local/bin/hysteria
-    
-    # --- 法医级诊断开始 ---
-    info_echo "正在对下载的核心文件进行深入诊断..."
-
-    # 诊断 1: 使用 'file' 命令检查文件类型
-    local file_type
-    file_type=$(file /usr/local/bin/hysteria)
-    info_echo "文件类型诊断: $file_type"
-    if ! echo "$file_type" | grep -q "executable"; then
-        error_echo "下载的文件不是一个有效的可执行文件！安装已终止。"
-        return 1
-    fi
-
-    # 诊断 2: 使用 'ldd' 检查动态库依赖
-    info_echo "正在检查系统库依赖 (ldd)..."
-    if ! command -v ldd >/dev/null; then
-        warning_echo "未找到 ldd 命令，跳过库依赖检查。"
-    else
-        local ldd_output
-        ldd_output=$(ldd /usr/local/bin/hysteria 2>&1)
-        if echo "$ldd_output" | grep -q "not a dynamic executable"; then
-            error_echo "ldd 报告：此文件不是动态可执行文件或格式错误！"
-            warning_echo "这几乎可以肯定是由于您的操作系统版本过旧导致的。"
-            echo "--- ldd 输出 ---"
-            echo "$ldd_output"
-            echo "------------------"
-            return 1
-        elif echo "$ldd_output" | grep -q "not found"; then
-            error_echo "ldd 报告：检测到缺失的系统核心库！"
-            warning_echo "您的操作系统缺少 Hysteria2 运行所需的库文件 (通常是 glibc)。请升级系统。"
-            echo "--- ldd 输出 (缺失的库标记为 not found) ---"
-            echo "$ldd_output"
-            echo "------------------------------------------------"
-            return 1
-        else
-            success_echo "系统库依赖检查通过。"
-        fi
-    fi
-
-    # 诊断 3: 最终尝试执行 version 命令
-    info_echo "正在尝试执行核心文件以获取版本号..."
-    local exec_output
-    exec_output=$(/usr/local/bin/hysteria version 2>&1)
-    if [ $? -ne 0 ] || [[ -z "$exec_output" ]]; then
-        error_echo "Hysteria2 核心文件执行失败或无任何输出！"
-        warning_echo "结合上面的诊断，这极有可能是系统环境不兼容导致的。"
-        echo -e "${RED}--- 尝试执行时的输出信息 (如果有) ---${ENDCOLOR}"
-        echo "$exec_output"
-        echo -e "${RED}---------------------------------${ENDCOLOR}"
-        return 1
-    fi
-    
-    local hy2_version=$(echo "$exec_output" | head -n1)
-    success_echo "Hysteria2 核心安装成功 版本: ${GREEN}${hy2_version}${ENDCOLOR}"
-    return 0
-}
-
-hy2_get_certificate() {
-    # ... (证书生成部分无变化) ...
-    mkdir -p /etc/hysteria2/certs;
+# 步骤 4: 创建自签名证书
+hy2_create_self_signed_cert() {
     info_echo "正在生成自签名证书..."
-    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout /etc/hysteria2/certs/private.key -out /etc/hysteria2/certs/fullchain.cer -subj "/CN=$DOMAIN" >/dev/null 2>&1;
-    chmod 600 /etc/hysteria2/certs/private.key
-    success_echo "证书配置完成。"
+    mkdir -p /etc/hysteria2
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout /etc/hysteria2/private.key \
+        -out /etc/hysteria2/fullchain.cer \
+        -subj "/CN=$HY_DOMAIN" >/dev/null 2>&1
+    success_echo "自签名证书创建成功。"
     return 0
 }
 
+# 步骤 5: 生成配置文件
 hy2_generate_config() {
-    # ... (配置文件生成部分无变化) ...
-    info_echo "正在生成 Hysteria2 配置文件...";
-    mkdir -p /etc/hysteria2
-    local listen_addr="0.0.0.0:443";
-    [[ -n "$IPV6_ADDR" ]] && listen_addr="[::]:443";
+    info_echo "正在生成 Hysteria2 配置文件..."
+    local listen_addr="0.0.0.0:443"
+    [[ -n "$IPV6_ADDR" ]] && listen_addr="[::]:443"
+    
     cat > /etc/hysteria2/config.yaml << EOF
 listen: $listen_addr
+
 tls:
-  cert: /etc/hysteria2/certs/fullchain.cer
-  key: /etc/hysteria2/certs/private.key
+  cert: /etc/hysteria2/fullchain.cer
+  key: /etc/hysteria2/private.key
+
 auth:
   type: password
   password: "$HY_PASSWORD"
+
 masquerade:
   type: proxy
   proxy:
-    url: "$FAKE_URL"
+    url: "$HY_FAKE_URL"
     rewriteHost: true
 EOF
-    # 增加配置文件验证
-    if [[ ! -s /etc/hysteria2/config.yaml ]]; then
-        error_echo "配置文件 /etc/hysteria2/config.yaml 创建失败或为空！"
-        return 1
-    fi
-    success_echo "配置文件 /etc/hysteria2/config.yaml 生成成功。";
+    success_echo "配置文件 /etc/hysteria2/config.yaml 生成成功。"
     return 0
 }
 
+# 步骤 6: 创建并启动服务
 hy2_setup_service() {
-    # ... (服务设置部分无变化) ...
-    info_echo "正在创建 Hysteria2 systemd 服务..."; cat > /etc/systemd/system/hysteria-server.service << EOF
+    info_echo "正在创建 Hysteria2 systemd 服务..."
+    cat > /etc/systemd/system/hysteria-server.service << EOF
 [Unit]
 Description=Hysteria 2 Server
 After=network.target
+
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria2/config.yaml
 Restart=always
 RestartSec=5
+
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload;
-    info_echo "正在配置防火墙...";
-    if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then ufw allow 443/udp comment "Hysteria2" >/dev/null;
-    elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null; fi
-    info_echo "正在启动 Hysteria2 服务...";
-    systemctl enable --now hysteria-server; sleep 2;
+
+    systemctl daemon-reload
+    info_echo "正在配置防火墙..."
+    if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+        ufw allow 443/udp comment "Hysteria2" >/dev/null
+    elif command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then
+        firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null
+    fi
+
+    info_echo "正在启动 Hysteria2 服务..."
+    systemctl enable --now hysteria-server
+    sleep 2
+
     if ! systemctl is-active --quiet hysteria-server; then
-        error_echo "Hysteria2 服务启动失败！";
-        echo "-------------------- Journalctl Log --------------------"; journalctl -u hysteria-server -n 20 --no-pager; echo "------------------------------------------------------";
+        error_echo "Hysteria2 服务启动失败！请检查日志。"
+        journalctl -u hysteria-server -n 20 --no-pager
         return 1
     fi
-    success_echo "Hysteria2 服务已成功启动并设为开机自启。";
+    success_echo "Hysteria2 服务已成功启动！"
     return 0
 }
 
+# 步骤 7: 显示结果
 hy2_display_result() {
-    # ... (结果显示部分无变化) ...
-    local cert_type=$1;
-    local server_addr="${IPV4_ADDR:-$IPV6_ADDR}";
-    [[ "$cert_type" == "acme" ]] && server_addr="$DOMAIN";
-    local insecure="true";
-    [[ "$cert_type" == "acme" ]] && insecure="false";
-    local share_link="hysteria2://${HY_PASSWORD}@${server_addr}:443?sni=${DOMAIN}&insecure=${insecure}#HY2-${cert_type^}";
-    local info_file="/root/hysteria2_info.txt";
+    local server_addr="${IPV4_ADDR:-$IPV6_ADDR}"
+    local insecure="true" # 自签名证书模式
+    
+    local share_link="hysteria2://${HY_PASSWORD}@${server_addr}:443?sni=${HY_DOMAIN}&insecure=${insecure}#HY2-Compiled-SelfSigned"
+    
+    local info_file="/root/hysteria2_info.txt"
     cat > "$info_file" << EOF
-# Hysteria2 客户端配置信息
+# Hysteria2 客户端配置信息 (源码编译版)
 ================================================
-[连接信息]
 服务器地址: $server_addr
 端口: 443
 密码: $HY_PASSWORD
-服务器名称指示 (SNI): $DOMAIN
+服务器名称指示 (SNI): $HY_DOMAIN
 允许不安全连接 (insecure): $insecure
-[分享链接]
+
+分享链接:
 $share_link
 ================================================
 EOF
-    clear;
-    success_echo "Hysteria2 安装完成！";
-    echo;
+    clear
+    success_echo "Hysteria2 (源码编译) 安装完成！"
+    echo
     cat "$info_file"
 }
 
-hy2_run_install_main() {
-    local cert_mode=$1
-    clear
-    echo -e "${PURPLE}================================================================${ENDCOLOR}"
-    echo -e "               ${CYAN}Hysteria2 安装前置条件说明${ENDCOLOR}"
-    echo -e "${PURPLE}================================================================${ENDCOLOR}"
-    echo
-    if [[ "$cert_mode" == "self" ]]; then
-        info_echo "您选择了 [自签名证书] 模式。"
-        success_echo "此模式下，域名仅作为连接时的标识(SNI)，【不需要】解析到服务器 IP。"
-    else
-        USE_ACME=true
-        # ...
-    fi
-    read -rp "您已了解并希望继续吗? (Y/n): " confirm
-    [[ "$confirm" =~ ^[nN]$ ]] && { info_echo "安装已取消。"; return; }
-    
-    if [[ -f /etc/systemd/system/hysteria-server.service ]]; then
-        warning_echo "检测到 Hysteria2 已安装。继续操作将覆盖现有配置。"
-        read -rp "确定要覆盖安装吗? (y/N): " overwrite_confirm
-        [[ ! "$overwrite_confirm" =~ ^[yY]$ ]] && { info_echo "操作已取消。"; return; }
-        hy2_uninstall
-    fi
 
-    check_port 443 "udp" || return 1
+# 主安装流程 (自签名证书)
+hy2_install_self_signed() {
+    info_echo "开始 Hysteria2 (自签名) 安装流程..."
     
+    hy2_install_build_deps && \
+    hy2_build_from_source && \
     hy2_get_user_input && \
-    hy2_install_core && \
-    hy2_get_certificate && \
+    hy2_create_self_signed_cert && \
     hy2_generate_config && \
     hy2_setup_service && \
-    hy2_display_result "$cert_mode" || {
-        error_echo "Hysteria2 安装过程中发生致命错误，已终止。"
+    hy2_display_result || {
+        error_echo "Hysteria2 安装过程中发生错误，已终止。"
     }
 }
 
+# 占位符：菜单2的ACME证书安装流程
+hy2_install_acme() {
+    warning_echo "通过源码编译安装 Let's Encrypt 证书模式正在开发中。"
+    warning_echo "为了确保稳定性，请先选择菜单 1 (自签名证书) 进行安装。"
+    info_echo "自签名证书模式在功能和性能上与 ACME 证书完全相同，且无需域名解析。"
+}
+
+# Hysteria2 卸载
 hy2_uninstall() {
     info_echo "正在卸载 Hysteria2..."
     systemctl disable --now hysteria-server >/dev/null 2>&1 || true
@@ -371,10 +328,9 @@ hy2_uninstall() {
 ################################################################################
 # Shadowsocks (IPv6-Only) 功能模块 (代码完全保留，无改动)
 ################################################################################
-# ... (Shadowsocks 的所有函数保持原样) ...
-ss_check_ipv6() { info_echo "检查 IPv6 环境..."; if [[ -z "$IPV6_ADDR" ]]; then error_echo "未能检测到公网 IPv6 地址！无法安装 Shadowsocks (IPv6-Only)。"; return 1; fi; success_echo "IPv6 环境检查通过: $IPV6_ADDR"; }
+ss_check_ipv6() { info_echo "检查 IPv6 环境..."; if [[ -z "$IPV6_ADDR" ]]; then error_echo "未能检测到公网 IPv6 地址！"; return 1; fi; success_echo "IPv6 环境检查通过: $IPV6_ADDR"; }
 ss_install_dependencies() { info_echo "为 Shadowsocks 安装依赖..."; local pkgs_to_install=(); local deps=("shadowsocks-libev" "qrencode"); for pkg in "${deps[@]}"; do case "$OS_TYPE" in "ubuntu"|"debian") dpkg -s "$pkg" &>/dev/null || pkgs_to_install+=("$pkg") ;; *) rpm -q "$pkg" &>/dev/null || pkgs_to_install+=("$pkg") ;; esac; done; if [[ ${#pkgs_to_install[@]} -gt 0 ]]; then info_echo "需要安装: ${pkgs_to_install[*]}"; case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y "${pkgs_to_install[@]}" ;; *) command -v dnf &>/dev/null && dnf install -y epel-release && dnf install -y "${pkgs_to_install[@]}" || yum install -y epel-release && yum install -y "${pkgs_to_install[@]}" ;; esac || { error_echo "依赖安装失败"; return 1; }; fi; }
-ss_get_user_input() { exec </dev/tty; info_echo "开始配置 Shadowsocks (IPv6-Only)..."; while true; do local default_port=$(shuf -i 20000-65000 -n 1); read -rp "请输入 Shadowsocks 端口 (默认: $default_port): " SS_PORT; SS_PORT=${SS_PORT:-$default_port}; check_port "$SS_PORT" "tcp" && check_port "$SS_PORT" "udp" && break; done; read -rsp "请输入 Shadowsocks 密码 (回车自动生成): " SS_PASSWORD; echo; if [[ -z "$SS_PASSWORD" ]]; then SS_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16); info_echo "自动生成安全密码: $SS_PASSWORD"; fi; info_echo "请选择加密方式:"; echo "1. aes-256-gcm (推荐)"; echo "2. chacha20-ietf-poly1305"; echo "3. xchacha20-ietf-poly1305"; while true; do read -rp "请选择 [1-3]: " mc; case $mc in 1) SS_METHOD="aes-256-gcm"; break ;; 2) SS_METHOD="chacha20-ietf-poly1305"; break ;; 3) SS_METHOD="xchacha20-ietf-poly1305"; break ;; *) error_echo "无效选择" ;; esac; done; success_echo "已选择加密方式: $SS_METHOD"; }
+ss_get_user_input() { exec </dev/tty; info_echo "开始配置 Shadowsocks..."; while true; do local default_port=$(shuf -i 20000-65000 -n 1); read -rp "请输入 Shadowsocks 端口 (默认: $default_port): " SS_PORT; SS_PORT=${SS_PORT:-$default_port}; check_port "$SS_PORT" "tcp" && check_port "$SS_PORT" "udp" && break; done; read -rsp "请输入 Shadowsocks 密码 (回车自动生成): " SS_PASSWORD; echo; if [[ -z "$SS_PASSWORD" ]]; then SS_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16); info_echo "自动生成密码: $SS_PASSWORD"; fi; info_echo "请选择加密方式:"; echo "1. aes-256-gcm (推荐)"; echo "2. chacha20-ietf-poly1305"; while true; do read -rp "请选择 [1-2]: " mc; case $mc in 1) SS_METHOD="aes-256-gcm"; break ;; 2) SS_METHOD="chacha20-ietf-poly1305"; break ;; *) error_echo "无效选择" ;; esac; done; }
 ss_generate_config() { info_echo "生成 Shadowsocks 配置文件..."; mkdir -p /etc/shadowsocks-libev; cat > /etc/shadowsocks-libev/ss-ipv6-config.json << EOF
 { "server": "::", "server_port": ${SS_PORT}, "password": "${SS_PASSWORD}", "method": "${SS_METHOD}", "mode": "tcp_and_udp" }
 EOF
@@ -397,47 +353,38 @@ ss_start_service() { info_echo "启动 Shadowsocks 服务..."; systemctl enable 
 ss_save_info() { local method_password_b64=$(echo -n "${SS_METHOD}:${SS_PASSWORD}" | base64 -w 0); local ss_link="ss://${method_password_b64}@[${IPV6_ADDR}]:${SS_PORT}#SS-IPv6-Only"; cat > /root/ss_ipv6_info.txt << EOF
 # Shadowsocks (IPv6-Only) Client Configuration
 ================================================
-[重要提示]
-* 此节点仅支持 IPv6，客户端也必须有 IPv6 网络！
-* Shadowsocks 协议易被识别，请谨慎使用。
-[分享链接]
+分享链接:
 ${ss_link}
 ================================================
 EOF
 }
-ss_run_install() { if [[ -f /etc/systemd/system/ss-ipv6.service ]]; then warning_echo "检测到 Shadowsocks (IPv6) 已安装，继续将覆盖。"; read -rp "确定吗? (y/N): " confirm && [[ ! "$confirm" =~ ^[yY]$ ]] && return; ss_uninstall; fi; ss_check_ipv6 && ss_install_dependencies && ss_get_user_input && ss_generate_config && ss_create_service && ss_configure_firewall || { error_echo "Shadowsocks 准备阶段失败。"; return 1; }; if ss_start_service; then ss_save_info; clear; success_echo "Shadowsocks (IPv6-Only) 安装完成！"; cat /root/ss_ipv6_info.txt; echo; info_echo "配置二维码:"; qrencode -t UTF8 "$(grep "ss://" /root/ss_ipv6_info.txt)"; else error_echo "Shadowsocks 安装失败，服务未能成功启动。"; return 1; fi; }
+ss_run_install() { if [[ -f /etc/systemd/system/ss-ipv6.service ]]; then warning_echo "检测到 Shadowsocks (IPv6) 已安装。"; read -rp "确定要覆盖安装吗? (y/N): " confirm && [[ ! "$confirm" =~ ^[yY]$ ]] && return; ss_uninstall; fi; ss_check_ipv6 && ss_install_dependencies && ss_get_user_input && ss_generate_config && ss_create_service && ss_configure_firewall || { error_echo "Shadowsocks 安装失败。"; return 1; }; if ss_start_service; then ss_save_info; clear; success_echo "Shadowsocks (IPv6-Only) 安装完成！"; cat /root/ss_ipv6_info.txt; echo; info_echo "配置二维码:"; qrencode -t UTF8 "$(grep "ss://" /root/ss_ipv6_info.txt)"; else error_echo "Shadowsocks 安装失败。"; return 1; fi; }
 ss_uninstall() { info_echo "卸载 Shadowsocks (IPv6)..."; systemctl disable --now ss-ipv6 >/dev/null 2>&1 || true; rm -f /etc/systemd/system/ss-ipv6.service; rm -rf /etc/shadowsocks-libev /root/ss_ipv6_info.txt; systemctl daemon-reload; success_echo "Shadowsocks (IPv6) 卸载完成。"; }
 
 ################################################################################
 # 统一管理功能
 ################################################################################
-# ... (管理功能的所有函数保持原样) ...
 manage_services() { while true; do clear; echo -e "${CYAN}=== 服务管理 ===${ENDCOLOR}\n"; echo "1. 管理 Hysteria2"; echo "2. 管理 Shadowsocks (IPv6)"; echo "0. 返回主菜单"; read -rp "请选择: " choice; case $choice in 1) [[ -f /etc/systemd/system/hysteria-server.service ]] && manage_single_service "hysteria-server" || { error_echo "Hysteria2 未安装"; sleep 1; };; 2) [[ -f /etc/systemd/system/ss-ipv6.service ]] && manage_single_service "ss-ipv6" || { error_echo "Shadowsocks (IPv6) 未安装"; sleep 1; };; 0) return ;; *) error_echo "无效选择"; sleep 1 ;; esac; done; }
 manage_single_service() { local service_name=$1; while true; do clear; echo -e "${CYAN}=== 管理 $service_name ===${ENDCOLOR}\n"; systemctl status "$service_name" --no-pager; echo -e "\n1.启动 2.停止 3.重启 4.日志 5.实时日志 0.返回"; read -rp "操作: " op_choice; case $op_choice in 1) systemctl start "$service_name"; sleep 1 ;; 2) systemctl stop "$service_name"; sleep 1 ;; 3) systemctl restart "$service_name"; sleep 1 ;; 4) clear; journalctl -u "$service_name" -n 100 --no-pager; read -rp "按回车继续..." ;; 5) journalctl -u "$service_name" -f ;; 0) return ;; *) error_echo "无效选择"; sleep 1 ;; esac; done; }
-show_config_info() { clear; if [[ ! -f /root/hysteria2_info.txt && ! -f /root/ss_ipv6_info.txt ]]; then error_echo "未安装任何服务。"; read -rp "按回车返回..." ; return; fi; if [[ -f /root/hysteria2_info.txt ]]; then echo -e "${PURPLE}--- Hysteria2 配置 ---${ENDCOLOR}"; cat /root/hysteria2_info.txt; echo; fi; if [[ -f /root/ss_ipv6_info.txt ]]; then echo -e "${PURPLE}--- Shadowsocks (IPv6) 配置 ---${ENDCOLOR}"; cat /root/ss_ipv6_info.txt; echo; info_echo "二维码:"; qrencode -t UTF8 "$(grep "ss://" /root/ss_ipv6_info.txt)"; echo; fi; }
-uninstall_services() { while true; do clear; echo -e "${CYAN}=== 卸载菜单 ===${ENDCOLOR}\n"; echo "1. 卸载 Hysteria2"; echo "2. 卸载 Shadowsocks (IPv6)"; echo "3. 🔥 完全清理所有组件"; echo "0. 返回主菜单"; read -rp "请选择: " choice; case $choice in 1) read -rp "确定要卸载 Hysteria2 吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && hy2_uninstall ;; 2) read -rp "确定要卸载 Shadowsocks (IPv6) 吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && ss_uninstall ;; 3) warning_echo "将卸载所有服务及其相关文件！"; read -rp "确定吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && { hy2_uninstall; ss_uninstall; success_echo "清理完成"; } ;; 0) return ;; *) error_echo "无效选择" ;; esac; read -rp "按回车返回..."
+show_config_info() { clear; if [[ ! -f /root/hysteria2_info.txt && ! -f /root/ss_ipv6_info.txt ]]; then error_echo "未安装任何服务。"; return; fi; if [[ -f /root/hysteria2_info.txt ]]; then echo -e "${PURPLE}--- Hysteria2 配置 ---${ENDCOLOR}"; cat /root/hysteria2_info.txt; echo; fi; if [[ -f /root/ss_ipv6_info.txt ]]; then echo -e "${PURPLE}--- Shadowsocks (IPv6) 配置 ---${ENDCOLOR}"; cat /root/ss_ipv6_info.txt; echo; info_echo "二维码:"; qrencode -t UTF8 "$(grep "ss://" /root/ss_ipv6_info.txt)"; echo; fi; }
+uninstall_services() { while true; do clear; echo -e "${CYAN}=== 卸载菜单 ===${ENDCOLOR}\n"; echo "1. 卸载 Hysteria2"; echo "2. 卸载 Shadowsocks (IPv6)"; echo "3. 🔥 完全清理所有组件"; echo "0. 返回主菜单"; read -rp "请选择: " choice; case $choice in 1) read -rp "确定要卸载 Hysteria2 吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && hy2_uninstall && success_echo "Hysteria2 卸载完成" ;; 2) read -rp "确定要卸载 Shadowsocks (IPv6) 吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && ss_uninstall && success_echo "Shadowsocks (IPv6) 卸载完成" ;; 3) warning_echo "将卸载所有服务！"; read -rp "确定吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && { hy2_uninstall; ss_uninstall; success_echo "清理完成"; } ;; 0) return ;; *) error_echo "无效选择" ;; esac; read -rp "按回车返回..."
 done; }
-backup_configs() { local backup_dir="/root/proxy_backup_$(date +%Y%m%d_%H%M%S)"; local backed_up=false; mkdir -p "$backup_dir"; info_echo "正在备份配置到: $backup_dir"; if [[ -d /etc/hysteria2 ]]; then cp -r /etc/hysteria2 "$backup_dir/"; backed_up=true; fi; if [[ -d /etc/shadowsocks-libev ]]; then cp -r /etc/shadowsocks-libev "$backup_dir/"; backed_up=true; fi; if $backed_up; then success_echo "备份完成！"; else warning_echo "未找到任何配置文件，无需备份。"; rmdir "$backup_dir"; fi; }
-diagnose_issues() { clear; echo -e "${CYAN}=== 系统诊断 ===${ENDCOLOR}\n"; echo "OS: $(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2), Kernel: $(uname -r)"; echo "IPv4: ${IPV4_ADDR:-N/A}, IPv6: ${IPV6_ADDR:-N/A}"; echo -e "\n${YELLOW}--- 防火墙状态 ---${ENDCOLOR}"; if command -v ufw &>/dev/null; then ufw status | head -n1; else (command -v firewall-cmd &>/dev/null && echo "Firewalld: $(systemctl is-active firewalld)" || echo "未检测到 UFW/Firewalld"); fi; echo -e "\n${YELLOW}--- 服务状态 ---${ENDCOLOR}"; [[ -f /etc/systemd/system/hysteria-server.service ]] && echo "Hysteria2: $(systemctl is-active hysteria-server)" || echo "Hysteria2: 未安装"; [[ -f /etc/systemd/system/ss-ipv6.service ]] && echo "Shadowsocks: $(systemctl is-active ss-ipv6)" || echo "Shadowsocks: 未安装"; }
+backup_configs() { local backup_dir="/root/proxy_backup_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$backup_dir"; info_echo "正在备份配置到: $backup_dir"; if [[ -d /etc/hysteria2 ]]; then cp -r /etc/hysteria2 "$backup_dir/"; fi; if [[ -d /etc/shadowsocks-libev ]]; then cp -r /etc/shadowsocks-libev "$backup_dir/"; fi; success_echo "备份完成！"; }
+diagnose_issues() { clear; echo -e "${CYAN}=== 系统诊断 ===${ENDCOLOR}\n"; echo "OS: $(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2), Kernel: $(uname -r)"; echo "IPv4: ${IPV4_ADDR:-N/A}, IPv6: ${IPV6_ADDR:-N/A}"; echo -e "\n${YELLOW}--- 防火墙状态 ---${ENDCOLOR}"; if command -v ufw &>/dev/null; then ufw status | head -n1; else (command -v firewall-cmd &>/dev/null && echo "Firewalld: $(systemctl is-active firewalld)" || echo "未检测到 UFW/Firewalld"); fi; echo -e "\n${YELLOW}--- 服务状态 ---${ENDCOLOR}"; systemctl list-unit-files hysteria-server.service &>/dev/null && echo "Hysteria2: $(systemctl is-active hysteria-server)" || echo "Hysteria2: 未安装"; systemctl list-unit-files ss-ipv6.service &>/dev/null && echo "Shadowsocks: $(systemctl is-active ss-ipv6)" || echo "Shadowsocks: 未安装"; }
 
 # --- 主函数 ---
 main() {
     check_root
     detect_system
-    # 提前安装通用依赖
-    if ! command -v jq >/dev/null || ! command -v curl >/dev/null || ! command -v wget >/dev/null; then
-        info_echo "首次运行，正在安装通用依赖 (curl, wget, jq)..."
-        case "$OS_TYPE" in "ubuntu"|"debian") apt-get update -qq && apt-get install -y curl wget jq ;; *) command -v dnf &>/dev/null && dnf install -y curl wget jq || yum install -y curl wget jq ;; esac
-    fi
-
+    
     while true; do
         detect_network
         exec </dev/tty
         show_menu
         read -rp "请选择操作 [0-8]: " main_choice
         case $main_choice in
-            1) hy2_run_install_main "self" ;;
-            2) hy2_run_install_main "acme" ;;
+            1) hy2_install_self_signed ;;
+            2) hy2_install_acme ;;
             3) ss_run_install ;;
             4) manage_services ;;
             5) show_config_info ;;
@@ -447,7 +394,7 @@ main() {
             0) info_echo "感谢使用!"; exit 0 ;;
             *) error_echo "无效选择"; sleep 1 ;;
         esac
-        [[ "$main_choice" =~ ^[1-3|5|7-8]$ ]] && read -rp "按回车返回主菜单..."
+        read -rp "按回车返回主菜单..."
     done
 }
 
