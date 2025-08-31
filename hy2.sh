@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 3.4 (YAML生成修复与健壮性增强版)
+# 版本: 3.5 (API验证与用户体验增强版)
 
 # --- 脚本行为设置 ---
 set -e -o pipefail
@@ -59,7 +59,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.4) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v3.5) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -102,9 +102,7 @@ detect_system() {
 }
 
 detect_network() {
-    # 每次检测前重置变量
-    IPV4_ADDR=""
-    IPV6_ADDR=""
+    IPV4_ADDR="" && IPV6_ADDR=""
     info_echo "检测网络配置..."
     local ipv4_svcs=("https://api.ipify.org" "https://ipv4.icanhazip.com" "https://ip.sb")
     local ipv6_svcs=("https://api64.ipify.org" "https://ipv6.icanhazip.com" "https://ipv6.ip.sb")
@@ -179,17 +177,37 @@ hy2_get_user_input() {
     read -rp "请输入伪装网址 (默认: https://www.bing.com): " FAKE_URL
     FAKE_URL=${FAKE_URL:-https://www.bing.com}
     if [[ "$USE_ACME" == true ]]; then
-        read -rp "请输入 ACME 邮箱 (默认: user@example.com): " ACME_EMAIL
-        ACME_EMAIL=${ACME_EMAIL:-user@example.com}
+        # 修复：使用随机 gmail 地址作为默认邮箱
+        local default_email="user$(shuf -i 1000-9999 -n 1)@gmail.com"
+        read -rp "请输入 ACME 邮箱 (默认: ${default_email}): " ACME_EMAIL
+        ACME_EMAIL=${ACME_EMAIL:-$default_email}
+        
+        # 增强：提供详细的 Token 创建指引
+        echo
+        warning_echo "--- 如何创建正确的 Cloudflare API Token ---"
+        echo "1. 访问 Cloudflare -> 我的个人资料 -> API令牌 -> 创建令牌"
+        echo "2. 点击“编辑区域 DNS”模板旁的“使用模板”按钮"
+        echo "3. 在“区域资源”下，选择“包括”->“特定区域”->“${DOMAIN}”"
+        echo "4. 点击“继续以显示摘要”，然后“创建令牌”"
+        echo "---------------------------------------------"
+        echo
+        
         while true; do
             read -rsp "请输入 Cloudflare API Token: " CF_TOKEN; echo
             [[ -n "$CF_TOKEN" ]] || { error_echo "Token 不能为空"; continue; }
             info_echo "正在验证 Token..."
+            
+            # 增强：智能 Token 验证
             local api_result=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
-            if echo "$api_result" | jq -e '.success==true and .result[0].id' >/dev/null; then
-                success_echo "Token 验证成功 (Zone: $(echo "$api_result" | jq -r '.result[0].name'))"; break
+            
+            if ! echo "$api_result" | jq -e '.success==true' >/dev/null; then
+                error_echo "Token 无效或网络错误！Cloudflare API 返回失败。"
+                echo "API 错误信息: $(echo "$api_result" | jq '.errors')"
+            elif ! echo "$api_result" | jq -e '.result[0].id' >/dev/null; then
+                error_echo "Token 有效，但在您的账户下找不到域名 '${DOMAIN}'！"
+                warning_echo "请检查: 1. 域名拼写是否正确。 2. 此域名是否已添加到此 Cloudflare 账户。"
             else
-                error_echo "Token 验证失败！"; echo "$api_result" | jq '.errors' 2>/dev/null || echo "请检查 Token 权限和域名是否正确。"
+                success_echo "Token 验证成功 (Zone: $(echo "$api_result" | jq -r '.result[0].name'))"; break
             fi
         done
     fi
@@ -223,13 +241,10 @@ hy2_generate_self_signed_cert() {
     chmod 600 /etc/hysteria2/certs/private.key
 }
 
-# 关键 Bug 修复：使用模板和 sed 替换来安全地生成配置文件
 hy2_generate_config() {
     info_echo "生成 Hysteria2 配置文件..."
     mkdir -p /etc/hysteria2
     local listen_addr=$([[ -n "$IPV6_ADDR" ]] && echo "[::]:443" || echo "0.0.0.0:443")
-    
-    # 使用带单引号的 'EOF' 来创建一个不展开变量的模板
     cat > /etc/hysteria2/config.yaml << 'EOF'
 listen: LISTEN_ADDR_PLACEHOLDER
 tls:
@@ -244,13 +259,9 @@ masquerade:
     url: "FAKE_URL_PLACEHOLDER"
     rewriteHost: true
 EOF
-
-    # 使用 sed 安全地替换占位符
     sed -i "s|LISTEN_ADDR_PLACEHOLDER|${listen_addr}|g" /etc/hysteria2/config.yaml
     sed -i "s|PASSWORD_PLACEHOLDER|${HY_PASSWORD}|g" /etc/hysteria2/config.yaml
     sed -i "s|FAKE_URL_PLACEHOLDER|${FAKE_URL}|g" /etc/hysteria2/config.yaml
-    
-    success_echo "配置文件生成完成"
 }
 
 hy2_create_service() {
@@ -281,25 +292,16 @@ hy2_configure_firewall() {
 
 hy2_start_service() {
     info_echo "正在启动 Hysteria2 服务..."
-    
-    # 增强：启动前先用 Hysteria2 自带的检查功能验证配置文件
     if ! /usr/local/bin/hysteria server --config /etc/hysteria2/config.yaml --check >/dev/null 2>&1; then
-        error_echo "Hysteria2 配置文件语法验证失败！请检查输入。"
-        /usr/local/bin/hysteria server --config /etc/hysteria2/config.yaml --check
-        return 1
+        error_echo "Hysteria2 配置文件语法验证失败！"; /usr/local/bin/hysteria server --config /etc/hysteria2/config.yaml --check; return 1;
     fi
     success_echo "配置文件语法验证通过"
-
     systemctl enable --now hysteria-server
     sleep 2
-    
     if systemctl is-active --quiet hysteria-server && ss -ulnp | grep -q ":443.*hysteria"; then
-        success_echo "Hysteria2 服务启动成功"
-        return 0
+        success_echo "Hysteria2 服务启动成功"; return 0;
     else
-        error_echo "Hysteria2 服务启动失败！正在显示诊断信息..."
-        journalctl -u hysteria-server -n 20 --no-pager
-        return 1
+        error_echo "Hysteria2 服务启动失败！正在显示诊断信息..."; journalctl -u hysteria-server -n 20 --no-pager; return 1;
     fi
 }
 
@@ -328,30 +330,19 @@ hy2_run_install() {
     fi
     USE_ACME=$([[ "$cert_type" == "acme" ]] && echo true || echo false)
     check_port 443 udp || return 1
-    
-    # 逻辑修复：确保所有步骤都成功才继续
     hy2_install_dependencies && hy2_get_user_input && hy2_install || { error_echo "Hysteria2 准备阶段失败。"; return 1; }
-    
     if $USE_ACME; then hy2_install_acme_cert; else hy2_generate_self_signed_cert; fi
-    
     hy2_generate_config && hy2_create_service && hy2_configure_firewall || { error_echo "Hysteria2 配置阶段失败。"; return 1; }
-    
     if hy2_start_service; then
-        hy2_save_info "$cert_type"
-        clear
-        success_echo "Hysteria2 安装成功！"
-        cat /root/hysteria2_info.txt
+        hy2_save_info "$cert_type"; clear; success_echo "Hysteria2 安装完成！"; cat /root/hysteria2_info.txt;
     else
-        error_echo "Hysteria2 安装失败，服务未能成功启动。请检查上面的错误日志。"
-        return 1
+        error_echo "Hysteria2 安装失败，服务未能成功启动。请检查上面的错误日志。"; return 1;
     fi
 }
 
 hy2_uninstall() {
-    info_echo "卸载 Hysteria2..."
-    systemctl disable --now hysteria-server 2>/dev/null || true
-    rm -f /etc/systemd/system/hysteria-server.service /usr/local/bin/hysteria
-    rm -rf /etc/hysteria2 /root/hysteria2_info.txt
+    info_echo "卸载 Hysteria2..."; systemctl disable --now hysteria-server 2>/dev/null || true
+    rm -f /etc/systemd/system/hysteria-server.service /usr/local/bin/hysteria; rm -rf /etc/hysteria2 /root/hysteria2_info.txt
     systemctl daemon-reload
 }
 
@@ -459,8 +450,7 @@ ss_start_service() {
     systemctl enable --now ss-ipv6
     sleep 2
     if systemctl is-active --quiet ss-ipv6; then
-        success_echo "Shadowsocks 服务启动成功"
-        return 0
+        success_echo "Shadowsocks 服务启动成功"; return 0;
     else
         error_echo "服务启动失败！"; journalctl -u ss-ipv6 -n 10 --no-pager; return 1;
     fi
@@ -488,22 +478,16 @@ ss_run_install() {
     fi
     ss_check_ipv6 && ss_install_dependencies && ss_get_user_input && ss_generate_config && ss_create_service && ss_configure_firewall || { error_echo "Shadowsocks 准备阶段失败。"; return 1; }
     if ss_start_service; then
-        ss_save_info
-        clear
-        success_echo "Shadowsocks (IPv6-Only) 安装完成！"
-        cat /root/ss_ipv6_info.txt
+        ss_save_info; clear; success_echo "Shadowsocks (IPv6-Only) 安装完成！"; cat /root/ss_ipv6_info.txt
         echo; info_echo "配置二维码:"; qrencode -t UTF8 "$(grep "ss://" /root/ss_ipv6_info.txt)"
     else
-        error_echo "Shadowsocks 安装失败，服务未能成功启动。"
-        return 1
+        error_echo "Shadowsocks 安装失败，服务未能成功启动。"; return 1;
     fi
 }
 
 ss_uninstall() {
-    info_echo "卸载 Shadowsocks (IPv6)..."
-    systemctl disable --now ss-ipv6 2>/dev/null || true
-    rm -f /etc/systemd/system/ss-ipv6.service
-    systemctl daemon-reload
+    info_echo "卸载 Shadowsocks (IPv6)..."; systemctl disable --now ss-ipv6 2>/dev/null || true
+    rm -f /etc/systemd/system/ss-ipv6.service; systemctl daemon-reload
     rm -rf /etc/shadowsocks-libev /root/ss_ipv6_info.txt
 }
 
@@ -514,10 +498,7 @@ ss_uninstall() {
 
 manage_services() {
     while true; do
-        clear; echo -e "${CYAN}=== 服务管理 ===${ENDCOLOR}\n"
-        echo "1. 管理 Hysteria2"
-        echo "2. 管理 Shadowsocks (IPv6)"
-        echo "0. 返回主菜单"
+        clear; echo -e "${CYAN}=== 服务管理 ===${ENDCOLOR}\n"; echo "1. 管理 Hysteria2"; echo "2. 管理 Shadowsocks (IPv6)"; echo "0. 返回主菜单"
         read -rp "请选择: " choice
         case $choice in
             1) systemctl list-unit-files hysteria-server.service &>/dev/null && manage_single_service "hysteria-server" || { error_echo "Hysteria2 未安装"; sleep 1; };;
@@ -531,8 +512,7 @@ manage_services() {
 manage_single_service() {
     local service_name=$1
     while true; do
-        clear; echo -e "${CYAN}=== 管理 $service_name ===${ENDCOLOR}\n"
-        systemctl status "$service_name" --no-pager
+        clear; echo -e "${CYAN}=== 管理 $service_name ===${ENDCOLOR}\n"; systemctl status "$service_name" --no-pager
         echo -e "\n1.启动 2.停止 3.重启 4.日志 5.实时日志 0.返回"
         read -rp "操作: " op_choice
         case $op_choice in
@@ -563,11 +543,7 @@ show_config_info() {
 
 uninstall_services() {
     while true; do
-        clear; echo -e "${CYAN}=== 卸载菜单 ===${ENDCOLOR}\n"
-        echo "1. 卸载 Hysteria2"
-        echo "2. 卸载 Shadowsocks (IPv6)"
-        echo "3. 🔥 完全清理所有组件"
-        echo "0. 返回主菜单"
+        clear; echo -e "${CYAN}=== 卸载菜单 ===${ENDCOLOR}\n"; echo "1. 卸载 Hysteria2"; echo "2. 卸载 Shadowsocks (IPv6)"; echo "3. 🔥 完全清理所有组件"; echo "0. 返回主菜单"
         read -rp "请选择: " choice
         case $choice in
             1) read -rp "确定要卸载 Hysteria2 吗? (y/N): " c && [[ "$c" =~ ^[yY]$ ]] && hy2_uninstall && success_echo "Hysteria2 卸载完成" ;;
