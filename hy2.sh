@@ -279,32 +279,64 @@ hy2_create_self_signed_cert() {
 hy2_setup_acme_cert() {
     info_echo "设置 ACME 证书申请..."
     
+    # 确保 .acme.sh 目录存在
+    mkdir -p ~/.acme.sh
+
     # 安装 acme.sh
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         info_echo "安装 acme.sh..."
-        curl -s https://get.acme.sh | sh -s email="$ACME_EMAIL" >/dev/null 2>&1
-        if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-            error_echo "acme.sh 安装失败"
+        local acme_install_log="/tmp/acme_install.log"
+        # 捕获 acme.sh 安装输出，以便失败时进行调试
+        if ! curl -s https://get.acme.sh | sh -s email="$ACME_EMAIL" 2>&1 | tee "$acme_install_log"; then
+            error_echo "acme.sh 安装失败。详见 $acme_install_log"
+            cat "$acme_install_log" >&2 # 将日志输出到 stderr
+            rm -f "$acme_install_log"
             return 1
         fi
+        rm -f "$acme_install_log"
+        success_echo "acme.sh 安装成功"
     fi
     
-    # 设置 Cloudflare API
+    # 设置 Cloudflare API 环境变量
     export CF_Token="$CF_TOKEN"
     export CF_Account_ID="$CF_ACCOUNT_ID" 
     export CF_Zone_ID="$CF_ZONE_ID"
     
+    # 定义 Hysteria2 服务重启命令，用于证书续期后加载新证书
+    local reload_cmd="systemctl restart hysteria-server" 
+
     # 申请证书
     info_echo "申请 SSL 证书 (域名: $HY_DOMAIN)..."
+    local acme_issue_log="/tmp/acme_issue.log"
+    # 使用 --force 确保在重新运行时尝试签发新证书，并配置 --reloadcmd
     if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$HY_DOMAIN" \
         --key-file /etc/hysteria2/certs/server.key \
         --fullchain-file /etc/hysteria2/certs/server.crt \
-        --force --ecc >/dev/null 2>&1; then
-        error_echo "证书申请失败"
+        --force --ecc \
+        --reloadcmd "$reload_cmd" 2>&1 | tee "$acme_issue_log"; then
+        error_echo "证书申请失败。详见 $acme_issue_log"
+        cat "$acme_issue_log" >&2
+        rm -f "$acme_issue_log"
         return 1
     fi
+    rm -f "$acme_issue_log"
     
-    success_echo "ACME 证书申请成功"
+    # 安装证书并配置自动续期（这将创建符号链接并确保 --reloadcmd 在未来续期时执行）
+    info_echo "安装证书并配置自动续期..."
+    local acme_install_cert_log="/tmp/acme_install_cert.log"
+    if ! ~/.acme.sh/acme.sh --install-cert -d "$HY_DOMAIN" \
+        --key-file /etc/hysteria2/certs/server.key \
+        --fullchain-file /etc/hysteria2/certs/server.crt \
+        --reloadcmd "$reload_cmd" \
+        --ecc 2>&1 | tee "$acme_install_cert_log"; then
+        error_echo "证书安装/配置自动续期失败。详见 $acme_install_cert_log"
+        cat "$acme_install_cert_log" >&2
+        rm -f "$acme_install_cert_log"
+        return 1
+    fi
+    rm -f "$acme_install_cert_log"
+    
+    success_echo "ACME 证书申请及配置成功"
     return 0
 }
 
@@ -436,21 +468,39 @@ hy2_get_input_acme() {
             continue
         fi
         
-        # 验证 Token
-        info_echo "验证 API Token..."
+        # 验证 Token 并获取 Zone ID 和 Account ID
+        info_echo "验证 API Token 并检查域名管理权限..."
         local zone_info
-        zone_info=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones" \
+        # 查询特定域名，确保 Token 有权管理该域名
+        local curl_log="/tmp/cf_zone_query.log"
+        zone_info=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$HY_DOMAIN" \
             -H "Authorization: Bearer $CF_TOKEN" \
-            -H "Content-Type: application/json")
+            -H "Content-Type: application/json" 2>&1 | tee "$curl_log")
         
-        if echo "$zone_info" | grep -q '"success":true'; then
-            CF_ZONE_ID=$(echo "$zone_info" | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
-            CF_ACCOUNT_ID=$(echo "$zone_info" | grep -o '"account":{"id":"[^"]*' | cut -d'"' -f6)
-            success_echo "Token 验证成功"
+        local success_status=$(echo "$zone_info" | jq -r '.success')
+        local errors_messages=$(echo "$zone_info" | jq -r '.errors[]?.message')
+        local first_zone_id=$(echo "$zone_info" | jq -r '.result[0]?.id')
+        local first_account_id=$(echo "$zone_info" | jq -r '.result[0]?.account.id')
+        
+        if [[ "$success_status" == "true" ]] && [[ -n "$first_zone_id" ]] && [[ -n "$first_account_id" ]]; then
+            CF_ZONE_ID="$first_zone_id"
+            CF_ACCOUNT_ID="$first_account_id"
+            success_echo "API Token 验证成功，域名 '$HY_DOMAIN' 由此 Token 管理。"
+            rm -f "$curl_log"
             break
         else
-            error_echo "Token 验证失败，请重新输入"
-            CF_TOKEN=""
+            error_echo "API Token 验证失败或无法管理域名 '$HY_DOMAIN'。"
+            if [[ "$success_status" == "false" ]] && [[ -n "$errors_messages" ]] && [[ "$errors_messages" != "null" ]]; then
+                error_echo "Cloudflare API 错误: $errors_messages"
+                error_echo "详见 $curl_log"
+                cat "$curl_log" >&2
+            else
+                error_echo "未找到域名 '$HY_DOMAIN' 的 Cloudflare Zone 或 Token 权限不足。"
+                error_echo "详见 $curl_log"
+                cat "$curl_log" >&2
+            fi
+            rm -f "$curl_log"
+            CF_TOKEN="" # 清除 Token，提示用户重新输入
         fi
     done
     
@@ -643,6 +693,15 @@ hy2_uninstall() {
     rm -f /etc/systemd/system/hysteria-server.service
     rm -f /usr/local/bin/hysteria
     rm -rf /etc/hysteria2
+
+    # 删除 acme.sh 相关的证书文件和配置，如果存在的话
+    if [[ -f ~/.acme.sh/acme.sh ]]; then
+        info_echo "正在清理 acme.sh 证书..."
+        ~/.acme.sh/acme.sh --uninstall-cert -d "$HY_DOMAIN" >/dev/null 2>&1 || true
+        # 如果这是acme.sh管理的唯一证书，可以考虑卸载acme.sh本身
+        # 但通常不推荐自动卸载，除非确保没有其他证书在使用
+        # ~/.acme.sh/acme.sh --uninstall >/dev/null 2>&1 || true
+    fi
     
     # 重新加载 systemd
     systemctl daemon-reload
@@ -759,7 +818,8 @@ EOF
     success_echo "Shadowsocks 服务已成功启动"
 }
 
-ss_display_result() {
+# --- 生成多种 Shadowsocks 客户端配置格式 ---
+generate_ss_configs() {
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
     local tag="${country_code}-IPv6-$(date +%m%d)"
@@ -767,20 +827,46 @@ ss_display_result() {
     encoded=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
     local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${SS_PORT}#${tag}"
 
+    echo "# ========== Shadowsocks 客户端配置 =========="
+    echo
+    echo -e "${CYAN}📱 SS 链接:${ENDCOLOR}"
+    echo "$ss_link"
+    echo
+    
+    echo -e "${CYAN}🚀 V2rayN/NekoBox/NekoRay 配置:${ENDCOLOR}"
+    echo "$ss_link"
+    echo
+
+    echo -e "${CYAN}⚔️ Clash Meta 紧凑格式:${ENDCOLOR}"
+    echo "  - { name: '$tag', type: ss, server: '[${IPV6_ADDR}]', port: $SS_PORT, password: '$SS_PASSWORD', cipher: $SS_METHOD }"
+    echo
+    
+    echo "# =========================================="
+}
+
+ss_display_result() {
     clear
     echo -e "${BG_PURPLE} Shadowsocks (IPv6) 安装完成！ ${ENDCOLOR}"
     echo
-    echo -e " ${PURPLE}--- Shadowsocks 配置信息 ---${ENDCOLOR}"
+    echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
     echo -e "   服务器地址: ${GREEN}[$IPV6_ADDR]${ENDCOLOR}"
     echo -e "   端口:       ${GREEN}$SS_PORT${ENDCOLOR}"
     echo -e "   密码:       ${GREEN}$SS_PASSWORD${ENDCOLOR}"
     echo -e "   加密方式:   ${GREEN}$SS_METHOD${ENDCOLOR}"
-    echo -e "   SS 链接:    ${CYAN}$ss_link${ENDCOLOR}"
-    echo -e " ${PURPLE}----------------------------${ENDCOLOR}"
+    echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
     
+    # 生成多种客户端配置
+    generate_ss_configs
+
     if command -v qrencode >/dev/null 2>&1; then
         info_echo "二维码 (请最大化终端窗口显示):"
+        local country_code
+        country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
+        local tag="${country_code}-IPv6-$(date +%m%d)"
+        local encoded
+        encoded=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
+        local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${SS_PORT}#${tag}"
         qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
     else
         warning_echo "qrencode 未安装，无法显示二维码"
