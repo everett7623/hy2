@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.2
+# 版本: 1.0.3
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -24,10 +24,13 @@ OS_TYPE=""
 ARCH=""
 IPV4_ADDR=""
 IPV6_ADDR=""
+HAS_IPV4=false
+HAS_IPV6=false
 # Hysteria2 变量
 HY_DOMAIN=""
 HY_PASSWORD=""
 FAKE_URL="https://www.bing.com"
+HY_SERVER_IP_CHOICE="" # "ipv4" or "ipv6" for Hysteria2 client config
 # Shadowsocks 变量
 SS_PORT=""
 SS_PASSWORD=""
@@ -127,22 +130,42 @@ detect_system() {
 
 detect_network() {
     info_echo "检测网络环境..."
+    
+    # Try to get public IPv4
     IPV4_ADDR=$(timeout 5 curl -4 -s https://api.ipify.org 2>/dev/null || echo "")
-    IPV6_ADDR=$(timeout 5 curl -6 -s https://api64.ipify.org 2>/dev/null || echo "")
+    if [[ -n "$IPV4_ADDR" ]]; then
+        HAS_IPV4=true
+        info_echo "检测到公网 IPv4 地址: $IPV4_ADDR"
+    else
+        warning_echo "未检测到公网 IPv4 地址。"
+        IPV4_ADDR="N/A" # Set to N/A if not found
+    fi
 
-    # 如果 curl -6 失败，尝试本地方式检测全局 IPv6 地址
-    if [[ -z "$IPV6_ADDR" ]]; then
-        info_echo "尝试本地方式检测全局 IPv6 地址..."
-        # 排除临时地址和废弃地址
-        IPV6_ADDR=$(ip -6 addr show scope global | grep inet6 | grep -v "temporary\|deprecated" | awk '{print $2}' | cut -d/ -f1 | head -n1 || echo "")
-        if [[ -n "$IPV6_ADDR" ]]; then
-            info_echo "本地检测到 IPv6 地址: $IPV6_ADDR"
+    # Try to get public IPv6
+    IPV6_ADDR=$(timeout 5 curl -6 -s https://api64.ipify.org 2>/dev/null || echo "")
+    if [[ -n "$IPV6_ADDR" ]]; then
+        HAS_IPV6=true
+        info_echo "通过 api64.ipify.org 检测到公网 IPv6 地址: $IPV6_ADDR"
+    else
+        # If curl -6 fails, try local detection
+        local_ipv6=$(ip -6 addr show scope global | grep inet6 | grep -v "temporary\|deprecated" | awk '{print $2}' | cut -d/ -f1 | head -n1 || echo "")
+        if [[ -n "$local_ipv6" ]]; then
+            # Verify if local IPv6 is actually routable (ping google.com)
+            if timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
+                IPV6_ADDR="$local_ipv6"
+                HAS_IPV6=true
+                info_echo "本地检测到可路由公网 IPv6 地址: $IPV6_ADDR"
+            else
+                warning_echo "本地检测到 IPv6 地址 ($local_ipv6)，但无法连接外网，视为不可用。"
+                IPV6_ADDR="N/A"
+            fi
         else
             warning_echo "未检测到公网 IPv6 地址。"
+            IPV6_ADDR="N/A"
         fi
     fi
     
-    # 清理可能的输入污染
+    # Clean possible input pollution
     exec </dev/tty 2>/dev/null || true
 }
 
@@ -367,6 +390,7 @@ hy2_get_input() {
     echo -e "${CYAN}=== Hysteria2 自签名证书安装 ===${ENDCOLOR}"
     echo
     
+    # SNI 伪装域名
     while true; do
         safe_read "请输入用于 SNI 伪装的域名 (任意有效域名即可，留空默认 amd.com): " HY_DOMAIN
         if [[ -z "$HY_DOMAIN" ]]; then
@@ -379,12 +403,36 @@ hy2_get_input() {
             warning_echo "请输入一个有效的域名格式"
         fi
     done
-    
+
+    # 密码
     safe_read_password "请输入连接密码 (留空自动生成): " HY_PASSWORD
-    
     if [[ -z "$HY_PASSWORD" ]]; then
         HY_PASSWORD=$(openssl rand -base64 12)
         info_echo "自动生成密码: $HY_PASSWORD"
+    fi
+
+    # IP 地址选择
+    if $HAS_IPV4 && $HAS_IPV6; then
+        echo
+        info_echo "您的服务器同时拥有 IPv4 ($IPV4_ADDR) 和 IPv6 ($IPV6_ADDR) 地址。"
+        local ip_choice_valid=false
+        while ! $ip_choice_valid; do
+            safe_read "请选择 Hysteria2 客户端连接使用的 IP 类型 (1=IPv4, 2=IPv6, 留空默认 IPv4): " ip_choice
+            case "$ip_choice" in
+                1|"") HY_SERVER_IP_CHOICE="ipv4"; ip_choice_valid=true; info_echo "Hysteria2 将优先使用 IPv4 地址。";;
+                2) HY_SERVER_IP_CHOICE="ipv6"; ip_choice_valid=true; info_echo "Hysteria2 将优先使用 IPv6 地址。";;
+                *) error_echo "无效选择，请重新输入。";;
+            esac
+        done
+    elif $HAS_IPV4; then
+        HY_SERVER_IP_CHOICE="ipv4"
+        info_echo "服务器仅有 IPv4 地址，Hysteria2 将使用 IPv4。"
+    elif $HAS_IPV6; then
+        HY_SERVER_IP_CHOICE="ipv6"
+        info_echo "服务器仅有 IPv6 地址，Hysteria2 将使用 IPv6。"
+    else
+        error_echo "无法检测到有效的公网 IP 地址，Hysteria2 无法安装。"
+        return 1
     fi
     
     return 0
@@ -392,23 +440,30 @@ hy2_get_input() {
 
 # --- 生成多种客户端配置格式 ---
 generate_hy2_configs() {
-    # 优先使用 IPv4 地址，如果不存在则使用 IPv6 地址
     local server_addr_for_config=""
-    if [[ -n "$IPV4_ADDR" ]]; then
-        server_addr_for_config="$IPV4_ADDR"
-    elif [[ -n "$IPV6_ADDR" ]]; then
+    local display_ip_for_info=""
+
+    if [[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]]; then
         server_addr_for_config="[$IPV6_ADDR]" # IPv6地址需要用方括号括起来
-    else
-        server_addr_for_config="无法获取服务器IP"
-        warning_echo "无法获取服务器IP地址，客户端配置可能无法连接。"
+        display_ip_for_info="$IPV6_ADDR"
+    elif [[ "$HY_SERVER_IP_CHOICE" == "ipv4" ]]; then
+        server_addr_for_config="$IPV4_ADDR"
+        display_ip_for_info="$IPV4_ADDR"
+    else # Fallback, should not happen if logic is correct
+        warning_echo "Hysteria2 IP选择逻辑异常，使用默认IP: ${IPV4_ADDR:-$IPV6_ADDR}"
+        server_addr_for_config="${IPV4_ADDR:-[$IPV6_ADDR]}" # Use brackets if it's IPv6
+        display_ip_for_info="${IPV4_ADDR:-$IPV6_ADDR}"
     fi
+
+    # When generating links, strip brackets for hostname part
+    local display_ip_for_link=$(echo "$server_addr_for_config" | sed 's/\[//;s/\]//')
 
     # 生成随机标识
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
     local server_name="🌟Hysteria2-${country_code}-$(date +%m%d)"
     # 自签名模式下，insecure 必须为 true
-    local hy2_link="hysteria2://$HY_PASSWORD@$(echo "$server_addr_for_config" | sed 's/\[//;s/\]//'):443/?insecure=true&sni=$HY_DOMAIN#$server_name"
+    local hy2_link="hysteria2://$HY_PASSWORD@$display_ip_for_link:443/?insecure=true&sni=$HY_DOMAIN#$server_name"
     
     echo -e "${PURPLE}Hysteria2配置信息：${ENDCOLOR}"
     echo
@@ -420,12 +475,12 @@ generate_hy2_configs() {
     
     # 2. Clash Meta 配置
     echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
-    echo "  - { name: '$server_name', type: hysteria2, server: $(echo "$server_addr_for_config" | sed 's/\[//;s/\]//'), port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
+    echo "  - { name: '$server_name', type: hysteria2, server: $display_ip_for_link, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
     echo
     
     # 3. Surge 配置
     echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
-    echo "$server_name = hysteria2, $(echo "$server_addr_for_config" | sed 's/\[//;s/\]//'), 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
+    echo "$server_name = hysteria2, $display_ip_for_link, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
     echo
 }
 
@@ -439,7 +494,7 @@ hy2_show_result() {
     echo
     
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
-    echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}" # 这里显示原始IP，链接中处理方括号
+    echo -e "服务器地址: ${GREEN}$( [ "$HY_SERVER_IP_CHOICE" == "ipv6" ] && echo "[$IPV6_ADDR]" || echo "$IPV4_ADDR" )${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}$HY_DOMAIN${ENDCOLOR}"
@@ -566,16 +621,26 @@ hy2_update() {
 # Shadowsocks (IPv6-Only) 功能模块
 ################################################################################
 ss_check_ipv6() {
-    info_echo "检测 IPv6 网络环境..."
-    local IPV6_ADDR_LOCAL
-    IPV6_ADDR_LOCAL=$(ip -6 addr show scope global | grep inet6 | grep -v "temporary\|deprecated" | awk '{print $2}' | cut -d/ -f1 | head -n1)
-    if [[ -z "$IPV6_ADDR_LOCAL" ]]; then
-        error_echo "未检测到有效的公网 IPv6 地址！Shadowsocks 安装需要 IPv6 支持。"
+    info_echo "检测 IPv6 网络环境以安装 Shadowsocks..."
+    if ! $HAS_IPV6; then
+        if $HAS_IPV4; then
+            error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。"
+        else
+            error_echo "未检测到任何有效的公网 IP 地址，Shadowsocks 无法安装。"
+        fi
+        local dummy
+        safe_read "按 Enter 返回主菜单..." dummy
         return 1
     fi
-    # 确保全局 IPV6_ADDR 变量在此处被更新为本地检测到的有效 IPv6 地址
-    IPV6_ADDR=${IPV6_ADDR_LOCAL} 
+    # 如果有 IPv6，确保它在全局变量中被正确设置 (在 detect_network 已经做了大部分工作)
+    if [[ -z "$IPV6_ADDR" || "$IPV6_ADDR" == "N/A" ]]; then
+        error_echo "尽管检测到 IPv6 能力，但未能获取到一个可用的公网 IPv6 地址。Shadowsocks 安装失败。"
+        local dummy
+        safe_read "按 Enter 返回主菜单..." dummy
+        return 1
+    fi
 
+    # 再次确认 IPv6 连通性
     if ! timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
         warning_echo "检测到 IPv6 地址 ($IPV6_ADDR)，但似乎无法连接外网。"
         local confirm
@@ -603,6 +668,10 @@ ss_install_dependencies() {
             ;;
         *) error_echo "不支持的操作系统: $OS_TYPE"; return 1;;
     esac
+    if ! command -v ss-server >/dev/null 2>&1; then
+        error_echo "shadowsocks-libev 安装失败。"
+        return 1
+    fi
     success_echo "依赖包安装完成"
     return 0
 }
@@ -726,8 +795,11 @@ ss_display_result() {
 }
 
 ss_run_install() {
-    pre_install_check "shadowsocks" || return
-    ss_check_ipv6 && \
+    # 优先检查 IPv6 可用性
+    ss_check_ipv6 || return 1
+    
+    pre_install_check "shadowsocks" || return 1
+    
     ss_install_dependencies && \
     ss_generate_config && \
     ss_setup_service && \
@@ -839,7 +911,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.2) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.3) ${ENDCOLOR}"
     echo "项目地址：https://github.com/everett7623/hy2ipv6"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
@@ -949,7 +1021,14 @@ show_hysteria2_config() {
     echo
     
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
-    echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
+    # 这里根据安装时的选择，重新获取 HY_SERVER_IP_CHOICE
+    if [[ -z "$HY_SERVER_IP_CHOICE" ]]; then
+        # If script restarted, try to infer from network status
+        if $HAS_IPV4; then HY_SERVER_IP_CHOICE="ipv4"; fi
+        if $HAS_IPV6; then HY_SERVER_IP_CHOICE="ipv6"; fi # Prioritize IPv6 if both exist and choice wasn't explicitly saved
+    fi
+
+    echo -e "服务器地址: ${GREEN}$( [ "$HY_SERVER_IP_CHOICE" == "ipv6" ] && echo "[$IPV6_ADDR]" || echo "$IPV4_ADDR" )${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
@@ -1095,7 +1174,8 @@ update_system_kernel() {
             apt-get update -y >/dev/null 2>&1
             apt-get upgrade -y >/dev/null 2>&1
             # 检查是否有新的内核版本可用或已安装
-            if apt-get install -s linux-image-generic | grep -q "will be installed\|upgraded"; then
+            # More robust check for new kernel version
+            if apt-get list --upgradable | grep -q "linux-image"; then
                 reboot_required=true
             fi
             success_echo "Debian/Ubuntu 系统更新完成。"
