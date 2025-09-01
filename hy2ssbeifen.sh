@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.0
+# 版本: 1.0.4
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -24,10 +24,13 @@ OS_TYPE=""
 ARCH=""
 IPV4_ADDR=""
 IPV6_ADDR=""
+HAS_IPV4=false
+HAS_IPV6=false
 # Hysteria2 变量
 HY_DOMAIN=""
 HY_PASSWORD=""
 FAKE_URL="https://www.bing.com"
+HY_SERVER_IP_CHOICE="" # "ipv4" or "ipv6" for Hysteria2 client config
 # Shadowsocks 变量
 SS_PORT=""
 SS_PASSWORD=""
@@ -127,10 +130,42 @@ detect_system() {
 
 detect_network() {
     info_echo "检测网络环境..."
-    IPV4_ADDR=$(timeout 5 curl -4 -s https://api.ipify.org 2>/dev/null || echo "")
-    IPV6_ADDR=$(timeout 5 curl -6 -s https://api64.ipify.org 2>/dev/null || echo "")
     
-    # 清理可能的输入污染
+    # Try to get public IPv4
+    IPV4_ADDR=$(timeout 5 curl -4 -s https://api.ipify.org 2>/dev/null || echo "")
+    if [[ -n "$IPV4_ADDR" ]]; then
+        HAS_IPV4=true
+        info_echo "检测到公网 IPv4 地址: $IPV4_ADDR"
+    else
+        warning_echo "未检测到公网 IPv4 地址。"
+        IPV4_ADDR="N/A" # Set to N/A if not found
+    fi
+
+    # Try to get public IPv6
+    IPV6_ADDR=$(timeout 5 curl -6 -s https://api64.ipify.org 2>/dev/null || echo "")
+    if [[ -n "$IPV6_ADDR" ]]; then
+        HAS_IPV6=true
+        info_echo "通过 api64.ipify.org 检测到公网 IPv6 地址: $IPV6_ADDR"
+    else
+        # If curl -6 fails, try local detection
+        local_ipv6=$(ip -6 addr show scope global | grep inet6 | grep -v "temporary\|deprecated" | awk '{print $2}' | cut -d/ -f1 | head -n1 || echo "")
+        if [[ -n "$local_ipv6" ]]; then
+            # Verify if local IPv6 is actually routable (ping google.com)
+            if timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
+                IPV6_ADDR="$local_ipv6"
+                HAS_IPV6=true
+                info_echo "本地检测到可路由公网 IPv6 地址: $IPV6_ADDR"
+            else
+                warning_echo "本地检测到 IPv6 地址 ($local_ipv6)，但无法连接外网，视为不可用。"
+                IPV6_ADDR="N/A"
+            fi
+        else
+            warning_echo "未检测到公网 IPv6 地址。"
+            IPV6_ADDR="N/A"
+        fi
+    fi
+    
+    # Clean possible input pollution
     exec </dev/tty 2>/dev/null || true
 }
 
@@ -355,6 +390,7 @@ hy2_get_input() {
     echo -e "${CYAN}=== Hysteria2 自签名证书安装 ===${ENDCOLOR}"
     echo
     
+    # SNI 伪装域名
     while true; do
         safe_read "请输入用于 SNI 伪装的域名 (任意有效域名即可，留空默认 amd.com): " HY_DOMAIN
         if [[ -z "$HY_DOMAIN" ]]; then
@@ -367,12 +403,36 @@ hy2_get_input() {
             warning_echo "请输入一个有效的域名格式"
         fi
     done
-    
+
+    # 密码
     safe_read_password "请输入连接密码 (留空自动生成): " HY_PASSWORD
-    
     if [[ -z "$HY_PASSWORD" ]]; then
         HY_PASSWORD=$(openssl rand -base64 12)
         info_echo "自动生成密码: $HY_PASSWORD"
+    fi
+
+    # IP 地址选择
+    if $HAS_IPV4 && $HAS_IPV6; then
+        echo
+        info_echo "您的服务器同时拥有 IPv4 ($IPV4_ADDR) 和 IPv6 ($IPV6_ADDR) 地址。"
+        local ip_choice_valid=false
+        while ! $ip_choice_valid; do
+            safe_read "请选择 Hysteria2 客户端连接使用的 IP 类型 (1=IPv4, 2=IPv6, 留空默认 IPv4): " ip_choice
+            case "$ip_choice" in
+                1|"") HY_SERVER_IP_CHOICE="ipv4"; ip_choice_valid=true; info_echo "Hysteria2 将优先使用 IPv4 地址。";;
+                2) HY_SERVER_IP_CHOICE="ipv6"; ip_choice_valid=true; info_echo "Hysteria2 将优先使用 IPv6 地址。";;
+                *) error_echo "无效选择，请重新输入。";;
+            esac
+        done
+    elif $HAS_IPV4; then
+        HY_SERVER_IP_CHOICE="ipv4"
+        info_echo "服务器仅有 IPv4 地址，Hysteria2 将使用 IPv4。"
+    elif $HAS_IPV6; then
+        HY_SERVER_IP_CHOICE="ipv6"
+        info_echo "服务器仅有 IPv6 地址，Hysteria2 将使用 IPv6。"
+    else
+        error_echo "无法检测到有效的公网 IP 地址，Hysteria2 无法安装。"
+        return 1
     fi
     
     return 0
@@ -380,31 +440,52 @@ hy2_get_input() {
 
 # --- 生成多种客户端配置格式 ---
 generate_hy2_configs() {
-    local server_addr="${IPV4_ADDR:-$IPV6_ADDR}"
-    
-    # 生成随机标识
+    local hy2_server_addr_for_uri=""        # E.g., 192.0.2.1 or [2001:db8::1]
+    local hy2_server_addr_for_config_field="" # E.g., 192.0.2.1 or 2001:db8::1 (raw IPv6)
+
+    if [[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]]; then
+        hy2_server_addr_for_uri="[$IPV6_ADDR]"
+        hy2_server_addr_for_config_field="$IPV6_ADDR"
+    elif [[ "$HY_SERVER_IP_CHOICE" == "ipv4" ]]; then
+        hy2_server_addr_for_uri="$IPV4_ADDR"
+        hy2_server_addr_for_config_field="$IPV4_ADDR"
+    else
+        # Fallback in case HY_SERVER_IP_CHOICE is not set correctly or IPs are N/A
+        warning_echo "Hysteria2 IP选择逻辑异常，尝试从检测到的IP推断。"
+        if $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
+            hy2_server_addr_for_uri="$IPV4_ADDR"
+            hy2_server_addr_for_config_field="$IPV4_ADDR"
+        elif $HAS_IPV6 && [[ "$IPV6_ADDR" != "N/A" ]]; then
+            hy2_server_addr_for_uri="[$IPV6_ADDR]"
+            hy2_server_addr_for_config_field="$IPV6_ADDR"
+        else
+            error_echo "无法生成Hysteria2配置，因为没有可用的IP地址。"
+            return 1
+        fi
+    fi
+
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
     local server_name="🌟Hysteria2-${country_code}-$(date +%m%d)"
-    # 自签名模式下，insecure 必须为 true
-    local hy2_link="hysteria2://$HY_PASSWORD@$server_addr:443/?insecure=true&sni=$HY_DOMAIN#$server_name"
+    
+    # For V2rayN/NekoBox/Shadowrocket link (URI standard: IPv6 needs brackets)
+    local hy2_link_uri="hysteria2://$HY_PASSWORD@$hy2_server_addr_for_uri:443/?insecure=true&sni=$HY_DOMAIN#$server_name"
     
     echo -e "${PURPLE}Hysteria2配置信息：${ENDCOLOR}"
     echo
     
-    # 1. V2rayN / NekoBox / Shadowrocket 配置 (通用链接)
     echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
-    echo "$hy2_link"
+    echo "$hy2_link_uri"
     echo
     
-    # 2. Clash Meta 配置
     echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
-    echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
+    # Clash Meta 'server' field expects raw IP (no brackets for IPv6)
+    echo "  - { name: '$server_name', type: hysteria2, server: $hy2_server_addr_for_config_field, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
     echo
     
-    # 3. Surge 配置
     echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
-    echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
+    # Surge 'server' field expects raw IP (no brackets for IPv6)
+    echo "$server_name = hysteria2, $hy2_server_addr_for_config_field, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
     echo
 }
 
@@ -418,7 +499,8 @@ hy2_show_result() {
     echo
     
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
-    echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
+    # Display the chosen IP address, with brackets if IPv6
+    echo -e "服务器地址: ${GREEN}$( [ "$HY_SERVER_IP_CHOICE" == "ipv6" ] && echo "[$IPV6_ADDR]" || echo "$IPV4_ADDR" )${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}$HY_DOMAIN${ENDCOLOR}"
@@ -426,7 +508,7 @@ hy2_show_result() {
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
-    # 生成多种客户端配置
+    # Generate various client configurations
     generate_hy2_configs
     
     local dummy
@@ -459,19 +541,112 @@ hy2_uninstall() {
     success_echo "Hysteria2 卸载完成"
 }
 
+# --- Hysteria2 应用程序更新 ---
+hy2_update() {
+    info_echo "检查 Hysteria2 应用程序更新..."
+    if [[ ! -f /usr/local/bin/hysteria ]]; then
+        error_echo "Hysteria2 未安装，无法更新。"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
+        return 1
+    fi
+
+    local current_version
+    current_version=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1 | awk '{print $NF}')
+    if [[ -z "$current_version" ]]; then
+        warning_echo "无法获取当前 Hysteria2 版本，尝试重新安装最新版本。"
+        hy2_install || { error_echo "Hysteria2 更新失败。"; return 1; }
+        return 0
+    fi
+    info_echo "当前 Hysteria2 版本: $current_version"
+
+    local latest_version
+    latest_version=$(timeout 10 curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name"' | cut -d '"' -f 4)
+
+    if [[ -z "$latest_version" ]]; then
+        error_echo "无法获取 Hysteria2 最新版本信息。"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
+        return 1
+    fi
+    info_echo "Hysteria2 最新版本: $latest_version"
+
+    if [[ "$latest_version" == "$current_version" ]]; then
+        info_echo "Hysteria2 已经是最新版本，无需更新。"
+    else
+        info_echo "发现新版本 ($latest_version)，正在更新 Hysteria2..."
+        
+        systemctl stop hysteria-server >/dev/null 2>&1 || true
+        
+        local tmp_dir="/tmp/hysteria2_update"
+        rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
+        cd "$tmp_dir" || return 1
+        
+        local download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${ARCH}"
+        
+        info_echo "正在下载: $download_url"
+        if ! timeout 60 wget -q --show-progress -O hysteria "$download_url"; then
+            error_echo "下载失败"
+            cd / && rm -rf "$tmp_dir"
+            systemctl start hysteria-server >/dev/null 2>&1 || true
+            local dummy
+            safe_read "按 Enter 继续..." dummy
+            return 1
+        fi
+        
+        if [[ ! -s hysteria ]] || ! file hysteria | grep -q "executable"; then
+            error_echo "下载的文件无效"
+            cd / && rm -rf "$tmp_dir"
+            systemctl start hysteria-server >/dev/null 2>&1 || true
+            local dummy
+            safe_read "按 Enter 继续..." dummy
+            return 1
+        fi
+        
+        chmod +x hysteria
+        mv hysteria /usr/local/bin/hysteria
+        
+        systemctl start hysteria-server
+        sleep 3
+        
+        if systemctl is-active --quiet hysteria-server; then
+            success_echo "Hysteria2 更新并启动成功！新版本: $(/usr/local/bin/hysteria version | head -n 1)"
+        else
+            error_echo "Hysteria2 更新成功但服务启动失败。请检查日志。"
+            journalctl -u hysteria-server -n 10 --no-pager
+        fi
+        cd / && rm -rf "$tmp_dir"
+    fi
+    local dummy
+    safe_read "按 Enter 继续..." dummy
+    return 0
+}
+
+
 ################################################################################
 # Shadowsocks (IPv6-Only) 功能模块
 ################################################################################
 ss_check_ipv6() {
-    info_echo "检测 IPv6 网络环境..."
-    local IPV6_ADDR_LOCAL
-    IPV6_ADDR_LOCAL=$(ip -6 addr show scope global | grep inet6 | grep -v "temporary\|deprecated" | awk '{print $2}' | cut -d/ -f1 | head -n1)
-    if [[ -z "$IPV6_ADDR_LOCAL" ]]; then
-        error_echo "未检测到有效的公网 IPv6 地址！Shadowsocks 安装需要 IPv6 支持。"
+    info_echo "检测 IPv6 网络环境以安装 Shadowsocks..."
+    if ! $HAS_IPV6; then
+        if $HAS_IPV4; then
+            error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。"
+        else
+            error_echo "未检测到任何有效的公网 IP 地址，Shadowsocks 无法安装。"
+        fi
+        local dummy
+        safe_read "按 Enter 返回主菜单..." dummy
         return 1
     fi
-    IPV6_ADDR=${IPV6_ADDR:-$IPV6_ADDR_LOCAL}
+    # 如果有 IPv6，确保它在全局变量中被正确设置 (在 detect_network 已经做了大部分工作)
+    if [[ -z "$IPV6_ADDR" || "$IPV6_ADDR" == "N/A" ]]; then
+        error_echo "尽管检测到 IPv6 能力，但未能获取到一个可用的公网 IPv6 地址。Shadowsocks 安装失败。"
+        local dummy
+        safe_read "按 Enter 返回主菜单..." dummy
+        return 1
+    fi
 
+    # 再次确认 IPv6 连通性
     if ! timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
         warning_echo "检测到 IPv6 地址 ($IPV6_ADDR)，但似乎无法连接外网。"
         local confirm
@@ -482,6 +657,7 @@ ss_check_ipv6() {
         fi
     fi
     success_echo "IPv6 环境检查通过: $IPV6_ADDR"
+    return 0
 }
 
 ss_install_dependencies() {
@@ -498,7 +674,12 @@ ss_install_dependencies() {
             ;;
         *) error_echo "不支持的操作系统: $OS_TYPE"; return 1;;
     esac
+    if ! command -v ss-server >/dev/null 2>&1; then
+        error_echo "shadowsocks-libev 安装失败。"
+        return 1
+    fi
     success_echo "依赖包安装完成"
+    return 0
 }
 
 ss_generate_config() {
@@ -519,6 +700,7 @@ ss_generate_config() {
 }
 EOF
     success_echo "配置文件生成成功: /etc/shadowsocks-libev/config.json"
+    return 0
 }
 
 ss_setup_service() {
@@ -553,7 +735,8 @@ EOF
     fi
 
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then 
-        ufw allow "$SS_PORT" >/dev/null 2>&1
+        ufw allow "$SS_PORT"/tcp >/dev/null 2>&1
+        ufw allow "$SS_PORT"/udp >/dev/null 2>&1
     fi
     if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then 
         firewall-cmd --permanent --add-port="$SS_PORT"/tcp >/dev/null 2>&1
@@ -562,6 +745,7 @@ EOF
     fi
 
     success_echo "Shadowsocks 服务已成功启动"
+    return 0
 }
 
 ss_display_result() {
@@ -584,6 +768,25 @@ ss_display_result() {
     echo -e " ${PURPLE}----------------------------${ENDCOLOR}"
     echo
     
+    # 检查 Shadowsocks 监听状态
+    info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6，确保 IPv6 地址可用):"
+    local listening_status=""
+    if command -v ss >/dev/null 2>&1; then
+        listening_status=$(ss -ltunp | grep ":$SS_PORT" | grep "::")
+    elif command -v netstat >/dev/null 2>&1; then
+        listening_status=$(netstat -ltunp | grep ":$SS_PORT" | grep "::")
+    else
+        warning_echo "需要安装 'ss' 或 'netstat' 来检查端口监听状态。"
+    fi
+
+    if [[ -n "$listening_status" ]]; then
+        success_echo "Shadowsocks 正在监听端口 $SS_PORT on :: (IPv6/IPv4双栈或IPv6)."
+        echo -e "$listening_status"
+    else
+        error_echo "Shadowsocks 未检测到在端口 $SS_PORT on :: (IPv6) 监听。请检查配置和防火墙。"
+    fi
+    echo
+
     if command -v qrencode >/dev/null 2>&1; then
         info_echo "二维码 (请最大化终端窗口显示):"
         qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
@@ -594,11 +797,15 @@ ss_display_result() {
     echo
     local dummy
     safe_read "按 Enter 继续..." dummy
+    return 0
 }
 
 ss_run_install() {
-    pre_install_check "shadowsocks" || return
-    ss_check_ipv6 && \
+    # 优先检查 IPv6 可用性
+    ss_check_ipv6 || return 1
+    
+    pre_install_check "shadowsocks" || return 1
+    
     ss_install_dependencies && \
     ss_generate_config && \
     ss_setup_service && \
@@ -616,6 +823,76 @@ ss_uninstall() {
     systemctl daemon-reload
     success_echo "Shadowsocks 已卸载完成。"
 }
+
+# --- Shadowsocks 应用程序更新 (通过系统包管理器) ---
+ss_update() {
+    info_echo "检查 Shadowsocks (shadowsocks-libev) 应用程序更新..."
+    if [[ ! -f /etc/systemd/system/shadowsocks-libev.service ]]; then
+        error_echo "Shadowsocks 未安装，无法更新。"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
+        return 1
+    fi
+
+    local ss_is_active=false
+    systemctl is-active --quiet shadowsocks-libev && ss_is_active=true
+
+    info_echo "正在通过系统包管理器更新 shadowsocks-libev..."
+    case "$OS_TYPE" in
+        "ubuntu" | "debian")
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -y --only-upgrade shadowsocks-libev >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
+            else
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
+                local dummy
+                safe_read "按 Enter 继续..." dummy
+                return 1
+            fi
+            ;;
+        "centos" | "rocky" | "almalinux")
+            yum update -y shadowsocks-libev >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
+            else
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
+                local dummy
+                safe_read "按 Enter 继续..." dummy
+                return 1
+            fi
+            ;;
+        "fedora")
+            dnf update -y shadowsocks-libev >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
+            else
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
+                local dummy
+                safe_read "按 Enter 继续..." dummy
+                return 1
+            fi
+            ;;
+        *)
+            error_echo "不支持的操作系统: $OS_TYPE，无法自动更新 Shadowsocks 包。"
+            local dummy
+            safe_read "按 Enter 继续..." dummy
+            return 1
+            ;;
+    esac
+
+    if $ss_is_active; then
+        info_echo "Shadowsocks 服务正在运行，尝试重启服务..."
+        systemctl restart shadowsocks-libev && success_echo "Shadowsocks 服务重启成功。" || error_echo "Shadowsocks 服务重启失败。"
+    else
+        info_echo "Shadowsocks 服务未运行，无需重启。"
+    fi
+
+    local dummy
+    safe_read "按 Enter 继续..." dummy
+    return 0
+}
+
 
 ################################################################################
 # UI 与管理功能
@@ -640,7 +917,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.0) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.4) ${ENDCOLOR}"
     echo "项目地址：https://github.com/everett7623/hy2ipv6"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
@@ -648,8 +925,11 @@ show_menu() {
     echo -e "${PURPLE}==========================================================${ENDCOLOR}"
     echo -e "1. 安装 Hysteria2 (自签名证书模式，无需域名解析)"
     echo -e "2. 安装 Shadowsocks (仅 IPv6)"
-    echo -e "3. 服务管理 (启动/停止/日志/查看配置)"
+    echo -e "3. 服务管理 (启动/停止/日志/显示连接配置)"
     echo -e "4. 卸载服务"
+    echo -e "5. 更新系统内核"
+    echo -e "6. 更新 Hysteria2 应用"
+    echo -e "7. 更新 Shadowsocks (系统包)"
     echo -e "0. 退出脚本"    
     echo -e "${PURPLE}==========================================================${ENDCOLOR}"
 }
@@ -696,7 +976,7 @@ manage_single_service() {
         echo " 2. 停止服务"
         echo " 3. 重启服务"
         echo " 4. 查看日志"
-        echo " 5. 显示连接配置" # Renamed from "查看配置" for clarity and to align with "显示配置信息"
+        echo " 5. 显示连接配置"
         echo " 0. 返回上级菜单"
         echo "----------------"
         local action
@@ -724,15 +1004,12 @@ manage_single_service() {
     done
 }
 
-# The original show_config_info is now largely redundant as '显示连接配置' is in manage_single_service.
-# However, if it's meant to show *all* configs at once, it would need to be re-evaluated.
-# For now, following the simplified menu means removing main menu option for it.
-# The functions show_hysteria2_config and show_shadowsocks_config are still useful.
-
 show_hysteria2_config() {
     clear
     if [[ ! -f /etc/hysteria2/server.yaml ]]; then
         error_echo "Hysteria2 配置文件不存在"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
         return
     fi
 
@@ -750,7 +1027,15 @@ show_hysteria2_config() {
     echo
     
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
-    echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
+    # This logic assumes HY_SERVER_IP_CHOICE is still valid from previous run.
+    # If script restarted, it defaults based on detect_network
+    local display_ip_for_info=""
+    if [[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]]; then
+        display_ip_for_info="[$IPV6_ADDR]"
+    else # Default to ipv4 if choice is not ipv6 or not set
+        display_ip_for_info="$IPV4_ADDR"
+    fi
+    echo -e "服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
@@ -759,7 +1044,7 @@ show_hysteria2_config() {
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
-    # Update global variables for generate_hy2_configs
+    # Update global variables for generate_hy2_configs to ensure they are current
     HY_PASSWORD="$password"
     HY_DOMAIN="$domain"
     
@@ -773,6 +1058,8 @@ show_shadowsocks_config() {
     clear
     if [[ ! -f /etc/shadowsocks-libev/config.json ]]; then
         error_echo "Shadowsocks 配置文件不存在"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
         return
     fi
 
@@ -789,6 +1076,25 @@ show_shadowsocks_config() {
     echo -e "   密码:       ${GREEN}$password${ENDCOLOR}"
     echo -e "   加密方式:   ${GREEN}$method${ENDCOLOR}"
     echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
+    echo
+
+    # 检查 Shadowsocks 监听状态
+    info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6，确保 IPv6 地址可用):"
+    local listening_status=""
+    if command -v ss >/dev/null 2>&1; then
+        listening_status=$(ss -ltunp | grep ":$server_port" | grep "::")
+    elif command -v netstat >/dev/null 2>&1; then
+        listening_status=$(netstat -ltunp | grep ":$server_port" | grep "::")
+    else
+        warning_echo "需要安装 'ss' 或 'netstat' 来检查端口监听状态。"
+    fi
+
+    if [[ -n "$listening_status" ]]; then
+        success_echo "Shadowsocks 正在监听端口 $server_port on :: (IPv6/IPv4双栈或IPv6)."
+        echo -e "$listening_status"
+    else
+        error_echo "Shadowsocks 未检测到在端口 $server_port on :: (IPv6) 监听。请检查配置和防火墙。"
+    fi
     echo
 
     if command -v qrencode >/dev/null 2>&1; then
@@ -862,8 +1168,70 @@ uninstall_services() {
     done
 }
 
-# backup_configs and system_diagnosis are removed from the main menu as per optimization request.
-# If desired, they could be re-integrated into a "高级选项" or similar sub-menu under "服务管理".
+# --- 更新系统内核功能 (原 update_kernel) ---
+update_system_kernel() {
+    clear
+    info_echo "尝试更新系统内核..."
+    
+    local reboot_required=false
+    
+    case "$OS_TYPE" in
+        "ubuntu" | "debian")
+            info_echo "正在更新 Debian/Ubuntu 内核和系统..."
+            apt-get update -y >/dev/null 2>&1
+            apt-get upgrade -y >/dev/null 2>&1
+            # 检查是否有新的内核版本可用或已安装
+            # More robust check for new kernel version
+            if apt-get list --upgradable | grep -q "linux-image"; then
+                reboot_required=true
+            fi
+            success_echo "Debian/Ubuntu 系统更新完成。"
+            ;;
+        "centos" | "rocky" | "almalinux")
+            info_echo "正在更新 CentOS/Rocky/AlmaLinux 内核和系统..."
+            yum update -y >/dev/null 2>&1
+            # 检查是否有新的内核版本可用或已安装
+            if rpm -q kernel | grep -qv "$(uname -r)"; then
+                 reboot_required=true
+            fi
+            success_echo "CentOS/Rocky/AlmaLinux 系统更新完成。"
+            ;;
+        "fedora")
+            info_echo "正在更新 Fedora 内核和系统..."
+            dnf update -y >/dev/null 2>&1
+            # 检查是否有新的内核版本可用或已安装
+            if rpm -q kernel | grep -qv "$(uname -r)"; then
+                reboot_required=true
+            fi
+            success_echo "Fedora 系统更新完成。"
+            ;;
+        *)
+            error_echo "不支持的操作系统: $OS_TYPE，无法自动更新内核。"
+            local dummy
+            safe_read "按 Enter 继续..." dummy
+            return 1
+            ;;
+    esac
+
+    if $reboot_required; then
+        warning_echo "内核已更新，系统可能需要重启才能生效！"
+        local confirm
+        safe_read "是否立即重启系统? (y/N): " confirm
+        if [[ "$confirm" =~ ^[yY]$ ]]; then
+            info_echo "系统将在 5 秒后重启..."
+            sleep 5
+            reboot
+        else
+            info_echo "请在方便的时候手动重启系统以应用新的内核。"
+        fi
+    else
+        info_echo "内核未更新或无需重启。"
+    fi
+    local dummy
+    safe_read "按 Enter 继续..." dummy
+    return 0
+}
+
 
 ################################################################################
 # 主程序入口
@@ -882,7 +1250,7 @@ main() {
     while true; do
         show_menu
         local choice
-        safe_read "请选择操作 [0-4]: " choice
+        safe_read "请选择操作 [0-7]: " choice
         
         choice=$(echo "$choice" | tr -cd '0-9')
         
@@ -891,17 +1259,20 @@ main() {
             2) ss_run_install ;;
             3) manage_services ;; # This will lead to the sub-menu for managing individual services
             4) uninstall_services ;; # This will lead to the sub-menu for uninstalling individual services
+            5) update_system_kernel ;; # Update OS kernel
+            6) hy2_update ;; # Update Hysteria2 application
+            7) ss_update ;; # Update Shadowsocks application
             0) 
                 echo
                 success_echo "感谢使用脚本！"
                 exit 0 
                 ;;
             "")
-                warning_echo "请输入一个有效的数字选项 (0-4)"
+                warning_echo "请输入一个有效的数字选项 (0-7)"
                 sleep 1
                 ;;
             *)
-                error_echo "无效的选择 '$choice'，请输入 0-4 之间的数字"
+                error_echo "无效的选择 '$choice'，请输入 0-7 之间的数字"
                 sleep 1
                 ;;
         esac
