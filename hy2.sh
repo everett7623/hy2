@@ -888,14 +888,10 @@ show_menu() {
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
-    echo -e " ${CYAN}安装选项:${ENDCOLOR}"
-    echo -e "   1. 安装 Hysteria2 (${GREEN}自签名证书模式${ENDCOLOR})"
-    echo -e "   2. 安装 Shadowsocks (仅 IPv6)"
-    echo
-    echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
-    echo -e "   3. 管理服务 (启停/日志/配置/卸载)"
-    echo -e "   4. 系统诊断"
-    echo
+    echo -e "  1. 安装 Hysteria2 (${GREEN}自签名证书模式${ENDCOLOR})"
+    echo -e "  2. 安装 Shadowsocks (仅 IPv6)"
+    echo -e "  3. 管理服务 (启停/日志/配置/卸载)"
+    echo -e "  4. 系统诊断"
     echo -e " ${CYAN}0. 退出脚本${ENDCOLOR}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
 }
