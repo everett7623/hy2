@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.0
+# 版本: 1.0.1
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -129,6 +129,18 @@ detect_network() {
     info_echo "检测网络环境..."
     IPV4_ADDR=$(timeout 5 curl -4 -s https://api.ipify.org 2>/dev/null || echo "")
     IPV6_ADDR=$(timeout 5 curl -6 -s https://api64.ipify.org 2>/dev/null || echo "")
+
+    # 如果 curl -6 失败，尝试本地方式检测 IPv6 地址
+    if [[ -z "$IPV6_ADDR" ]]; then
+        info_echo "尝试本地方式检测 IPv6 地址..."
+        # 排除临时地址和废弃地址
+        IPV6_ADDR=$(ip -6 addr show scope global | grep inet6 | grep -v "temporary\|deprecated" | awk '{print $2}' | cut -d/ -f1 | head -n1 || echo "")
+        if [[ -n "$IPV6_ADDR" ]]; then
+            info_echo "本地检测到 IPv6 地址: $IPV6_ADDR"
+        else
+            warning_echo "未检测到公网 IPv6 地址。"
+        fi
+    fi
     
     # 清理可能的输入污染
     exec </dev/tty 2>/dev/null || true
@@ -380,6 +392,7 @@ hy2_get_input() {
 
 # --- 生成多种客户端配置格式 ---
 generate_hy2_configs() {
+    # 优先使用 IPv4 地址，如果不存在则使用 IPv6 地址
     local server_addr="${IPV4_ADDR:-$IPV6_ADDR}"
     
     # 生成随机标识
@@ -470,7 +483,8 @@ ss_check_ipv6() {
         error_echo "未检测到有效的公网 IPv6 地址！Shadowsocks 安装需要 IPv6 支持。"
         return 1
     fi
-    IPV6_ADDR=${IPV6_ADDR:-$IPV6_ADDR_LOCAL}
+    # 确保全局 IPV6_ADDR 变量在此处被更新为本地检测到的有效 IPv6 地址
+    IPV6_ADDR=${IPV6_ADDR_LOCAL} 
 
     if ! timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
         warning_echo "检测到 IPv6 地址 ($IPV6_ADDR)，但似乎无法连接外网。"
@@ -553,7 +567,8 @@ EOF
     fi
 
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then 
-        ufw allow "$SS_PORT" >/dev/null 2>&1
+        ufw allow "$SS_PORT"/tcp >/dev/null 2>&1
+        ufw allow "$SS_PORT"/udp >/dev/null 2>&1
     fi
     if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then 
         firewall-cmd --permanent --add-port="$SS_PORT"/tcp >/dev/null 2>&1
@@ -562,6 +577,7 @@ EOF
     fi
 
     success_echo "Shadowsocks 服务已成功启动"
+    return 0
 }
 
 ss_display_result() {
@@ -584,6 +600,15 @@ ss_display_result() {
     echo -e " ${PURPLE}----------------------------${ENDCOLOR}"
     echo
     
+    if command -v ss >/dev/null 2>&1; then
+        info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6):"
+        ss -ltunp | grep ":$SS_PORT" | grep "::" || warning_echo "Shadowsocks 可能未监听 IPv6 地址或端口不正确。"
+    elif command -v netstat >/dev/null 2>&1; then
+        info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6):"
+        netstat -ltunp | grep ":$SS_PORT" | grep "::" || warning_echo "Shadowsocks 可能未监听 IPv6 地址或端口不正确。"
+    fi
+    echo
+
     if command -v qrencode >/dev/null 2>&1; then
         info_echo "二维码 (请最大化终端窗口显示):"
         qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
@@ -640,7 +665,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.0) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.1) ${ENDCOLOR}"
     echo "项目地址：https://github.com/everett7623/hy2ipv6"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
@@ -648,8 +673,9 @@ show_menu() {
     echo -e "${PURPLE}==========================================================${ENDCOLOR}"
     echo -e "1. 安装 Hysteria2 (自签名证书模式，无需域名解析)"
     echo -e "2. 安装 Shadowsocks (仅 IPv6)"
-    echo -e "3. 服务管理 (启动/停止/日志/查看配置)"
+    echo -e "3. 服务管理 (启动/停止/日志/显示连接配置)"
     echo -e "4. 卸载服务"
+    echo -e "5. 更新内核"
     echo -e "0. 退出脚本"    
     echo -e "${PURPLE}==========================================================${ENDCOLOR}"
 }
@@ -724,15 +750,12 @@ manage_single_service() {
     done
 }
 
-# The original show_config_info is now largely redundant as '显示连接配置' is in manage_single_service.
-# However, if it's meant to show *all* configs at once, it would need to be re-evaluated.
-# For now, following the simplified menu means removing main menu option for it.
-# The functions show_hysteria2_config and show_shadowsocks_config are still useful.
-
 show_hysteria2_config() {
     clear
     if [[ ! -f /etc/hysteria2/server.yaml ]]; then
         error_echo "Hysteria2 配置文件不存在"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
         return
     fi
 
@@ -773,6 +796,8 @@ show_shadowsocks_config() {
     clear
     if [[ ! -f /etc/shadowsocks-libev/config.json ]]; then
         error_echo "Shadowsocks 配置文件不存在"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
         return
     fi
 
@@ -789,6 +814,15 @@ show_shadowsocks_config() {
     echo -e "   密码:       ${GREEN}$password${ENDCOLOR}"
     echo -e "   加密方式:   ${GREEN}$method${ENDCOLOR}"
     echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
+    echo
+
+    if command -v ss >/dev/null 2>&1; then
+        info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6):"
+        ss -ltunp | grep ":$server_port" | grep "::" || warning_echo "Shadowsocks 可能未监听 IPv6 地址或端口不正确。"
+    elif command -v netstat >/dev/null 2>&1; then
+        info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6):"
+        netstat -ltunp | grep ":$server_port" | grep "::" || warning_echo "Shadowsocks 可能未监听 IPv6 地址或端口不正确。"
+    fi
     echo
 
     if command -v qrencode >/dev/null 2>&1; then
@@ -862,8 +896,69 @@ uninstall_services() {
     done
 }
 
-# backup_configs and system_diagnosis are removed from the main menu as per optimization request.
-# If desired, they could be re-integrated into a "高级选项" or similar sub-menu under "服务管理".
+# --- 更新内核功能 ---
+update_kernel() {
+    clear
+    info_echo "尝试更新系统内核..."
+    
+    local reboot_required=false
+    
+    case "$OS_TYPE" in
+        "ubuntu" | "debian")
+            info_echo "正在更新 Debian/Ubuntu 内核和系统..."
+            apt-get update -y >/dev/null 2>&1
+            apt-get upgrade -y >/dev/null 2>&1
+            # 检查是否有新的内核版本可用或已安装
+            if apt-get install -s linux-image-generic | grep -q "will be installed\|upgraded"; then
+                reboot_required=true
+            fi
+            success_echo "Debian/Ubuntu 系统更新完成。"
+            ;;
+        "centos" | "rocky" | "almalinux")
+            info_echo "正在更新 CentOS/Rocky/AlmaLinux 内核和系统..."
+            yum update -y >/dev/null 2>&1
+            # 检查是否有新的内核版本可用或已安装
+            if rpm -q kernel | grep -qv "$(uname -r)"; then
+                 reboot_required=true
+            fi
+            success_echo "CentOS/Rocky/AlmaLinux 系统更新完成。"
+            ;;
+        "fedora")
+            info_echo "正在更新 Fedora 内核和系统..."
+            dnf update -y >/dev/null 2>&1
+            # 检查是否有新的内核版本可用或已安装
+            if rpm -q kernel | grep -qv "$(uname -r)"; then
+                reboot_required=true
+            fi
+            success_echo "Fedora 系统更新完成。"
+            ;;
+        *)
+            error_echo "不支持的操作系统: $OS_TYPE，无法自动更新内核。"
+            local dummy
+            safe_read "按 Enter 继续..." dummy
+            return 1
+            ;;
+    esac
+
+    if $reboot_required; then
+        warning_echo "内核已更新，系统可能需要重启才能生效！"
+        local confirm
+        safe_read "是否立即重启系统? (y/N): " confirm
+        if [[ "$confirm" =~ ^[yY]$ ]]; then
+            info_echo "系统将在 5 秒后重启..."
+            sleep 5
+            reboot
+        else
+            info_echo "请在方便的时候手动重启系统以应用新的内核。"
+        fi
+    else
+        info_echo "内核未更新或无需重启。"
+    fi
+    local dummy
+    safe_read "按 Enter 继续..." dummy
+    return 0
+}
+
 
 ################################################################################
 # 主程序入口
@@ -882,7 +977,7 @@ main() {
     while true; do
         show_menu
         local choice
-        safe_read "请选择操作 [0-4]: " choice
+        safe_read "请选择操作 [0-5]: " choice
         
         choice=$(echo "$choice" | tr -cd '0-9')
         
@@ -891,17 +986,18 @@ main() {
             2) ss_run_install ;;
             3) manage_services ;; # This will lead to the sub-menu for managing individual services
             4) uninstall_services ;; # This will lead to the sub-menu for uninstalling individual services
+            5) update_kernel ;;
             0) 
                 echo
                 success_echo "感谢使用脚本！"
                 exit 0 
                 ;;
             "")
-                warning_echo "请输入一个有效的数字选项 (0-4)"
+                warning_echo "请输入一个有效的数字选项 (0-5)"
                 sleep 1
                 ;;
             *)
-                error_echo "无效的选择 '$choice'，请输入 0-4 之间的数字"
+                error_echo "无效的选择 '$choice'，请输入 0-5 之间的数字"
                 sleep 1
                 ;;
         esac
