@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 6.2.1 (修复输入问题版本)
+# 版本: 6.2.2 (修复ACME安装流程版本)
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 支持自签名证书和 Cloudflare DNS API 申请的 ACME 证书两种模式。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -195,6 +195,10 @@ hy2_install_system_deps() {
     
     if ! command -v openssl >/dev/null 2>&1; then
         error_echo "OpenSSL 安装失败"
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        error_echo "jq 安装失败, 这是验证Cloudflare API所必需的"
         return 1
     fi
     
@@ -661,8 +665,8 @@ hy2_show_result() {
 hy2_install_self_signed() {
     pre_install_check "hysteria" || return 1
     
-    hy2_get_input_self_signed || return 1
     hy2_install_system_deps || return 1
+    hy2_get_input_self_signed || return 1
     hy2_download_and_install || return 1
     hy2_create_self_signed_cert || return 1
     hy2_create_config || return 1
@@ -673,8 +677,12 @@ hy2_install_self_signed() {
 hy2_install_acme() {
     pre_install_check "hysteria" || return 1
     
-    hy2_get_input_acme || return 1
+    # --- FIX START ---
+    # 修正: 先安装依赖 (如 jq)，再获取需要依赖的输入信息
     hy2_install_system_deps || return 1
+    hy2_get_input_acme || return 1
+    # --- FIX END ---
+    
     hy2_download_and_install || return 1
     hy2_setup_acme_cert || return 1
     hy2_create_config || return 1
@@ -921,7 +929,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.2.1) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.2.2) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
