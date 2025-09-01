@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 6.2.4
+# 版本: 6.3.0 (全新重写Hysteria2部分)
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 支持自签名证书模式。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -26,12 +26,9 @@ IPV4_ADDR=""
 IPV6_ADDR=""
 # Hysteria2 变量
 HY_DOMAIN=""
-CF_TOKEN=""
 HY_PASSWORD=""
-ACME_EMAIL=""
+HY_PORT="443"
 FAKE_URL="https://www.bing.com"
-CF_ZONE_ID=""
-CF_ACCOUNT_ID=""
 # Shadowsocks 变量
 SS_PORT=""
 SS_PASSWORD=""
@@ -143,7 +140,7 @@ pre_install_check() {
     local service_name="$1"
     local service_file=""
     case "$service_name" in
-        hysteria) service_file="/etc/systemd/system/hysteria-server.service" ;;
+        hysteria) service_file="/etc/systemd/system/hysteria2.service" ;;
         shadowsocks) service_file="/etc/systemd/system/shadowsocks-libev.service" ;;
         *) error_echo "未知的服务名称: $service_name"; return 1 ;;
     esac
@@ -166,26 +163,23 @@ pre_install_check() {
 }
 
 ################################################################################
-# Hysteria2 功能模块 (全新实现)
+# Hysteria2 功能模块 (全新重写)
 ################################################################################
 
-# --- 系统依赖安装 ---
-hy2_install_system_deps() {
-    info_echo "安装系统依赖包..."
-    
-    local base_packages=("curl" "wget" "openssl" "ca-certificates" "tar" "unzip")
+# --- 安装依赖包 ---
+hy2_install_deps() {
+    info_echo "安装必要依赖包..."
     
     case "$OS_TYPE" in
         "ubuntu" | "debian")
-            apt-get update -y >/dev/null 2>&1
-            apt-get install -y "${base_packages[@]}" jq socat >/dev/null 2>&1
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -y curl wget tar openssl coreutils >/dev/null 2>&1
             ;;
-        "centos" | "rocky" | "almalinux")
-            yum install -y epel-release >/dev/null 2>&1
-            yum install -y "${base_packages[@]}" jq socat >/dev/null 2>&1
+        "centos" | "rocky" | "almalinux" | "rhel")
+            yum install -y curl wget tar openssl coreutils >/dev/null 2>&1
             ;;
         "fedora")
-            dnf install -y "${base_packages[@]}" jq socat >/dev/null 2>&1
+            dnf install -y curl wget tar openssl coreutils >/dev/null 2>&1
             ;;
         *)
             error_echo "不支持的操作系统: $OS_TYPE"
@@ -193,216 +187,272 @@ hy2_install_system_deps() {
             ;;
     esac
     
-    if ! command -v openssl >/dev/null 2>&1; then
-        error_echo "OpenSSL 安装失败"
-        return 1
-    fi
-    if ! command -v jq >/dev/null 2>&1; then
-        error_echo "jq 安装失败, 这是验证Cloudflare API所必需的"
+    if ! command -v curl >/dev/null 2>&1; then
+        error_echo "curl 安装失败"
         return 1
     fi
     
-    success_echo "系统依赖安装完成"
+    success_echo "依赖包安装完成"
     return 0
 }
 
-# --- Hysteria2 核心下载安装 ---
-hy2_download_and_install() {
+# --- 下载 Hysteria2 二进制文件 ---
+hy2_download_binary() {
     info_echo "下载 Hysteria2 最新版本..."
     
-    local tmp_dir="/tmp/hysteria2_install"
-    rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
-    cd "$tmp_dir" || return 1
+    local download_dir="/tmp/hysteria2"
+    rm -rf "$download_dir" && mkdir -p "$download_dir"
     
+    # 获取最新版本号
     local latest_version
-    latest_version=$(timeout 10 curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name"' | cut -d '"' -f 4)
+    latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name"' | head -n1 | cut -d '"' -f4)
     
     if [[ -z "$latest_version" ]]; then
-        error_echo "无法获取 Hysteria2 最新版本信息，请检查网络或GitHub API访问。"
+        error_echo "无法获取最新版本信息"
         return 1
     fi
     
     info_echo "最新版本: $latest_version"
     
+    # 下载对应架构的二进制文件
     local download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${ARCH}"
     
-    info_echo "正在下载: $download_url"
-    if ! timeout 60 wget -q --show-progress -O hysteria "$download_url"; then
-        error_echo "下载失败，请检查网络或重试。"
+    info_echo "正在下载二进制文件..."
+    if ! curl -L -o "$download_dir/hysteria" "$download_url"; then
+        error_echo "下载失败"
         return 1
     fi
     
-    if [[ ! -s hysteria ]] || ! file hysteria | grep -q "executable"; then
-        error_echo "下载的文件无效。"
+    # 验证文件并安装
+    if [[ ! -s "$download_dir/hysteria" ]]; then
+        error_echo "下载的文件为空"
         return 1
     fi
     
-    chmod +x hysteria
-    mv hysteria /usr/local/bin/hysteria
+    chmod +x "$download_dir/hysteria"
+    mv "$download_dir/hysteria" /usr/local/bin/hysteria2
     
-    if ! /usr/local/bin/hysteria version >/dev/null 2>&1; then
-        error_echo "Hysteria2 安装验证失败。"
+    # 验证安装
+    if ! /usr/local/bin/hysteria2 version >/dev/null 2>&1; then
+        error_echo "Hysteria2 二进制文件验证失败"
         return 1
     fi
     
-    local version_info
-    version_info=$(/usr/local/bin/hysteria version | head -n 1)
-    success_echo "Hysteria2 安装成功: $version_info"
-    
-    cd / && rm -rf "$tmp_dir"
+    success_echo "Hysteria2 下载安装完成"
+    rm -rf "$download_dir"
     return 0
 }
 
-# --- 自签名证书生成 ---
-hy2_create_self_signed_cert() {
-    info_echo "生成自签名 SSL 证书..."
+# --- 生成自签名证书 ---
+hy2_generate_cert() {
+    info_echo "生成自签名SSL证书..."
     
-    mkdir -p /etc/hysteria2/certs
+    local cert_dir="/etc/hysteria2"
+    mkdir -p "$cert_dir"
     
-    if ! openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout /etc/hysteria2/certs/server.key \
-        -out /etc/hysteria2/certs/server.crt \
-        -subj "/C=US/ST=State/L=City/O=Organization/CN=$HY_DOMAIN" >/dev/null 2>&1; then
-        error_echo "证书生成失败。"
+    # 生成证书
+    openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+        -keyout "$cert_dir/private.key" \
+        -out "$cert_dir/cert.pem" \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=$HY_DOMAIN" >/dev/null 2>&1
+    
+    if [[ ! -f "$cert_dir/cert.pem" ]] || [[ ! -f "$cert_dir/private.key" ]]; then
+        error_echo "证书生成失败"
         return 1
     fi
     
-    success_echo "自签名证书生成成功。"
+    success_echo "自签名证书生成完成"
     return 0
 }
 
 # --- 生成配置文件 ---
-hy2_create_config() {
+hy2_generate_config() {
     info_echo "生成 Hysteria2 配置文件..."
     
-    mkdir -p /etc/hysteria2
+    local config_file="/etc/hysteria2/config.yaml"
     
-    cat > /etc/hysteria2/server.yaml << EOF
-listen: :443
+    cat > "$config_file" << EOF
+listen: :$HY_PORT
 
 tls:
-  cert: /etc/hysteria2/certs/server.crt
-  key: /etc/hysteria2/certs/server.key
+  cert: /etc/hysteria2/cert.pem
+  key: /etc/hysteria2/private.key
 
 auth:
   type: password
-  password: ${HY_PASSWORD}
+  password: $HY_PASSWORD
 
 masquerade:
   type: proxy
   proxy:
-    url: ${FAKE_URL}
+    url: $FAKE_URL
     rewriteHost: true
 
-quic:
-  initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
-  initConnReceiveWindow: 20971520
-  maxConnReceiveWindow: 20971520
+bandwidth:
+  up: 1 gbps
+  down: 1 gbps
 EOF
-
-    success_echo "配置文件创建完成。"
+    
+    if [[ ! -f "$config_file" ]]; then
+        error_echo "配置文件生成失败"
+        return 1
+    fi
+    
+    success_echo "配置文件生成完成"
     return 0
 }
 
 # --- 创建系统服务 ---
-hy2_create_service() {
+hy2_create_systemd_service() {
     info_echo "创建 systemd 服务..."
     
-    cat > /etc/systemd/system/hysteria-server.service << EOF
+    local service_file="/etc/systemd/system/hysteria2.service"
+    
+    cat > "$service_file" << EOF
 [Unit]
-Description=Hysteria 2 Server
+Description=Hysteria2 Server
 Documentation=https://hysteria.network/
 After=network.target nss-lookup.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria2/server.yaml
+Group=root
+ExecStart=/usr/local/bin/hysteria2 server -c /etc/hysteria2/config.yaml
+WorkingDirectory=/etc/hysteria2
+Environment=HYSTERIA_LOG_LEVEL=info
 Restart=on-failure
-RestartSec=5s
-LimitNOFILE=infinity
+RestartSec=10
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hysteria2
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
+    
     systemctl daemon-reload
     
-    if command -v ufw >/dev/null 2>&1; then
-        ufw allow 443/udp >/dev/null 2>&1
+    if ! systemctl enable hysteria2 >/dev/null 2>&1; then
+        error_echo "服务启用失败"
+        return 1
     fi
-    if command -v firewall-cmd >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1
+    
+    success_echo "systemd 服务创建完成"
+    return 0
+}
+
+# --- 配置防火墙 ---
+hy2_setup_firewall() {
+    info_echo "配置防火墙规则..."
+    
+    # UFW (Ubuntu/Debian)
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "$HY_PORT"/udp >/dev/null 2>&1
+    fi
+    
+    # Firewalld (CentOS/RHEL/Rocky)
+    if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active firewalld >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port="$HY_PORT"/udp >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
     fi
     
-    if ! systemctl enable --now hysteria-server; then
-        error_echo "服务启动失败。"
+    success_echo "防火墙配置完成"
+    return 0
+}
+
+# --- 启动服务 ---
+hy2_start_service() {
+    info_echo "启动 Hysteria2 服务..."
+    
+    if ! systemctl start hysteria2; then
+        error_echo "服务启动失败，检查日志:"
+        journalctl -u hysteria2 --no-pager -n 20
         return 1
     fi
     
     sleep 3
     
-    if ! systemctl is-active --quiet hysteria-server; then
-        error_echo "服务运行异常，请检查日志。"
-        journalctl -u hysteria-server -n 10 --no-pager
+    if ! systemctl is-active --quiet hysteria2; then
+        error_echo "服务运行异常，请检查配置"
+        journalctl -u hysteria2 --no-pager -n 10
         return 1
     fi
     
-    success_echo "Hysteria2 服务创建并启动成功。"
+    success_echo "Hysteria2 服务启动成功"
     return 0
 }
 
-# --- 用户输入处理 ---
-hy2_get_input_self_signed() {
+# --- 用户输入 ---
+hy2_get_user_input() {
     echo
-    echo -e "${CYAN}=== Hysteria2 自签名证书安装 ===${ENDCOLOR}"
+    echo -e "${CYAN}=== Hysteria2 自签名证书安装配置 ===${ENDCOLOR}"
     echo
     
+    # 输入 SNI 域名
     while [[ -z "$HY_DOMAIN" ]]; do
-        safe_read "请输入用于 SNI 伪装的域名 (如: wechat.com): " HY_DOMAIN
+        safe_read "请输入 SNI 伪装域名 (例如: wechat.com): " HY_DOMAIN
         if [[ -z "$HY_DOMAIN" ]]; then
-            warning_echo "域名不能为空。"
+            warning_echo "域名不能为空，请重新输入"
         fi
     done
     
-    safe_read_password "请输入连接密码 (留空将自动生成): " HY_PASSWORD
+    # 输入连接密码
+    safe_read_password "请输入连接密码 (回车自动生成): " HY_PASSWORD
     
     if [[ -z "$HY_PASSWORD" ]]; then
-        HY_PASSWORD=$(openssl rand -base64 12)
+        HY_PASSWORD=$(openssl rand -base64 16)
         info_echo "自动生成密码: $HY_PASSWORD"
+    fi
+    
+    # 确认端口 (默认443)
+    local port_input
+    safe_read "请输入监听端口 (默认443): " port_input
+    if [[ -n "$port_input" ]] && [[ "$port_input" =~ ^[0-9]+$ ]] && [[ "$port_input" -ge 1 ]] && [[ "$port_input" -le 65535 ]]; then
+        HY_PORT="$port_input"
+    fi
+    
+    info_echo "配置确认:"
+    echo "  - SNI 域名: $HY_DOMAIN"
+    echo "  - 连接密码: $HY_PASSWORD"
+    echo "  - 监听端口: $HY_PORT"
+    echo
+    
+    local confirm
+    safe_read "确认开始安装? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+        info_echo "安装已取消"
+        return 1
     fi
     
     return 0
 }
 
-# --- 生成多种客户端配置格式 ---
-generate_hy2_configs() {
-    local cert_type="$1"
+# --- 生成客户端配置 ---
+hy2_generate_client_configs() {
     local server_addr="${IPV4_ADDR:-$IPV6_ADDR}"
-    local insecure="false"
-    
-    if [[ "$cert_type" == "self-signed" ]]; then
-        insecure="true"
-    fi
-    
     local country_code
-    country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
-    local server_name="🌟Hysteria2-${country_code}-$(date +%m%d)"
+    country_code=$(curl -s --connect-timeout 3 https://ipapi.co/country_code 2>/dev/null || echo "XX")
+    local server_name="Hysteria2-${country_code}-$(date +%m%d)"
     
-    echo "# ========== Hysteria2 客户端配置 =========="
+    echo
+    echo "============================================"
+    echo -e "${CYAN}📱 Hysteria2 客户端配置${ENDCOLOR}"
+    echo "============================================"
     echo
     
-    echo -e "${CYAN}📱 Hysteria2 原生客户端配置 (config.yaml):${ENDCOLOR}"
+    # 1. 原生配置文件
+    echo -e "${YELLOW}1. Hysteria2 原生客户端配置 (config.yaml):${ENDCOLOR}"
+    echo "-------------------------------------------"
     cat << EOF
-server: $server_addr:443
+server: $server_addr:$HY_PORT
 auth: $HY_PASSWORD
 tls:
   sni: $HY_DOMAIN
-  insecure: $insecure
+  insecure: true
 bandwidth:
-  up: 50 mbps
+  up: 100 mbps
   down: 100 mbps
 socks5:
   listen: 127.0.0.1:1080
@@ -411,98 +461,109 @@ http:
 EOF
     echo
     
-    # 修复：对密码进行 Base64 编码和 URL 编码
-    local encoded_password=$(echo -n "$HY_PASSWORD" | base64 -w 0 | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
-    local hy2_link="hysteria2://$encoded_password@$server_addr:443/?insecure=$insecure&sni=$HY_DOMAIN#$server_name"
-    
-    echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
-    echo "$hy2_link"
+    # 2. 分享链接
+    echo -e "${YELLOW}2. 通用分享链接 (适用于 V2rayN, Clash 等):${ENDCOLOR}"
+    echo "-------------------------------------------"
+    local password_b64=$(printf "%s" "$HY_PASSWORD" | base64 | tr -d '\n')
+    local share_link="hysteria2://${password_b64}@${server_addr}:${HY_PORT}/?insecure=1&sni=${HY_DOMAIN}#${server_name}"
+    echo "$share_link"
     echo
     
-    echo -e "${CYAN}⚔️ Clash Meta 紧凑格式 (添加到 proxies 列表):${ENDCOLOR}"
-    if [[ "$insecure" == "true" ]]; then
-        echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
-    else
-        echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, up: 50, down: 100 }"
-    fi
+    # 3. Clash Meta 配置
+    echo -e "${YELLOW}3. Clash Meta 配置 (添加到 proxies 部分):${ENDCOLOR}"
+    echo "-------------------------------------------"
+    cat << EOF
+  - name: "$server_name"
+    type: hysteria2
+    server: $server_addr
+    port: $HY_PORT
+    password: $HY_PASSWORD
+    sni: $HY_DOMAIN
+    skip-cert-verify: true
+    up: 100
+    down: 100
+EOF
     echo
     
-    echo -e "${CYAN}🌊 Surge 配置 (添加到 [Proxy] 段):${ENDCOLOR}"
-    if [[ "$insecure" == "true" ]]; then
-        echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
-    else
-        echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN"
-    fi
+    # 4. Surge 配置
+    echo -e "${YELLOW}4. Surge 配置 (添加到 [Proxy] 部分):${ENDCOLOR}"
+    echo "-------------------------------------------"
+    echo "$server_name = hysteria2, $server_addr, $HY_PORT, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
     echo
     
-    echo "# =========================================="
+    echo "============================================"
+    echo -e "${GREEN}配置信息已生成完毕！${ENDCOLOR}"
+    echo "============================================"
 }
 
 # --- 显示安装结果 ---
-hy2_show_result() {
-    local cert_type="$1"
+hy2_show_install_result() {
     clear
-    
-    echo -e "${BG_PURPLE} Hysteria2 安装完成！ ${ENDCOLOR}"
+    echo
+    echo -e "${BG_PURPLE}                                    ${ENDCOLOR}"
+    echo -e "${BG_PURPLE}   🎉 Hysteria2 安装完成！           ${ENDCOLOR}"
+    echo -e "${BG_PURPLE}                                    ${ENDCOLOR}"
     echo
     
-    if [[ "$cert_type" == "self-signed" ]]; then
-        echo -e "${YELLOW}注意: 您使用的是自签名证书，客户端需要启用 '允许不安全连接' 选项。${ENDCOLOR}"
-        echo
-    fi
-    
-    echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
+    echo -e "${PURPLE}=== 服务器信息 ===${ENDCOLOR}"
     echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
-    echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
+    echo -e "监听端口:   ${GREEN}$HY_PORT${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}$HY_DOMAIN${ENDCOLOR}"
+    echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"
+    echo -e "${PURPLE}==================${ENDCOLOR}"
     
-    if [[ "$cert_type" == "self-signed" ]]; then
-        echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
-    else
-        echo -e "允许不安全: ${GREEN}否${ENDCOLOR}"
-    fi
+    hy2_generate_client_configs
     
-    echo -e "${PURPLE}========================${ENDCOLOR}"
+    echo
+    echo -e "${YELLOW}注意事项:${ENDCOLOR}"
+    echo "• 自签名证书需要客户端启用 '跳过证书验证' 或 '允许不安全连接'"
+    echo "• 服务管理命令: systemctl {start|stop|restart|status} hysteria2"
+    echo "• 配置文件位置: /etc/hysteria2/config.yaml"
     echo
     
-    generate_hy2_configs "$cert_type"
-    
     local dummy
-    safe_read "按 Enter 返回主菜单..." dummy
+    safe_read "按 Enter 键返回主菜单..." dummy
 }
 
-# --- 安装主函数 ---
-hy2_install_self_signed() {
+# --- Hysteria2 主安装函数 ---
+hy2_install() {
+    # 预检查
     pre_install_check "hysteria" || return 1
     
-    hy2_install_system_deps || return 1
-    hy2_get_input_self_signed || return 1
-    hy2_download_and_install || return 1
-    hy2_create_self_signed_cert || return 1
-    hy2_create_config || return 1
-    hy2_create_service || return 1
-    hy2_show_result "self-signed"
+    # 用户输入
+    hy2_get_user_input || return 1
+    
+    # 开始安装流程
+    info_echo "开始 Hysteria2 安装流程..."
+    
+    hy2_install_deps || return 1
+    hy2_download_binary || return 1
+    hy2_generate_cert || return 1
+    hy2_generate_config || return 1
+    hy2_create_systemd_service || return 1
+    hy2_setup_firewall || return 1
+    hy2_start_service || return 1
+    
+    hy2_show_install_result
 }
 
 # --- Hysteria2 卸载 ---
 hy2_uninstall() {
     info_echo "正在卸载 Hysteria2..."
     
-    systemctl disable --now hysteria-server >/dev/null 2>&1 || true
+    # 停止并禁用服务
+    systemctl disable --now hysteria2 >/dev/null 2>&1 || true
     
-    rm -f /etc/systemd/system/hysteria-server.service
-    rm -f /usr/local/bin/hysteria
+    # 删除文件
+    rm -f /etc/systemd/system/hysteria2.service
+    rm -f /usr/local/bin/hysteria2
     rm -rf /etc/hysteria2
-
-    if [[ -f ~/.acme.sh/acme.sh ]]; then
-        info_echo "正在清理 acme.sh 证书..."
-        ~/.acme.sh/acme.sh --uninstall-cert -d "$HY_DOMAIN" >/dev/null 2>&1 || true
-    fi
     
+    # 重新加载 systemd
     systemctl daemon-reload
     
-    success_echo "Hysteria2 卸载完成。"
+    success_echo "Hysteria2 卸载完成"
 }
 
 ################################################################################
@@ -688,9 +749,9 @@ show_menu() {
     local ipv6_display="${IPV6_ADDR:-未检测到}"
 
     local hy2_status="未安装"
-    if systemctl is-active --quiet hysteria-server 2>/dev/null; then
+    if systemctl is-active --quiet hysteria2 2>/dev/null; then
         hy2_status="${GREEN}运行中${ENDCOLOR}"
-    elif [[ -f /etc/systemd/system/hysteria-server.service ]]; then
+    elif [[ -f /etc/systemd/system/hysteria2.service ]]; then
         hy2_status="${RED}已停止${ENDCOLOR}"
     fi
 
@@ -701,7 +762,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.2.3) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.3.0) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -733,10 +794,10 @@ manage_services() {
         safe_read "请选择要管理的服务: " service_choice
         case $service_choice in
             1)
-                if [[ ! -f /etc/systemd/system/hysteria-server.service ]]; then
+                if [[ ! -f /etc/systemd/system/hysteria2.service ]]; then
                     error_echo "Hysteria2 未安装"; sleep 1.5; continue
                 fi
-                manage_single_service "hysteria-server" "Hysteria2"
+                manage_single_service "hysteria2" "Hysteria2"
                 ;;
             2)
                 if [[ ! -f /etc/systemd/system/shadowsocks-libev.service ]]; then
@@ -782,8 +843,8 @@ manage_single_service() {
                 clear
                 echo "=== $display_name 配置文件 ==="
                 case "$service_name" in
-                    hysteria-server)
-                        if [[ -f /etc/hysteria2/server.yaml ]]; then cat /etc/hysteria2/server.yaml; else error_echo "配置文件不存在"; fi ;;
+                    hysteria2)
+                        if [[ -f /etc/hysteria2/config.yaml ]]; then cat /etc/hysteria2/config.yaml; else error_echo "配置文件不存在"; fi ;;
                     shadowsocks-libev)
                         if [[ -f /etc/shadowsocks-libev/config.json ]]; then cat /etc/shadowsocks-libev/config.json; else error_echo "配置文件不存在"; fi ;;
                 esac
@@ -807,7 +868,7 @@ show_config_info() {
         local config_choice
         safe_read "请选择: " config_choice
         case $config_choice in
-            1) if [[ ! -f /etc/hysteria2/server.yaml ]]; then error_echo "Hysteria2 未安装"; sleep 1.5; else show_hysteria2_config; fi ;;
+            1) if [[ ! -f /etc/hysteria2/config.yaml ]]; then error_echo "Hysteria2 未安装"; sleep 1.5; else show_hysteria2_config; fi ;;
             2) if [[ ! -f /etc/shadowsocks-libev/config.json ]]; then error_echo "Shadowsocks 未安装"; sleep 1.5; else show_shadowsocks_config; fi ;;
             0) return ;;
             *) error_echo "无效选择"; sleep 1 ;;
@@ -817,40 +878,33 @@ show_config_info() {
 
 show_hysteria2_config() {
     clear
-    local password
-    local domain
-    password=$(grep "password:" /etc/hysteria2/server.yaml | awk '{print $2}')
+    local password port domain
     
-    if [[ -f /etc/hysteria2/certs/server.crt ]]; then
-        domain=$(openssl x509 -in /etc/hysteria2/certs/server.crt -noout -subject | grep -o "CN=[^,]*" | cut -d= -f2)
-    fi
-
-    local cert_type="acme"
-    if openssl x509 -in /etc/hysteria2/certs/server.crt -noout -issuer | grep -q "CN=${domain}"; then
-        cert_type="self-signed"
+    # 从配置文件读取信息
+    if [[ -f /etc/hysteria2/config.yaml ]]; then
+        password=$(grep "password:" /etc/hysteria2/config.yaml | awk '{print $2}')
+        port=$(grep "listen:" /etc/hysteria2/config.yaml | awk '{print $2}' | cut -d: -f2)
+        domain=$(openssl x509 -in /etc/hysteria2/cert.pem -noout -subject 2>/dev/null | grep -o "CN=[^,]*" | cut -d= -f2)
     fi
 
     echo -e "${BG_PURPLE} Hysteria2 连接信息 ${ENDCOLOR}"
     echo
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
     echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
-    echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
+    echo -e "服务器端口: ${GREEN}${port:-443}${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
-    
-    if [[ "$cert_type" == "self-signed" ]]; then
-        echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"; echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
-    else
-        echo -e "证书类型:   ${GREEN}ACME证书${ENDCOLOR}"; echo -e "允许不安全: ${GREEN}否${ENDCOLOR}"
-    fi
-    
+    echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"
+    echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
+    # 重新设置变量用于生成配置
     HY_PASSWORD="$password"
     HY_DOMAIN="$domain"
+    HY_PORT="${port:-443}"
     
-    generate_hy2_configs "$cert_type"
+    hy2_generate_client_configs
     
     local dummy
     safe_read "按 Enter 继续..." dummy
@@ -907,19 +961,22 @@ uninstall_services() {
         safe_read "请选择要卸载的服务: " uninstall_choice
         case $uninstall_choice in
             1)
-                if [[ ! -f /etc/systemd/system/hysteria-server.service ]]; then error_echo "Hysteria2 未安装"; sleep 1.5; continue; fi
+                if [[ ! -f /etc/systemd/system/hysteria2.service ]]; then error_echo "Hysteria2 未安装"; sleep 1.5; continue; fi
+                local confirm
                 safe_read "确定要卸载 Hysteria2 吗? (y/N): " confirm
                 if [[ "$confirm" =~ ^[yY]$ ]]; then hy2_uninstall; success_echo "Hysteria2 卸载完成。"; sleep 2; fi
                 ;;
             2)
                 if [[ ! -f /etc/systemd/system/shadowsocks-libev.service ]]; then error_echo "Shadowsocks 未安装"; sleep 1.5; continue; fi
+                local confirm
                 safe_read "确定要卸载 Shadowsocks 吗? (y/N): " confirm
                 if [[ "$confirm" =~ ^[yY]$ ]]; then ss_uninstall; success_echo "Shadowsocks 卸载完成。"; sleep 2; fi
                 ;;
             3)
+                local confirm
                 safe_read "确定要卸载所有已安装的服务吗? (y/N): " confirm
                 if [[ "$confirm" =~ ^[yY]$ ]]; then
-                    if [[ -f /etc/systemd/system/hysteria-server.service ]]; then hy2_uninstall; fi
+                    if [[ -f /etc/systemd/system/hysteria2.service ]]; then hy2_uninstall; fi
                     if [[ -f /etc/systemd/system/shadowsocks-libev.service ]]; then ss_uninstall; fi
                     success_echo "所有服务已卸载完成。"; sleep 2
                 fi
@@ -943,8 +1000,8 @@ backup_configs() {
     if [[ -d /etc/shadowsocks-libev ]]; then
         cp -r /etc/shadowsocks-libev "$backup_dir/"; backed_up=true
     fi
-    if [[ -f /etc/systemd/system/hysteria-server.service ]]; then
-        cp /etc/systemd/system/hysteria-server.service "$backup_dir/"; backed_up=true
+    if [[ -f /etc/systemd/system/hysteria2.service ]]; then
+        cp /etc/systemd/system/hysteria2.service "$backup_dir/"; backed_up=true
     fi
     if [[ -f /etc/systemd/system/shadowsocks-libev.service ]]; then
         cp /etc/systemd/system/shadowsocks-libev.service "$backup_dir/"; backed_up=true
@@ -991,8 +1048,8 @@ system_diagnosis() {
     echo
     
     info_echo "服务状态:"
-    if [[ -f /etc/systemd/system/hysteria-server.service ]]; then
-        echo "  - Hysteria2: $(systemctl is-active hysteria-server)"
+    if [[ -f /etc/systemd/system/hysteria2.service ]]; then
+        echo "  - Hysteria2: $(systemctl is-active hysteria2)"
     else echo "  - Hysteria2: 未安装"; fi
     if [[ -f /etc/systemd/system/shadowsocks-libev.service ]]; then
         echo "  - Shadowsocks: $(systemctl is-active shadowsocks-libev)"
@@ -1023,7 +1080,7 @@ main() {
         choice=$(echo "$choice" | tr -cd '0-9')
         
         case $choice in
-            1) hy2_install_self_signed ;;
+            1) hy2_install ;;
             2) ss_run_install ;;
             3) manage_services ;;
             4) show_config_info ;;
