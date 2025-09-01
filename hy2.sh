@@ -469,6 +469,109 @@ hy2_get_input_acme() {
     return 0
 }
 
+# --- 生成多种客户端配置格式 ---
+generate_hy2_configs() {
+    local cert_type="$1"
+    local server_addr="${IPV4_ADDR:-$IPV6_ADDR}"
+    local insecure="false"
+    
+    if [[ "$cert_type" == "self-signed" ]]; then
+        insecure="true"
+    fi
+    
+    # 生成随机标识
+    local country_code
+    country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
+    local server_name="🌟Hysteria2-${country_code}-$(date +%m%d)"
+    
+    echo "# ========== Hysteria2 客户端配置 =========="
+    echo
+    
+    # 1. Hysteria2 原生配置
+    echo -e "${CYAN}📱 Hysteria2 原生客户端配置:${ENDCOLOR}"
+    echo "server: $server_addr:443"
+    echo "auth: $HY_PASSWORD"
+    if [[ "$insecure" == "true" ]]; then
+        echo "tls:"
+        echo "  sni: $HY_DOMAIN"
+        echo "  insecure: true"
+    else
+        echo "tls:"
+        echo "  sni: $HY_DOMAIN"
+    fi
+    echo "bandwidth:"
+    echo "  up: 50 mbps"
+    echo "  down: 100 mbps"
+    echo "socks5:"
+    echo "  listen: 127.0.0.1:1080"
+    echo "http:"
+    echo "  listen: 127.0.0.1:8080"
+    echo
+    
+    # 2. V2rayN 配置
+    echo -e "${CYAN}🚀 V2rayN 分享链接:${ENDCOLOR}"
+    local hy2_link="hysteria2://$HY_PASSWORD@$server_addr:443/?insecure=$insecure&sni=$HY_DOMAIN#$server_name"
+    echo "$hy2_link"
+    echo
+    
+    # 3. NekoBox/NekoRay 配置
+    echo -e "${CYAN}🐱 NekoBox/NekoRay 分享链接:${ENDCOLOR}"
+    echo "$hy2_link"
+    echo
+    
+    # 4. Clash Meta 完整配置
+    echo -e "${CYAN}⚔️ Clash Meta 完整配置:${ENDCOLOR}"
+    cat << EOF
+proxies:
+  - name: "$server_name"
+    type: hysteria2
+    server: $server_addr
+    port: 443
+    password: $HY_PASSWORD
+    sni: $HY_DOMAIN
+EOF
+    if [[ "$insecure" == "true" ]]; then
+        echo "    skip-cert-verify: true"
+    fi
+    cat << EOF
+    up: 50
+    down: 100
+    
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "$server_name"
+      - DIRECT
+EOF
+    echo
+    
+    # 5. Clash Meta 紧凑格式
+    echo -e "${CYAN}⚔️ Clash Meta 紧凑格式:${ENDCOLOR}"
+    if [[ "$insecure" == "true" ]]; then
+        echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
+    else
+        echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, up: 50, down: 100 }"
+    fi
+    echo
+    
+    # 6. 小火箭 Shadowrocket 配置
+    echo -e "${CYAN}🚀 Shadowrocket 配置:${ENDCOLOR}"
+    echo "$hy2_link"
+    echo
+    
+    # 7. Surge 配置
+    echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
+    if [[ "$insecure" == "true" ]]; then
+        echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
+    else
+        echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN"
+    fi
+    echo
+    
+    echo "# =========================================="
+}
+
 # --- 显示安装结果 ---
 hy2_show_result() {
     local cert_type="$1"
@@ -482,7 +585,7 @@ hy2_show_result() {
         echo
     fi
     
-    echo -e "${PURPLE}=== 连接信息 ===${ENDCOLOR}"
+    echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
     echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
@@ -494,8 +597,11 @@ hy2_show_result() {
         echo -e "允许不安全: ${GREEN}否${ENDCOLOR}"
     fi
     
-    echo -e "${PURPLE}===================${ENDCOLOR}"
+    echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
+    
+    # 生成多种客户端配置
+    generate_hy2_configs "$cert_type"
     
     local dummy
     safe_read "按 Enter 继续..." dummy
@@ -882,16 +988,21 @@ show_hysteria2_config() {
         domain=$(openssl x509 -in /etc/hysteria2/certs/server.crt -noout -subject | grep -o "CN=[^,]*" | cut -d= -f2)
     fi
 
+    # 检查是否为自签名证书
+    local cert_type="acme"
+    if openssl x509 -in /etc/hysteria2/certs/server.crt -noout -issuer | grep -q "CN=${domain}"; then
+        cert_type="self-signed"
+    fi
+
     echo -e "${BG_PURPLE} Hysteria2 连接信息 ${ENDCOLOR}"
     echo
-    echo -e "${PURPLE}=== 连接信息 ===${ENDCOLOR}"
+    echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
     echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
     
-    # 检查是否为自签名证书
-    if openssl x509 -in /etc/hysteria2/certs/server.crt -noout -issuer | grep -q "CN=${domain}"; then
+    if [[ "$cert_type" == "self-signed" ]]; then
         echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"
         echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
     else
@@ -899,8 +1010,16 @@ show_hysteria2_config() {
         echo -e "允许不安全: ${GREEN}否${ENDCOLOR}"
     fi
     
-    echo -e "${PURPLE}===================${ENDCOLOR}"
+    echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
+    
+    # 设置全局变量以供配置生成函数使用
+    HY_PASSWORD="$password"
+    HY_DOMAIN="$domain"
+    
+    # 生成多种客户端配置
+    generate_hy2_configs "$cert_type"
+    
     local dummy
     safe_read "按 Enter 继续..." dummy
 }
@@ -918,26 +1037,32 @@ show_shadowsocks_config() {
     password=$(grep "password" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
     method=$(grep "method" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
 
-    local country_code
-    country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
-    local tag="${country_code}-IPv6-$(date +%m%d)"
-    local encoded
-    encoded=$(echo -n "$method:$password" | base64 -w 0)
-    local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${server_port}#${tag}"
-
     echo -e "${BG_PURPLE} Shadowsocks (IPv6) 连接信息 ${ENDCOLOR}"
     echo
-    echo -e " ${PURPLE}--- Shadowsocks 配置信息 ---${ENDCOLOR}"
+    echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
     echo -e "   服务器地址: ${GREEN}[$IPV6_ADDR]${ENDCOLOR}"
     echo -e "   端口:       ${GREEN}$server_port${ENDCOLOR}"
     echo -e "   密码:       ${GREEN}$password${ENDCOLOR}"
     echo -e "   加密方式:   ${GREEN}$method${ENDCOLOR}"
-    echo -e "   SS 链接:    ${CYAN}$ss_link${ENDCOLOR}"
-    echo -e " ${PURPLE}----------------------------${ENDCOLOR}"
+    echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
 
+    # 设置全局变量以供配置生成函数使用
+    SS_PORT="$server_port"
+    SS_PASSWORD="$password"
+    SS_METHOD="$method"
+    
+    # 生成多种客户端配置
+    generate_ss_configs
+
     if command -v qrencode >/dev/null 2>&1; then
-        info_echo "二维码 (请最大化终端窗口显示):"
+        echo -e "${CYAN}📱 二维码 (请最大化终端窗口显示):${ENDCOLOR}"
+        local country_code
+        country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
+        local tag="${country_code}-IPv6-$(date +%m%d)"
+        local encoded
+        encoded=$(echo -n "$method:$password" | base64 -w 0)
+        local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${server_port}#${tag}"
         qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
     else
         warning_echo "qrencode 未安装，无法显示二维码"
