@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 6.4.1 (管理优化可读版)
+# 版本: 6.5.0 (终极简化版)
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -808,39 +808,6 @@ manage_services_menu() {
     done
 }
 
-
-backup_configs() {
-    clear
-    local backup_dir="/root/proxy_backup_$(date +%Y%m%d_%H%M%S)"
-    local backed_up=false
-    
-    info_echo "创建配置备份..."
-    mkdir -p "$backup_dir"
-    
-    if [[ -d /etc/hysteria2 ]]; then
-        cp -r /etc/hysteria2 "$backup_dir/"
-        success_echo "Hysteria2 配置已备份"
-        backed_up=true
-    fi
-    
-    if [[ -f /etc/shadowsocks-libev/config.json ]]; then
-        mkdir -p "$backup_dir/shadowsocks-libev"
-        cp /etc/shadowsocks-libev/config.json "$backup_dir/shadowsocks-libev/"
-        success_echo "Shadowsocks 配置已备份"
-        backed_up=true
-    fi
-    
-    if [[ "$backed_up" == true ]]; then
-        success_echo "备份完成! 备份位置: $backup_dir"
-    else
-        warning_echo "未找到任何已安装服务的配置，无需备份。"
-        rm -d "$backup_dir"
-    fi
-
-    local dummy
-    safe_read "按 Enter 继续..." dummy
-}
-
 system_diagnosis() {
     clear
     echo -e "${CYAN}=== 系统诊断 ===${ENDCOLOR}"
@@ -916,7 +883,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.4.1) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.5.0) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -927,8 +894,7 @@ show_menu() {
     echo
     echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
     echo -e "   3. 管理服务 (启停/日志/配置/卸载)"
-    echo -e "   4. 备份配置"
-    echo -e "   5. 系统诊断"
+    echo -e "   4. 系统诊断"
     echo
     echo -e " ${CYAN}0. 退出脚本${ENDCOLOR}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
@@ -947,7 +913,7 @@ main() {
     while true; do
         show_menu
         local choice
-        safe_read "请选择操作 [0-5]: " choice
+        safe_read "请选择操作 [0-4]: " choice
         
         choice=$(echo "$choice" | tr -cd '0-9')
         
@@ -955,15 +921,14 @@ main() {
             1) hy2_install ;;
             2) ss_run_install ;;
             3) manage_services_menu ;;
-            4) backup_configs ;;
-            5) system_diagnosis ;;
+            4) system_diagnosis ;;
             0) 
                 echo
                 success_echo "感谢使用脚本！"
                 exit 0 
                 ;;
             *)
-                error_echo "无效的选择，请输入 0-5 之间的数字"
+                error_echo "无效的选择，请输入 0-4 之间的数字"
                 sleep 1
                 ;;
         esac
