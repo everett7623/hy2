@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.3
+# 版本: 1.0.4
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -440,47 +440,52 @@ hy2_get_input() {
 
 # --- 生成多种客户端配置格式 ---
 generate_hy2_configs() {
-    local server_addr_for_config=""
-    local display_ip_for_info=""
+    local hy2_server_addr_for_uri=""        # E.g., 192.0.2.1 or [2001:db8::1]
+    local hy2_server_addr_for_config_field="" # E.g., 192.0.2.1 or 2001:db8::1 (raw IPv6)
 
     if [[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]]; then
-        server_addr_for_config="[$IPV6_ADDR]" # IPv6地址需要用方括号括起来
-        display_ip_for_info="$IPV6_ADDR"
+        hy2_server_addr_for_uri="[$IPV6_ADDR]"
+        hy2_server_addr_for_config_field="$IPV6_ADDR"
     elif [[ "$HY_SERVER_IP_CHOICE" == "ipv4" ]]; then
-        server_addr_for_config="$IPV4_ADDR"
-        display_ip_for_info="$IPV4_ADDR"
-    else # Fallback, should not happen if logic is correct
-        warning_echo "Hysteria2 IP选择逻辑异常，使用默认IP: ${IPV4_ADDR:-$IPV6_ADDR}"
-        server_addr_for_config="${IPV4_ADDR:-[$IPV6_ADDR]}" # Use brackets if it's IPv6
-        display_ip_for_info="${IPV4_ADDR:-$IPV6_ADDR}"
+        hy2_server_addr_for_uri="$IPV4_ADDR"
+        hy2_server_addr_for_config_field="$IPV4_ADDR"
+    else
+        # Fallback in case HY_SERVER_IP_CHOICE is not set correctly or IPs are N/A
+        warning_echo "Hysteria2 IP选择逻辑异常，尝试从检测到的IP推断。"
+        if $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
+            hy2_server_addr_for_uri="$IPV4_ADDR"
+            hy2_server_addr_for_config_field="$IPV4_ADDR"
+        elif $HAS_IPV6 && [[ "$IPV6_ADDR" != "N/A" ]]; then
+            hy2_server_addr_for_uri="[$IPV6_ADDR]"
+            hy2_server_addr_for_config_field="$IPV6_ADDR"
+        else
+            error_echo "无法生成Hysteria2配置，因为没有可用的IP地址。"
+            return 1
+        fi
     fi
 
-    # When generating links, strip brackets for hostname part
-    local display_ip_for_link=$(echo "$server_addr_for_config" | sed 's/\[//;s/\]//')
-
-    # 生成随机标识
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
     local server_name="🌟Hysteria2-${country_code}-$(date +%m%d)"
-    # 自签名模式下，insecure 必须为 true
-    local hy2_link="hysteria2://$HY_PASSWORD@$display_ip_for_link:443/?insecure=true&sni=$HY_DOMAIN#$server_name"
+    
+    # For V2rayN/NekoBox/Shadowrocket link (URI standard: IPv6 needs brackets)
+    local hy2_link_uri="hysteria2://$HY_PASSWORD@$hy2_server_addr_for_uri:443/?insecure=true&sni=$HY_DOMAIN#$server_name"
     
     echo -e "${PURPLE}Hysteria2配置信息：${ENDCOLOR}"
     echo
     
-    # 1. V2rayN / NekoBox / Shadowrocket 配置 (通用链接)
     echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
-    echo "$hy2_link"
+    echo "$hy2_link_uri"
     echo
     
-    # 2. Clash Meta 配置
     echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
-    echo "  - { name: '$server_name', type: hysteria2, server: $display_ip_for_link, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
+    # Clash Meta 'server' field expects raw IP (no brackets for IPv6)
+    echo "  - { name: '$server_name', type: hysteria2, server: $hy2_server_addr_for_config_field, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
     echo
     
-    # 3. Surge 配置
     echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
-    echo "$server_name = hysteria2, $display_ip_for_link, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
+    # Surge 'server' field expects raw IP (no brackets for IPv6)
+    echo "$server_name = hysteria2, $hy2_server_addr_for_config_field, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
     echo
 }
 
@@ -494,6 +499,7 @@ hy2_show_result() {
     echo
     
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
+    # Display the chosen IP address, with brackets if IPv6
     echo -e "服务器地址: ${GREEN}$( [ "$HY_SERVER_IP_CHOICE" == "ipv6" ] && echo "[$IPV6_ADDR]" || echo "$IPV4_ADDR" )${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
@@ -502,7 +508,7 @@ hy2_show_result() {
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
-    # 生成多种客户端配置
+    # Generate various client configurations
     generate_hy2_configs
     
     local dummy
@@ -911,7 +917,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.3) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.4) ${ENDCOLOR}"
     echo "项目地址：https://github.com/everett7623/hy2ipv6"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
@@ -1021,14 +1027,15 @@ show_hysteria2_config() {
     echo
     
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
-    # 这里根据安装时的选择，重新获取 HY_SERVER_IP_CHOICE
-    if [[ -z "$HY_SERVER_IP_CHOICE" ]]; then
-        # If script restarted, try to infer from network status
-        if $HAS_IPV4; then HY_SERVER_IP_CHOICE="ipv4"; fi
-        if $HAS_IPV6; then HY_SERVER_IP_CHOICE="ipv6"; fi # Prioritize IPv6 if both exist and choice wasn't explicitly saved
+    # This logic assumes HY_SERVER_IP_CHOICE is still valid from previous run.
+    # If script restarted, it defaults based on detect_network
+    local display_ip_for_info=""
+    if [[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]]; then
+        display_ip_for_info="[$IPV6_ADDR]"
+    else # Default to ipv4 if choice is not ipv6 or not set
+        display_ip_for_info="$IPV4_ADDR"
     fi
-
-    echo -e "服务器地址: ${GREEN}$( [ "$HY_SERVER_IP_CHOICE" == "ipv6" ] && echo "[$IPV6_ADDR]" || echo "$IPV4_ADDR" )${ENDCOLOR}"
+    echo -e "服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
@@ -1037,7 +1044,7 @@ show_hysteria2_config() {
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
-    # Update global variables for generate_hy2_configs
+    # Update global variables for generate_hy2_configs to ensure they are current
     HY_PASSWORD="$password"
     HY_DOMAIN="$domain"
     
