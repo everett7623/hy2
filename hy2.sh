@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 6.2.3 (增强ACME错误处理和用户指引)
+# 版本: 6.2.4
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 支持自签名证书模式。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -411,7 +411,10 @@ http:
 EOF
     echo
     
-    local hy2_link="hysteria2://$HY_PASSWORD@$server_addr:443/?insecure=$insecure&sni=$HY_DOMAIN#$server_name"
+    # 修复：对密码进行 Base64 编码和 URL 编码
+    local encoded_password=$(echo -n "$HY_PASSWORD" | base64 -w 0 | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
+    local hy2_link="hysteria2://$encoded_password@$server_addr:443/?insecure=$insecure&sni=$HY_DOMAIN#$server_name"
+    
     echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
     echo "$hy2_link"
     echo
