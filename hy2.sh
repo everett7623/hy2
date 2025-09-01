@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 6.3.1
+# 版本: 1.0.0
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -355,10 +355,16 @@ hy2_get_input() {
     echo -e "${CYAN}=== Hysteria2 自签名证书安装 ===${ENDCOLOR}"
     echo
     
-    while [[ -z "$HY_DOMAIN" ]]; do
-        safe_read "请输入用于 SNI 伪装的域名 (任意有效域名即可，如 amd.com): " HY_DOMAIN
+    while true; do
+        safe_read "请输入用于 SNI 伪装的域名 (任意有效域名即可，留空默认 amd.com): " HY_DOMAIN
         if [[ -z "$HY_DOMAIN" ]]; then
-            warning_echo "域名不能为空"
+            HY_DOMAIN="amd.com"
+            info_echo "SNI 域名默认为 amd.com"
+            break
+        elif [[ "$HY_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+            break
+        else
+            warning_echo "请输入一个有效的域名格式"
         fi
     done
     
@@ -383,43 +389,23 @@ generate_hy2_configs() {
     # 自签名模式下，insecure 必须为 true
     local hy2_link="hysteria2://$HY_PASSWORD@$server_addr:443/?insecure=true&sni=$HY_DOMAIN#$server_name"
     
-    echo "# ========== Hysteria2 客户端配置 =========="
+    echo -e "${PURPLE}Hysteria2配置信息：${ENDCOLOR}"
     echo
     
-    # 1. Hysteria2 原生配置
-    echo -e "${CYAN}📱 Hysteria2 原生客户端配置:${ENDCOLOR}"
-    cat << EOF
-server: $server_addr:443
-auth: $HY_PASSWORD
-tls:
-  sni: $HY_DOMAIN
-  insecure: true
-bandwidth:
-  up: 50 mbps
-  down: 100 mbps
-socks5:
-  listen: 127.0.0.1:1080
-http:
-  listen: 127.0.0.1:8080
-EOF
-    echo
-    
-    # 2. V2rayN / NekoBox / Shadowrocket 配置 (通用链接)
+    # 1. V2rayN / NekoBox / Shadowrocket 配置 (通用链接)
     echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
     echo "$hy2_link"
     echo
     
-    # 3. Clash Meta 配置
+    # 2. Clash Meta 配置
     echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
     echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
     echo
     
-    # 4. Surge 配置
+    # 3. Surge 配置
     echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
     echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
     echo
-    
-    echo "# =========================================="
 }
 
 # --- 显示安装结果 ---
@@ -654,24 +640,18 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.3.1) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.0) ${ENDCOLOR}"
+    echo "项目地址：https://github.com/everett7623/hy2ipv6"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
-    echo -e "${PURPLE}================================================================${ENDCOLOR}"
-    echo -e " ${CYAN}安装选项:${ENDCOLOR}"
-    echo -e "   1. 安装 Hysteria2 (${GREEN}自签名证书模式，无需域名${ENDCOLOR})"
-    echo -e "   2. 安装 Shadowsocks (仅 IPv6)"
-    echo
-    echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
-    echo -e "   3. 服务管理 (启动/停止/日志)"
-    echo -e "   4. 显示配置信息"
-    echo -e "   5. 卸载服务"
-    echo -e "   6. 备份配置"
-    echo -e "   7. 系统诊断"
-    echo
-    echo -e " ${CYAN}0. 退出脚本${ENDCOLOR}"
-    echo -e "${PURPLE}================================================================${ENDCOLOR}"
+    echo -e "${PURPLE}==========================================================${ENDCOLOR}"
+    echo -e "1. 安装 Hysteria2 (自签名证书模式，无需域名解析)"
+    echo -e "2. 安装 Shadowsocks (仅 IPv6)"
+    echo -e "3. 服务管理 (启动/停止/日志/查看配置)"
+    echo -e "4. 卸载服务"
+    echo -e "0. 退出脚本"    
+    echo -e "${PURPLE}==========================================================${ENDCOLOR}"
 }
 
 manage_services() {
@@ -716,7 +696,7 @@ manage_single_service() {
         echo " 2. 停止服务"
         echo " 3. 重启服务"
         echo " 4. 查看日志"
-        echo " 5. 查看配置"
+        echo " 5. 显示连接配置" # Renamed from "查看配置" for clarity and to align with "显示配置信息"
         echo " 0. 返回上级菜单"
         echo "----------------"
         local action
@@ -732,27 +712,11 @@ manage_single_service() {
                 local dummy
                 safe_read "按 Enter 继续..." dummy
                 ;;
-            5)
-                clear
-                echo "=== $display_name 配置文件 ==="
+            5) # New option to show connection config within service management
                 case "$service_name" in
-                    hysteria-server)
-                        if [[ -f /etc/hysteria2/server.yaml ]]; then
-                            cat /etc/hysteria2/server.yaml
-                        else
-                            error_echo "配置文件不存在"
-                        fi
-                        ;;
-                    shadowsocks-libev)
-                        if [[ -f /etc/shadowsocks-libev/config.json ]]; then
-                            cat /etc/shadowsocks-libev/config.json
-                        else
-                            error_echo "配置文件不存在"
-                        fi
-                        ;;
+                    hysteria-server) show_hysteria2_config ;;
+                    shadowsocks-libev) show_shadowsocks_config ;;
                 esac
-                local dummy
-                safe_read "按 Enter 继续..." dummy
                 ;;
             0) return ;;
             *) error_echo "无效选择"; sleep 1 ;;
@@ -760,34 +724,10 @@ manage_single_service() {
     done
 }
 
-show_config_info() {
-    while true; do
-        clear
-        echo -e "${CYAN}=== 显示配置信息 ===${ENDCOLOR}"
-        echo " 1. 显示 Hysteria2 连接信息"
-        echo " 2. 显示 Shadowsocks 连接信息"
-        echo " 0. 返回主菜单"
-        echo "----------------"
-        local config_choice
-        safe_read "请选择: " config_choice
-        case $config_choice in
-            1)
-                if [[ ! -f /etc/hysteria2/server.yaml ]]; then
-                    error_echo "Hysteria2 未安装"; sleep 1.5; continue
-                fi
-                show_hysteria2_config
-                ;;
-            2)
-                if [[ ! -f /etc/shadowsocks-libev/config.json ]]; then
-                    error_echo "Shadowsocks 未安装"; sleep 1.5; continue
-                fi
-                show_shadowsocks_config
-                ;;
-            0) return ;;
-            *) error_echo "无效选择"; sleep 1 ;;
-        esac
-    done
-}
+# The original show_config_info is now largely redundant as '显示连接配置' is in manage_single_service.
+# However, if it's meant to show *all* configs at once, it would need to be re-evaluated.
+# For now, following the simplified menu means removing main menu option for it.
+# The functions show_hysteria2_config and show_shadowsocks_config are still useful.
 
 show_hysteria2_config() {
     clear
@@ -819,6 +759,7 @@ show_hysteria2_config() {
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
+    # Update global variables for generate_hy2_configs
     HY_PASSWORD="$password"
     HY_DOMAIN="$domain"
     
@@ -921,82 +862,8 @@ uninstall_services() {
     done
 }
 
-backup_configs() {
-    clear
-    local backup_dir="/root/proxy_backup_$(date +%Y%m%d_%H%M%S)"
-    
-    info_echo "创建配置备份..."
-    mkdir -p "$backup_dir"
-    
-    if [[ -d /etc/hysteria2 ]]; then
-        cp -r /etc/hysteria2 "$backup_dir/"
-        success_echo "Hysteria2 配置已备份"
-    fi
-    
-    if [[ -f /etc/shadowsocks-libev/config.json ]]; then
-        mkdir -p "$backup_dir/shadowsocks-libev"
-        cp /etc/shadowsocks-libev/config.json "$backup_dir/shadowsocks-libev/"
-        success_echo "Shadowsocks 配置已备份"
-    fi
-    
-    if [[ -f /etc/systemd/system/hysteria-server.service ]]; then
-        cp /etc/systemd/system/hysteria-server.service "$backup_dir/"
-    fi
-    if [[ -f /etc/systemd/system/shadowsocks-libev.service ]]; then
-        cp /etc/systemd/system/shadowsocks-libev.service "$backup_dir/"
-    fi
-    
-    success_echo "备份完成! 备份位置: $backup_dir"
-    local dummy
-    safe_read "按 Enter 继续..." dummy
-}
-
-system_diagnosis() {
-    clear
-    echo -e "${CYAN}=== 系统诊断 ===${ENDCOLOR}"
-    echo
-    
-    info_echo "检查系统信息..."
-    echo "操作系统: $OS_TYPE ($ARCH)"
-    echo "IPv4 地址: ${IPV4_ADDR:-未检测到}"
-    echo "IPv6 地址: ${IPV6_ADDR:-未检测到}"
-    echo
-    
-    info_echo "检查端口占用..."
-    if command -v netstat >/dev/null 2>&1; then
-        echo "监听端口 443 (UDP): $(netstat -ulnp | grep :443 || echo '未占用')"
-        if [[ -f /etc/shadowsocks-libev/config.json ]]; then
-            local ss_port
-            ss_port=$(grep "server_port" /etc/shadowsocks-libev/config.json | grep -o "[0-9]*")
-            echo "监听端口 $ss_port: $(netstat -lnp | grep :$ss_port || echo '未占用')"
-        fi
-    else
-        warning_echo "netstat 未安装，无法检查端口占用"
-    fi
-    echo
-    
-    info_echo "检查防火墙状态..."
-    if command -v ufw >/dev/null 2>&1; then
-        ufw status
-    elif command -v firewall-cmd >/dev/null 2>&1; then
-        firewall-cmd --state
-    else
-        echo "未检测到防火墙"
-    fi
-    echo
-    
-    info_echo "检查服务状态..."
-    if [[ -f /etc/systemd/system/hysteria-server.service ]]; then
-        echo "Hysteria2: $(systemctl is-active hysteria-server)"
-    fi
-    if [[ -f /etc/systemd/system/shadowsocks-libev.service ]]; then
-        echo "Shadowsocks: $(systemctl is-active shadowsocks-libev)"
-    fi
-    
-    echo
-    local dummy
-    safe_read "按 Enter 继续..." dummy
-}
+# backup_configs and system_diagnosis are removed from the main menu as per optimization request.
+# If desired, they could be re-integrated into a "高级选项" or similar sub-menu under "服务管理".
 
 ################################################################################
 # 主程序入口
@@ -1015,29 +882,26 @@ main() {
     while true; do
         show_menu
         local choice
-        safe_read "请选择操作 [0-7]: " choice
+        safe_read "请选择操作 [0-4]: " choice
         
         choice=$(echo "$choice" | tr -cd '0-9')
         
         case $choice in
             1) hy2_install ;;
             2) ss_run_install ;;
-            3) manage_services ;;
-            4) show_config_info ;;
-            5) uninstall_services ;;
-            6) backup_configs ;;
-            7) system_diagnosis ;;
+            3) manage_services ;; # This will lead to the sub-menu for managing individual services
+            4) uninstall_services ;; # This will lead to the sub-menu for uninstalling individual services
             0) 
                 echo
                 success_echo "感谢使用脚本！"
                 exit 0 
                 ;;
             "")
-                warning_echo "请输入一个有效的数字选项 (0-7)"
+                warning_echo "请输入一个有效的数字选项 (0-4)"
                 sleep 1
                 ;;
             *)
-                error_echo "无效的选择 '$choice'，请输入 0-7 之间的数字"
+                error_echo "无效的选择 '$choice'，请输入 0-4 之间的数字"
                 sleep 1
                 ;;
         esac
