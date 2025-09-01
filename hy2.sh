@@ -3,7 +3,7 @@
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
 # 版本: 6.2.3 (增强ACME错误处理和用户指引)
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
-#       Hysteria2 支持自签名证书和 Cloudflare DNS API 申请的 ACME 证书两种模式。
+#       Hysteria2 支持自签名证书模式。
 #       Shadowsocks 仅监听 IPv6 地址。
 
 # --- 脚本行为设置 ---
@@ -271,73 +271,6 @@ hy2_create_self_signed_cert() {
     return 0
 }
 
-# --- ACME 证书申请 ---
-hy2_setup_acme_cert() {
-    info_echo "设置 ACME 证书申请..."
-    local dummy
-    
-    mkdir -p ~/.acme.sh
-
-    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-        info_echo "安装 acme.sh..."
-        local acme_install_log="/tmp/acme_install.log"
-        if ! curl -s https://get.acme.sh | sh -s email="$ACME_EMAIL" > "$acme_install_log" 2>&1; then
-            error_echo "acme.sh 安装失败，请查看日志: $acme_install_log"
-            cat "$acme_install_log" >&2
-            safe_read "按 Enter 返回主菜单..." dummy
-            return 1
-        fi
-        rm -f "$acme_install_log"
-        success_echo "acme.sh 安装成功。"
-    fi
-    
-    export CF_Token="$CF_TOKEN"
-    export CF_Account_ID="$CF_ACCOUNT_ID" 
-    export CF_Zone_ID="$CF_ZONE_ID"
-    
-    local reload_cmd="systemctl restart hysteria-server" 
-
-    info_echo "开始申请 SSL 证书 (域名: $HY_DOMAIN)... 这可能需要几分钟时间。"
-    local acme_issue_log="/tmp/acme_issue.log"
-    
-    # 使用 tee 同时输出到屏幕和日志文件，方便实时查看和事后排查
-    if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$HY_DOMAIN" \
-        --key-file /etc/hysteria2/certs/server.key \
-        --fullchain-file /etc/hysteria2/certs/server.crt \
-        --force --ecc \
-        --reloadcmd "$reload_cmd" 2>&1 | tee "$acme_issue_log"; then
-        
-        echo # 换行
-        error_echo "证书申请失败！请仔细检查上面的 acme.sh 输出以了解详细原因。"
-        error_echo "最常见的原因是:"
-        error_echo "  1. Cloudflare API Token 权限不足 (需要 Zone-Read 和 DNS-Edit)。"
-        error_echo "  2. 输入的域名未托管在对应的 Cloudflare 账户下。"
-        error_echo "  3. 服务器无法连接 Let's Encrypt 或 Cloudflare API。"
-        error_echo "详细日志文件位于: $acme_issue_log"
-        safe_read "按 Enter 返回主菜单..." dummy
-        return 1
-    fi
-    rm -f "$acme_issue_log"
-    
-    info_echo "安装证书并配置自动续期..."
-    local acme_install_cert_log="/tmp/acme_install_cert.log"
-    if ! ~/.acme.sh/acme.sh --install-cert -d "$HY_DOMAIN" \
-        --key-file /etc/hysteria2/certs/server.key \
-        --fullchain-file /etc/hysteria2/certs/server.crt \
-        --reloadcmd "$reload_cmd" \
-        --ecc 2>&1 | tee "$acme_install_cert_log"; then
-        
-        echo
-        error_echo "证书安装或配置自动续期失败。详见日志: $acme_install_cert_log"
-        safe_read "按 Enter 返回主菜单..." dummy
-        return 1
-    fi
-    rm -f "$acme_install_cert_log"
-    
-    success_echo "ACME 证书申请及配置成功。"
-    return 0
-}
-
 # --- 生成配置文件 ---
 hy2_create_config() {
     info_echo "生成 Hysteria2 配置文件..."
@@ -440,82 +373,6 @@ hy2_get_input_self_signed() {
         HY_PASSWORD=$(openssl rand -base64 12)
         info_echo "自动生成密码: $HY_PASSWORD"
     fi
-    
-    return 0
-}
-
-hy2_get_input_acme() {
-    echo
-    echo -e "${CYAN}=== Hysteria2 ACME 证书安装 ===${ENDCOLOR}"
-    echo
-    
-    while [[ -z "$HY_DOMAIN" ]]; do
-        safe_read "请输入您已托管在 Cloudflare 的域名: " HY_DOMAIN
-        if [[ -z "$HY_DOMAIN" ]]; then
-            warning_echo "域名不能为空。"
-        fi
-    done
-    
-    # --- FIX START: Add guidance for API Token permissions ---
-    echo
-    info_echo "您需要一个 Cloudflare API Token。请前往 Cloudflare 仪表板创建。"
-    info_echo "确保该 Token 具有以下两项权限："
-    echo -e "  - ${YELLOW}Zone - Zone - Read${ENDCOLOR}"
-    echo -e "  - ${YELLOW}Zone - DNS - Edit${ENDCOLOR}"
-    echo
-    # --- FIX END ---
-    
-    while [[ -z "$CF_TOKEN" ]]; do
-        safe_read_password "请输入您的 Cloudflare API Token: " CF_TOKEN
-        if [[ -z "$CF_TOKEN" ]]; then
-            warning_echo "API Token 不能为空。"
-            continue
-        fi
-        
-        info_echo "正在验证 API Token 并检查域名管理权限..."
-        local zone_info
-        local curl_log="/tmp/cf_zone_query.log"
-        zone_info=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${HY_DOMAIN}" \
-            -H "Authorization: Bearer ${CF_TOKEN}" \
-            -H "Content-Type: application/json" 2> "$curl_log")
-        
-        local success_status=$(echo "$zone_info" | jq -r '.success')
-        
-        if [[ "$success_status" != "true" ]]; then
-            error_echo "API Token 验证失败。Cloudflare API 返回错误。"
-            error_echo "错误详情: $(echo "$zone_info" | jq -r '.errors[0].message')"
-            error_echo "请检查您的 Token 是否正确，以及网络是否能访问 Cloudflare API。"
-            CF_TOKEN=""
-            continue
-        fi
-
-        local first_zone_id=$(echo "$zone_info" | jq -r '.result[0].id')
-        local first_account_id=$(echo "$zone_info" | jq -r '.result[0].account.id')
-
-        if [[ -n "$first_zone_id" ]] && [[ "$first_zone_id" != "null" ]]; then
-            CF_ZONE_ID="$first_zone_id"
-            CF_ACCOUNT_ID="$first_account_id"
-            success_echo "API Token 验证成功，域名 '$HY_DOMAIN' 由此 Token 管理。"
-            rm -f "$curl_log"
-            break
-        else
-            error_echo "API Token 有效，但无法找到域名 '$HY_DOMAIN' 的管理区域(Zone)。"
-            error_echo "请确认此 Token 有权访问 '$HY_DOMAIN' 所在的 Zone。"
-            CF_TOKEN=""
-        fi
-    done
-    
-    safe_read_password "请输入连接密码 (留空将自动生成): " HY_PASSWORD
-    
-    if [[ -z "$HY_PASSWORD" ]]; then
-        HY_PASSWORD=$(openssl rand -base64 12)
-        info_echo "自动生成密码: $HY_PASSWORD"
-    fi
-    
-    ACME_EMAIL="admin@$(echo "$HY_DOMAIN" | rev | cut -d. -f1,2 | rev)"
-    local input_email
-    safe_read "请输入用于 ACME 证书的邮箱 (默认: $ACME_EMAIL): " input_email
-    ACME_EMAIL="${input_email:-$ACME_EMAIL}"
     
     return 0
 }
@@ -623,18 +480,6 @@ hy2_install_self_signed() {
     hy2_create_config || return 1
     hy2_create_service || return 1
     hy2_show_result "self-signed"
-}
-
-hy2_install_acme() {
-    pre_install_check "hysteria" || return 1
-    
-    hy2_install_system_deps || return 1
-    hy2_get_input_acme || return 1
-    hy2_download_and_install || return 1
-    hy2_setup_acme_cert || return 1
-    hy2_create_config || return 1
-    hy2_create_service || return 1
-    hy2_show_result "acme"
 }
 
 # --- Hysteria2 卸载 ---
@@ -860,15 +705,14 @@ show_menu() {
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
     echo -e " ${CYAN}安装选项:${ENDCOLOR}"
     echo -e "   1. 安装 Hysteria2 (${GREEN}自签名证书模式，无需域名解析${ENDCOLOR})"
-    echo -e "   2. 安装 Hysteria2 (${YELLOW}ACME 证书模式，需域名 & Cloudflare API${ENDCOLOR})"
-    echo -e "   3. 安装 Shadowsocks (仅 IPv6)"
+    echo -e "   2. 安装 Shadowsocks (仅 IPv6)"
     echo
     echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
-    echo -e "   4. 服务管理 (启动/停止/日志)"
-    echo -e "   5. 显示配置信息"
-    echo -e "   6. 卸载服务"
-    echo -e "   7. 备份配置"
-    echo -e "   8. 系统诊断"
+    echo -e "   3. 服务管理 (启动/停止/日志)"
+    echo -e "   4. 显示配置信息"
+    echo -e "   5. 卸载服务"
+    echo -e "   6. 备份配置"
+    echo -e "   7. 系统诊断"
     echo
     echo -e " ${CYAN}0. 退出脚本${ENDCOLOR}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
@@ -1171,21 +1015,20 @@ main() {
     while true; do
         show_menu
         local choice
-        safe_read "请选择操作 [0-8]: " choice
+        safe_read "请选择操作 [0-7]: " choice
         
         choice=$(echo "$choice" | tr -cd '0-9')
         
         case $choice in
             1) hy2_install_self_signed ;;
-            2) hy2_install_acme ;;
-            3) ss_run_install ;;
-            4) manage_services ;;
-            5) show_config_info ;;
-            6) uninstall_services ;;
-            7) backup_configs ;;
-            8) system_diagnosis ;;
+            2) ss_run_install ;;
+            3) manage_services ;;
+            4) show_config_info ;;
+            5) uninstall_services ;;
+            6) backup_configs ;;
+            7) system_diagnosis ;;
             0) echo; success_echo "感谢使用脚本！"; exit 0 ;;
-            *) error_echo "无效的选择 '$choice'，请输入 0-8 之间的数字"; sleep 1 ;;
+            *) error_echo "无效的选择 '$choice'，请输入 0-7 之间的数字"; sleep 1 ;;
         esac
     done
 }
