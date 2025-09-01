@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 6.2 (重构版 - Hysteria2 全新实现)
+# 版本: 6.2.1 (修复输入问题版本)
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 支持自签名证书和 Cloudflare DNS API 申请的 ACME 证书两种模式。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -47,6 +47,62 @@ success_echo() { echo -e "${GREEN}[SUCCESS]${ENDCOLOR} $1"; }
 error_echo() { echo -e "${RED}[ERROR]${ENDCOLOR} $1" >&2; }
 warning_echo() { echo -e "${YELLOW}[WARNING]${ENDCOLOR} $1"; }
 
+# --- 安全输入函数 ---
+safe_read() {
+    local prompt="$1"
+    local var_name="$2"
+    local input
+    
+    # 清理输入缓冲区
+    while read -t 0; do
+        read -r discard
+    done
+    
+    echo -n "$prompt"
+    if read -r input </dev/tty 2>/dev/null; then
+        # 清理输入，去除控制字符和首尾空格
+        input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        eval "$var_name='$input'"
+        return 0
+    else
+        # 如果 /dev/tty 不可用，使用标准输入
+        if read -r input; then
+            input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            eval "$var_name='$input'"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# --- 安全密码输入函数 ---
+safe_read_password() {
+    local prompt="$1"
+    local var_name="$2"
+    local input
+    
+    # 清理输入缓冲区
+    while read -t 0; do
+        read -r discard
+    done
+    
+    echo -n "$prompt"
+    if read -s -r input </dev/tty 2>/dev/null; then
+        input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        eval "$var_name='$input'"
+        echo  # 换行
+        return 0
+    else
+        if read -s -r input; then
+            input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            eval "$var_name='$input'"
+            echo
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # --- 通用系统检查函数 ---
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -74,8 +130,12 @@ detect_system() {
 }
 
 detect_network() {
+    info_echo "检测网络环境..."
     IPV4_ADDR=$(timeout 5 curl -4 -s https://api.ipify.org 2>/dev/null || echo "")
     IPV6_ADDR=$(timeout 5 curl -6 -s https://api64.ipify.org 2>/dev/null || echo "")
+    
+    # 清理可能的输入污染
+    exec </dev/tty 2>/dev/null || true
 }
 
 # --- 安装前检查 ---
@@ -90,7 +150,8 @@ pre_install_check() {
 
     if [[ -f "$service_file" ]]; then
         warning_echo "检测到 ${service_name^} 已安装。"
-        read -rp "确定要覆盖安装吗? (y/N): " confirm
+        local confirm
+        safe_read "确定要覆盖安装吗? (y/N): " confirm
         if [[ ! "$confirm" =~ ^[yY]$ ]]; then
             info_echo "操作已取消。"
             return 1
@@ -340,14 +401,13 @@ hy2_get_input_self_signed() {
     echo
     
     while [[ -z "$HY_DOMAIN" ]]; do
-        read -rp "请输入 SNI 域名 (如: example.com): " HY_DOMAIN
+        safe_read "请输入 SNI 域名 (如: example.com): " HY_DOMAIN
         if [[ -z "$HY_DOMAIN" ]]; then
             warning_echo "域名不能为空"
         fi
     done
     
-    read -rsp "请输入连接密码 (留空自动生成): " HY_PASSWORD
-    echo
+    safe_read_password "请输入连接密码 (留空自动生成): " HY_PASSWORD
     
     if [[ -z "$HY_PASSWORD" ]]; then
         HY_PASSWORD=$(openssl rand -base64 12)
@@ -363,15 +423,14 @@ hy2_get_input_acme() {
     echo
     
     while [[ -z "$HY_DOMAIN" ]]; do
-        read -rp "请输入已托管在 Cloudflare 的域名: " HY_DOMAIN
+        safe_read "请输入已托管在 Cloudflare 的域名: " HY_DOMAIN
         if [[ -z "$HY_DOMAIN" ]]; then
             warning_echo "域名不能为空"
         fi
     done
     
     while [[ -z "$CF_TOKEN" ]]; do
-        read -rsp "请输入 Cloudflare API Token: " CF_TOKEN
-        echo
+        safe_read_password "请输入 Cloudflare API Token: " CF_TOKEN
         if [[ -z "$CF_TOKEN" ]]; then
             warning_echo "API Token 不能为空"
             continue
@@ -395,8 +454,7 @@ hy2_get_input_acme() {
         fi
     done
     
-    read -rsp "请输入连接密码 (留空自动生成): " HY_PASSWORD
-    echo
+    safe_read_password "请输入连接密码 (留空自动生成): " HY_PASSWORD
     
     if [[ -z "$HY_PASSWORD" ]]; then
         HY_PASSWORD=$(openssl rand -base64 12)
@@ -404,7 +462,8 @@ hy2_get_input_acme() {
     fi
     
     ACME_EMAIL="admin@$(echo "$HY_DOMAIN" | cut -d. -f2-)"
-    read -rp "ACME 邮箱 (默认: $ACME_EMAIL): " input_email
+    local input_email
+    safe_read "ACME 邮箱 (默认: $ACME_EMAIL): " input_email
     ACME_EMAIL="${input_email:-$ACME_EMAIL}"
     
     return 0
@@ -438,7 +497,8 @@ hy2_show_result() {
     echo -e "${PURPLE}===================${ENDCOLOR}"
     echo
     
-    read -rp "按任意键继续..." -n1
+    local dummy
+    safe_read "按 Enter 继续..." dummy
 }
 
 # --- 安装主函数 ---
@@ -501,7 +561,8 @@ ss_check_ipv6() {
 
     if ! timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
         warning_echo "检测到 IPv6 地址 ($IPV6_ADDR)，但似乎无法连接外网。"
-        read -rp "是否仍要继续安装？(y/N): " confirm
+        local confirm
+        safe_read "是否仍要继续安装？(y/N): " confirm
         if [[ ! "$confirm" =~ ^[yY]$ ]]; then
             error_echo "安装已取消。"
             return 1
@@ -620,7 +681,8 @@ ss_display_result() {
     fi
     
     echo
-    read -rp "按任意键继续..." -n1
+    local dummy
+    safe_read "按 Enter 继续..." dummy
 }
 
 ss_run_install() {
@@ -667,7 +729,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.2) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.2.1) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
@@ -696,7 +758,8 @@ manage_services() {
         echo " 2. 管理 Shadowsocks(IPv6)"
         echo " 0. 返回主菜单"
         echo "----------------"
-        read -rp "请选择要管理的服务: " service_choice
+        local service_choice
+        safe_read "请选择要管理的服务: " service_choice
         case $service_choice in
             1)
                 if [[ ! -f /etc/systemd/system/hysteria-server.service ]]; then
@@ -732,7 +795,8 @@ manage_single_service() {
         echo " 5. 查看配置"
         echo " 0. 返回上级菜单"
         echo "----------------"
-        read -rp "请选择操作: " action
+        local action
+        safe_read "请选择操作: " action
         case $action in
             1) systemctl start "$service_name" && success_echo "服务启动成功" || error_echo "服务启动失败"; sleep 1.5 ;;
             2) systemctl stop "$service_name" && success_echo "服务停止成功" || error_echo "服务停止失败"; sleep 1.5 ;;
@@ -741,7 +805,8 @@ manage_single_service() {
                 clear
                 echo "=== $display_name 服务日志 (最近20行) ==="
                 journalctl -u "$service_name" -n 20 --no-pager
-                read -rp "按任意键继续..." -n1
+                local dummy
+                safe_read "按 Enter 继续..." dummy
                 ;;
             5)
                 clear
@@ -762,7 +827,8 @@ manage_single_service() {
                         fi
                         ;;
                 esac
-                read -rp "按任意键继续..." -n1
+                local dummy
+                safe_read "按 Enter 继续..." dummy
                 ;;
             0) return ;;
             *) error_echo "无效选择"; sleep 1 ;;
@@ -778,7 +844,8 @@ show_config_info() {
         echo " 2. 显示 Shadowsocks 连接信息"
         echo " 0. 返回主菜单"
         echo "----------------"
-        read -rp "请选择: " config_choice
+        local config_choice
+        safe_read "请选择: " config_choice
         case $config_choice in
             1)
                 if [[ ! -f /etc/hysteria2/server.yaml ]]; then
@@ -834,7 +901,8 @@ show_hysteria2_config() {
     
     echo -e "${PURPLE}===================${ENDCOLOR}"
     echo
-    read -rp "按任意键继续..." -n1
+    local dummy
+    safe_read "按 Enter 继续..." dummy
 }
 
 show_shadowsocks_config() {
@@ -876,7 +944,8 @@ show_shadowsocks_config() {
     fi
     
     echo
-    read -rp "按任意键继续..." -n1
+    local dummy
+    safe_read "按 Enter 继续..." dummy
 }
 
 uninstall_services() {
@@ -888,35 +957,42 @@ uninstall_services() {
         echo " 3. 卸载所有服务"
         echo " 0. 返回主菜单"
         echo "----------------"
-        read -rp "请选择要卸载的服务: " uninstall_choice
+        local uninstall_choice
+        safe_read "请选择要卸载的服务: " uninstall_choice
         case $uninstall_choice in
             1)
                 if [[ ! -f /etc/systemd/system/hysteria-server.service ]]; then
                     error_echo "Hysteria2 未安装"; sleep 1.5; continue
                 fi
-                read -rp "确定要卸载 Hysteria2 吗? (y/N): " confirm
+                local confirm
+                safe_read "确定要卸载 Hysteria2 吗? (y/N): " confirm
                 if [[ "$confirm" =~ ^[yY]$ ]]; then
                     hy2_uninstall
-                    read -rp "按任意键继续..." -n1
+                    local dummy
+                    safe_read "按 Enter 继续..." dummy
                 fi
                 ;;
             2)
                 if [[ ! -f /etc/systemd/system/shadowsocks-libev.service ]]; then
                     error_echo "Shadowsocks 未安装"; sleep 1.5; continue
                 fi
-                read -rp "确定要卸载 Shadowsocks 吗? (y/N): " confirm
+                local confirm
+                safe_read "确定要卸载 Shadowsocks 吗? (y/N): " confirm
                 if [[ "$confirm" =~ ^[yY]$ ]]; then
                     ss_uninstall
-                    read -rp "按任意键继续..." -n1
+                    local dummy
+                    safe_read "按 Enter 继续..." dummy
                 fi
                 ;;
             3)
-                read -rp "确定要卸载所有服务吗? (y/N): " confirm
+                local confirm
+                safe_read "确定要卸载所有服务吗? (y/N): " confirm
                 if [[ "$confirm" =~ ^[yY]$ ]]; then
                     hy2_uninstall
                     ss_uninstall
                     success_echo "所有服务已卸载完成"
-                    read -rp "按任意键继续..." -n1
+                    local dummy
+                    safe_read "按 Enter 继续..." dummy
                 fi
                 ;;
             0) return ;;
@@ -954,7 +1030,8 @@ backup_configs() {
     fi
     
     success_echo "备份完成! 备份位置: $backup_dir"
-    read -rp "按任意键继续..." -n1
+    local dummy
+    safe_read "按 Enter 继续..." dummy
 }
 
 system_diagnosis() {
@@ -1000,7 +1077,8 @@ system_diagnosis() {
     fi
     
     echo
-    read -rp "按任意键继续..." -n1
+    local dummy
+    safe_read "按 Enter 继续..." dummy
 }
 
 ################################################################################
@@ -1015,10 +1093,21 @@ main() {
     detect_system
     detect_network
     
+    # 清理初始输入缓冲区，防止脚本启动时的输入干扰
+    exec </dev/tty 2>/dev/null || true
+    while read -t 0.1 -n 1000 discard 2>/dev/null; do
+        true
+    done
+    
     # 主菜单循环
     while true; do
         show_menu
-        read -rp "请选择操作 [0-8]: " choice
+        local choice
+        safe_read "请选择操作 [0-8]: " choice
+        
+        # 清理输入，确保只包含数字
+        choice=$(echo "$choice" | tr -cd '0-9')
+        
         case $choice in
             1) hy2_install_self_signed ;;
             2) hy2_install_acme ;;
@@ -1033,8 +1122,12 @@ main() {
                 success_echo "感谢使用脚本！"
                 exit 0 
                 ;;
+            "")
+                warning_echo "请输入一个有效的数字选项 (0-8)"
+                sleep 1
+                ;;
             *)
-                error_echo "无效的选择，请重试"
+                error_echo "无效的选择 '$choice'，请输入 0-8 之间的数字"
                 sleep 1
                 ;;
         esac
