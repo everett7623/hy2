@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 6.3.0 (ACME 专用版)
+# 版本: 6.3.1
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
-#       Hysteria2 使用 Cloudflare DNS API 申请 ACME 证书。
+#       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
 
 # --- 脚本行为设置 ---
@@ -26,12 +26,8 @@ IPV4_ADDR=""
 IPV6_ADDR=""
 # Hysteria2 变量
 HY_DOMAIN=""
-CF_TOKEN=""
 HY_PASSWORD=""
-ACME_EMAIL=""
 FAKE_URL="https://www.bing.com"
-CF_ZONE_ID=""
-CF_ACCOUNT_ID=""
 # Shadowsocks 变量
 SS_PORT=""
 SS_PASSWORD=""
@@ -166,7 +162,7 @@ pre_install_check() {
 }
 
 ################################################################################
-# Hysteria2 功能模块 (ACME 专用)
+# Hysteria2 功能模块 (自签名专用)
 ################################################################################
 
 # --- 系统依赖安装 ---
@@ -178,14 +174,14 @@ hy2_install_system_deps() {
     case "$OS_TYPE" in
         "ubuntu" | "debian")
             apt-get update -y >/dev/null 2>&1
-            apt-get install -y "${base_packages[@]}" jq socat >/dev/null 2>&1
+            apt-get install -y "${base_packages[@]}" >/dev/null 2>&1
             ;;
         "centos" | "rocky" | "almalinux")
             yum install -y epel-release >/dev/null 2>&1
-            yum install -y "${base_packages[@]}" jq socat >/dev/null 2>&1
+            yum install -y "${base_packages[@]}" >/dev/null 2>&1
             ;;
         "fedora")
-            dnf install -y "${base_packages[@]}" jq socat >/dev/null 2>&1
+            dnf install -y "${base_packages[@]}" >/dev/null 2>&1
             ;;
         *)
             error_echo "不支持的操作系统: $OS_TYPE"
@@ -206,12 +202,10 @@ hy2_install_system_deps() {
 hy2_download_and_install() {
     info_echo "下载 Hysteria2 最新版本..."
     
-    # 创建临时目录
     local tmp_dir="/tmp/hysteria2_install"
     rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
     cd "$tmp_dir" || return 1
     
-    # 获取最新版本号
     local latest_version
     latest_version=$(timeout 10 curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name"' | cut -d '"' -f 4)
     
@@ -222,7 +216,6 @@ hy2_download_and_install() {
     
     info_echo "最新版本: $latest_version"
     
-    # 构建下载链接
     local download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${ARCH}"
     
     info_echo "正在下载: $download_url"
@@ -231,17 +224,14 @@ hy2_download_and_install() {
         return 1
     fi
     
-    # 验证文件
     if [[ ! -s hysteria ]] || ! file hysteria | grep -q "executable"; then
         error_echo "下载的文件无效"
         return 1
     fi
     
-    # 安装到系统
     chmod +x hysteria
     mv hysteria /usr/local/bin/hysteria
     
-    # 验证安装
     if ! /usr/local/bin/hysteria version >/dev/null 2>&1; then
         error_echo "Hysteria2 安装验证失败"
         return 1
@@ -251,42 +241,25 @@ hy2_download_and_install() {
     version_info=$(/usr/local/bin/hysteria version | head -n 1)
     success_echo "Hysteria2 安装成功: $version_info"
     
-    # 清理
     cd / && rm -rf "$tmp_dir"
     return 0
 }
 
-# --- ACME 证书申请 ---
-hy2_setup_acme_cert() {
-    info_echo "设置 ACME 证书申请..."
+# --- 自签名证书生成 ---
+hy2_create_self_signed_cert() {
+    info_echo "生成自签名 SSL 证书..."
+    
     mkdir -p /etc/hysteria2/certs
     
-    # 安装 acme.sh
-    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-        info_echo "安装 acme.sh..."
-        curl -s https://get.acme.sh | sh -s email="$ACME_EMAIL" >/dev/null 2>&1
-        if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-            error_echo "acme.sh 安装失败"
-            return 1
-        fi
-    fi
-    
-    # 设置 Cloudflare API
-    export CF_Token="$CF_TOKEN"
-    export CF_Account_ID="$CF_ACCOUNT_ID" 
-    export CF_Zone_ID="$CF_ZONE_ID"
-    
-    # 申请证书
-    info_echo "申请 SSL 证书 (域名: $HY_DOMAIN)..."
-    if ! ~/.acme.sh/acme.sh --issue --dns dns_cf -d "$HY_DOMAIN" \
-        --key-file /etc/hysteria2/certs/server.key \
-        --fullchain-file /etc/hysteria2/certs/server.crt \
-        --force --ecc >/dev/null 2>&1; then
-        error_echo "证书申请失败"
+    if ! openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout /etc/hysteria2/certs/server.key \
+        -out /etc/hysteria2/certs/server.crt \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=$HY_DOMAIN" >/dev/null 2>&1; then
+        error_echo "证书生成失败"
         return 1
     fi
     
-    success_echo "ACME 证书申请成功"
+    success_echo "自签名证书生成成功"
     return 0
 }
 
@@ -379,38 +352,13 @@ EOF
 # --- 用户输入处理 ---
 hy2_get_input() {
     echo
-    echo -e "${CYAN}=== Hysteria2 ACME 证书安装 ===${ENDCOLOR}"
+    echo -e "${CYAN}=== Hysteria2 自签名证书安装 ===${ENDCOLOR}"
     echo
     
     while [[ -z "$HY_DOMAIN" ]]; do
-        safe_read "请输入已托管在 Cloudflare 的域名: " HY_DOMAIN
+        safe_read "请输入用于 SNI 伪装的域名 (任意有效域名即可，如 amd.com): " HY_DOMAIN
         if [[ -z "$HY_DOMAIN" ]]; then
             warning_echo "域名不能为空"
-        fi
-    done
-    
-    while [[ -z "$CF_TOKEN" ]]; do
-        safe_read_password "请输入 Cloudflare API Token: " CF_TOKEN
-        if [[ -z "$CF_TOKEN" ]]; then
-            warning_echo "API Token 不能为空"
-            continue
-        fi
-        
-        # 验证 Token
-        info_echo "验证 API Token..."
-        local zone_info
-        zone_info=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones" \
-            -H "Authorization: Bearer $CF_TOKEN" \
-            -H "Content-Type: application/json")
-        
-        if echo "$zone_info" | grep -q '"success":true'; then
-            CF_ZONE_ID=$(echo "$zone_info" | grep -o '"id":"[^"]*' | head -1 | cut -d'"' -f4)
-            CF_ACCOUNT_ID=$(echo "$zone_info" | grep -o '"account":{"id":"[^"]*' | cut -d'"' -f6)
-            success_echo "Token 验证成功"
-            break
-        else
-            error_echo "Token 验证失败，请重新输入"
-            CF_TOKEN=""
         fi
     done
     
@@ -420,11 +368,6 @@ hy2_get_input() {
         HY_PASSWORD=$(openssl rand -base64 12)
         info_echo "自动生成密码: $HY_PASSWORD"
     fi
-    
-    ACME_EMAIL="admin@$(echo "$HY_DOMAIN" | cut -d. -f2-)"
-    local input_email
-    safe_read "ACME 邮箱 (默认: $ACME_EMAIL): " input_email
-    ACME_EMAIL="${input_email:-$ACME_EMAIL}"
     
     return 0
 }
@@ -437,7 +380,8 @@ generate_hy2_configs() {
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
     local server_name="🌟Hysteria2-${country_code}-$(date +%m%d)"
-    local hy2_link="hysteria2://$HY_PASSWORD@$server_addr:443/?insecure=false&sni=$HY_DOMAIN#$server_name"
+    # 自签名模式下，insecure 必须为 true
+    local hy2_link="hysteria2://$HY_PASSWORD@$server_addr:443/?insecure=true&sni=$HY_DOMAIN#$server_name"
     
     echo "# ========== Hysteria2 客户端配置 =========="
     echo
@@ -449,6 +393,7 @@ server: $server_addr:443
 auth: $HY_PASSWORD
 tls:
   sni: $HY_DOMAIN
+  insecure: true
 bandwidth:
   up: 50 mbps
   down: 100 mbps
@@ -465,13 +410,13 @@ EOF
     echo
     
     # 3. Clash Meta 配置
-    echo -e "${CYAN}⚔️ Clash Meta 紧凑配置 (可用于 proxies 部分):${ENDCOLOR}"
-    echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, up: 50, down: 100 }"
+    echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
+    echo "  - { name: '$server_name', type: hysteria2, server: $server_addr, port: 443, password: $HY_PASSWORD, sni: $HY_DOMAIN, skip-cert-verify: true, up: 50, down: 100 }"
     echo
     
     # 4. Surge 配置
     echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
-    echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN"
+    echo "$server_name = hysteria2, $server_addr, 443, password=$HY_PASSWORD, sni=$HY_DOMAIN, skip-cert-verify=true"
     echo
     
     echo "# =========================================="
@@ -483,12 +428,15 @@ hy2_show_result() {
     
     echo -e "${BG_PURPLE} Hysteria2 安装完成！ ${ENDCOLOR}"
     echo
+    echo -e "${YELLOW}注意: 使用自签名证书，客户端需要启用 '允许不安全连接' 选项${ENDCOLOR}"
+    echo
+    
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
     echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}$HY_DOMAIN${ENDCOLOR}"
-    echo -e "允许不安全: ${GREEN}否${ENDCOLOR}"
+    echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
@@ -506,7 +454,7 @@ hy2_install() {
     hy2_get_input || return 1
     hy2_install_system_deps || return 1
     hy2_download_and_install || return 1
-    hy2_setup_acme_cert || return 1
+    hy2_create_self_signed_cert || return 1
     hy2_create_config || return 1
     hy2_create_service || return 1
     hy2_show_result
@@ -516,15 +464,10 @@ hy2_install() {
 hy2_uninstall() {
     info_echo "正在卸载 Hysteria2..."
     
-    # 停止并禁用服务
     systemctl disable --now hysteria-server >/dev/null 2>&1 || true
-    
-    # 删除文件
     rm -f /etc/systemd/system/hysteria-server.service
     rm -f /usr/local/bin/hysteria
     rm -rf /etc/hysteria2
-    
-    # 重新加载 systemd
     systemctl daemon-reload
     
     success_echo "Hysteria2 卸载完成"
@@ -535,14 +478,12 @@ hy2_uninstall() {
 ################################################################################
 ss_check_ipv6() {
     info_echo "检测 IPv6 网络环境..."
-    # 使用和全局变量不同的检测方式，确保获取到的是接口上的地址
     local IPV6_ADDR_LOCAL
     IPV6_ADDR_LOCAL=$(ip -6 addr show scope global | grep inet6 | grep -v "temporary\|deprecated" | awk '{print $2}' | cut -d/ -f1 | head -n1)
     if [[ -z "$IPV6_ADDR_LOCAL" ]]; then
         error_echo "未检测到有效的公网 IPv6 地址！Shadowsocks 安装需要 IPv6 支持。"
         return 1
     fi
-    # 优先使用全局检测到的可访问地址
     IPV6_ADDR=${IPV6_ADDR:-$IPV6_ADDR_LOCAL}
 
     if ! timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
@@ -597,7 +538,6 @@ EOF
 ss_setup_service() {
     info_echo "创建并启动 Shadowsocks systemd 服务..."
     
-    # 创建自定义服务文件（避免依赖包管理器的默认配置）
     cat > /etc/systemd/system/shadowsocks-libev.service << 'EOF'
 [Unit]
 Description=Shadowsocks-Libev Custom Server Service
@@ -626,7 +566,6 @@ EOF
         return 1
     fi
 
-    # 配置防火墙
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then 
         ufw allow "$SS_PORT" >/dev/null 2>&1
     fi
@@ -715,13 +654,13 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.3.0) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v6.3.1) ${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}================================================================${ENDCOLOR}"
     echo -e " ${CYAN}安装选项:${ENDCOLOR}"
-    echo -e "   1. 安装 Hysteria2 (${YELLOW}ACME 证书模式，需域名 & Cloudflare API${ENDCOLOR})"
+    echo -e "   1. 安装 Hysteria2 (${GREEN}自签名证书模式，无需域名${ENDCOLOR})"
     echo -e "   2. 安装 Shadowsocks (仅 IPv6)"
     echo
     echo -e " ${CYAN}管理与维护:${ENDCOLOR}"
@@ -857,33 +796,32 @@ show_hysteria2_config() {
         return
     fi
 
-    # 从配置文件中提取信息
     local password
     local domain
     password=$(grep "password:" /etc/hysteria2/server.yaml | awk '{print $2}')
     
-    # 尝试从证书中获取域名
     if [[ -f /etc/hysteria2/certs/server.crt ]]; then
         domain=$(openssl x509 -in /etc/hysteria2/certs/server.crt -noout -subject | grep -o "CN=[^,]*" | cut -d= -f2)
     fi
 
     echo -e "${BG_PURPLE} Hysteria2 连接信息 ${ENDCOLOR}"
     echo
+    echo -e "${YELLOW}注意: 使用自签名证书，客户端需要启用 '允许不安全连接' 选项${ENDCOLOR}"
+    echo
+    
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
     echo -e "服务器地址: ${GREEN}${IPV4_ADDR:-$IPV6_ADDR}${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
-    echo -e "证书类型:   ${GREEN}ACME证书${ENDCOLOR}"
-    echo -e "允许不安全: ${GREEN}否${ENDCOLOR}"
+    echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"
+    echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
     
-    # 设置全局变量以供配置生成函数使用
     HY_PASSWORD="$password"
     HY_DOMAIN="$domain"
     
-    # 生成多种客户端配置
     generate_hy2_configs
     
     local dummy
@@ -897,7 +835,6 @@ show_shadowsocks_config() {
         return
     fi
 
-    # 从配置文件中提取信息
     local server_port password method
     server_port=$(grep "server_port" /etc/shadowsocks-libev/config.json | grep -o "[0-9]*")
     password=$(grep "password" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
@@ -912,11 +849,6 @@ show_shadowsocks_config() {
     echo -e "   加密方式:   ${GREEN}$method${ENDCOLOR}"
     echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
-
-    # 设置全局变量以供配置生成函数使用
-    SS_PORT="$server_port"
-    SS_PASSWORD="$password"
-    SS_METHOD="$method"
 
     if command -v qrencode >/dev/null 2>&1; then
         echo -e "${CYAN}📱 二维码 (请最大化终端窗口显示):${ENDCOLOR}"
@@ -996,20 +928,17 @@ backup_configs() {
     info_echo "创建配置备份..."
     mkdir -p "$backup_dir"
     
-    # 备份 Hysteria2 配置
     if [[ -d /etc/hysteria2 ]]; then
         cp -r /etc/hysteria2 "$backup_dir/"
         success_echo "Hysteria2 配置已备份"
     fi
     
-    # 备份 Shadowsocks 配置
     if [[ -f /etc/shadowsocks-libev/config.json ]]; then
         mkdir -p "$backup_dir/shadowsocks-libev"
         cp /etc/shadowsocks-libev/config.json "$backup_dir/shadowsocks-libev/"
         success_echo "Shadowsocks 配置已备份"
     fi
     
-    # 备份服务文件
     if [[ -f /etc/systemd/system/hysteria-server.service ]]; then
         cp /etc/systemd/system/hysteria-server.service "$backup_dir/"
     fi
@@ -1074,26 +1003,20 @@ system_diagnosis() {
 ################################################################################
 
 main() {
-    # 检查 root 权限
     check_root
-    
-    # 系统检测
     detect_system
     detect_network
     
-    # 清理初始输入缓冲区，防止脚本启动时的输入干扰
     exec </dev/tty 2>/dev/null || true
     while read -t 0.1 -n 1000 discard 2>/dev/null; do
         true
     done
     
-    # 主菜单循环
     while true; do
         show_menu
         local choice
         safe_read "请选择操作 [0-7]: " choice
         
-        # 清理输入，确保只包含数字
         choice=$(echo "$choice" | tr -cd '0-9')
         
         case $choice in
