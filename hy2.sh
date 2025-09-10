@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.17
+# 版本: 1.0.18
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -714,7 +714,7 @@ hy2_update() {
         warning_echo "由于无法检测当前版本，将尝试下载并替换最新版本，但不会修改现有配置。"
         local confirm_update
         safe_read "是否仍要下载并替换最新版本 ($latest_version)？ (y/N): " confirm_update
-        if [[ "$confirm" =~ ^[yY]$ ]]; then
+        if [[ "$confirm_update" =~ ^[yY]$ ]]; then
             perform_update=true
         else
             info_echo "操作已取消。"
@@ -1319,7 +1319,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.17) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.18) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1633,6 +1633,7 @@ uninstall_services() {
                 ;;
             0) return ;;
             *) error_echo "无效选择"; sleep 1 ;;
+        在 Shadowsocks 安装成功后的 `ss_display_result` 函数中，针对纯 IPv6 服务器，仍然会保留关于 NAT64/DNS64 的提示，以确保用户了解其网络环境的潜在限制。
         esac
     done
 }
@@ -1770,7 +1771,6 @@ main() {
                 error_echo "无效的选择 '$choice'，请输入 0-7 之间的数字"
                 sleep 1
                 ;;
-        在 Shadowsocks 安装成功后的 `ss_display_result` 函数中，针对纯 IPv6 服务器，仍然会保留关于 NAT64/DNS64 的提示，以确保用户了解其网络环境的潜在限制。
         esac
     done
 }
