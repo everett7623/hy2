@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.6
+# 版本: 1.0.6 (更新版本号以反映修改)
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -177,7 +177,7 @@ detect_network() {
     exec </dev/tty 2>/dev/null || true
 }
 
-# --- 检查并创建 Swap ---
+# --- 检查并建议创建 Swap (仅提示，不强制中断) ---
 check_and_create_swap() {
     local total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
     local total_ram_mb=$((total_ram_kb / 1024))
@@ -185,31 +185,72 @@ check_and_create_swap() {
     local swap_size_mb=1024 # 1GB swap
 
     if (( total_ram_mb < 512 )); then
-        warning_echo "检测到系统内存 ($total_ram_mb MB) 较低，建议创建 Swap 文件以避免安装时内存不足。"
-        if [ -f "$swap_file" ] && grep -q "$swap_file" /etc/fstab; then
-            info_echo "已检测到现有 Swap 文件 ($swap_file) 且已配置永久启用，无需操作。"
-            return 0
-        fi
-
-        local confirm
-        safe_read "是否创建 ${swap_size_mb}MB 的 Swap 文件? (y/N): " confirm
-        if [[ "$confirm" =~ ^[yY]$ ]]; then
-            info_echo "正在创建 ${swap_size_mb}MB Swap 文件..."
-            dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
-            chmod 600 $swap_file
-            mkswap $swap_file >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f $swap_file; return 1; }
-            swapon $swap_file || { error_echo "swapon 失败"; rm -f $swap_file; return 1; }
-            
-            # Make swap permanent
-            if ! grep -q "$swap_file" /etc/fstab; then
-                echo "$swap_file none swap sw 0 0" >> /etc/fstab
+        local current_swap_mb=$(free -m | grep Swap | awk '{print $2}')
+        if (( current_swap_mb == 0 )); then
+            warning_echo "检测到系统内存 ($total_ram_mb MB) 较低且无 Swap 空间。在执行安装操作前，建议创建 Swap 文件以避免内存不足。"
+            if [ -f "$swap_file" ] && grep -q "$swap_file" /etc/fstab; then
+                info_echo "已检测到现有 Swap 文件 ($swap_file) 且已配置永久启用，无需操作。"
+                return 0
             fi
-            success_echo "Swap 文件创建并启用成功。"
-        else
-            info_echo "用户选择不创建 Swap 文件，请注意内存使用情况。"
+            local confirm
+            safe_read "是否创建 ${swap_size_mb}MB 的 Swap 文件? (y/N): " confirm
+            if [[ "$confirm" =~ ^[yY]$ ]]; then
+                info_echo "正在创建 ${swap_size_mb}MB Swap 文件..."
+                dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
+                chmod 600 "$swap_file"
+                mkswap "$swap_file" >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f "$swap_file"; return 1; }
+                swapon "$swap_file" || { error_echo "swapon 失败"; rm -f "$swap_file"; return 1; }
+                
+                if ! grep -q "$swap_file" /etc/fstab; then
+                    echo "$swap_file none swap sw 0 0" >> /etc/fstab
+                fi
+                success_echo "Swap 文件创建并启用成功。"
+            else
+                info_echo "用户选择不创建 Swap 文件。请注意在后续安装时可能需要手动创建。"
+            fi
         fi
     fi
     return 0
+}
+
+# --- 强制检查并创建 Swap (在服务安装前调用，低内存时强制) ---
+enforce_swap_if_low_memory() {
+    local total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local total_ram_mb=$((total_ram_kb / 1024))
+    local swap_file="/swapfile"
+    local swap_size_mb=1024 # 1GB swap
+
+    if (( total_ram_mb < 512 )); then
+        local current_swap_mb=$(free -m | grep Swap | awk '{print $2}')
+        if (( current_swap_mb == 0 )); then
+            error_echo "检测到系统内存 ($total_ram_mb MB) 极低且无 Swap 空间。"
+            warning_echo "强烈建议创建 ${swap_size_mb}MB 的 Swap 文件以确保安装成功和系统稳定性。否则安装可能会失败甚至导致服务闪退。"
+            local confirm
+            safe_read "是否立即创建 Swap 文件? (y/N): " confirm
+            if [[ "$confirm" =~ ^[yY]$ ]]; then
+                info_echo "正在创建 ${swap_size_mb}MB Swap 文件..."
+                dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
+                chmod 600 "$swap_file"
+                mkswap "$swap_file" >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f "$swap_file"; return 1; }
+                swapon "$swap_file" || { error_echo "swapon 失败"; rm -f "$swap_file"; return 1; }
+                
+                if ! grep -q "$swap_file" /etc/fstab; then
+                    echo "$swap_file none swap sw 0 0" >> /etc/fstab
+                fi
+                success_echo "Swap 文件创建并启用成功。"
+                return 0 # Swap created successfully
+            else
+                error_echo "用户拒绝创建 Swap 文件。安装已取消，建议在充足内存或有 Swap 的环境下重试。"
+                local dummy
+                safe_read "按 Enter 返回主菜单..." dummy
+                return 1 # 用户拒绝，阻止安装继续
+            fi
+        else
+            info_echo "检测到系统内存 ($total_ram_mb MB) 较低，但已存在 ${current_swap_mb}MB Swap 空间，可以继续安装。"
+            return 0 # Swap 存在，继续
+        fi
+    fi
+    return 0 # 内存充足，无需 Swap
 }
 
 
@@ -572,6 +613,9 @@ hy2_show_result() {
 hy2_install() {
     pre_install_check "hysteria" || return 1
     
+    # 在安装 Hysteria2 之前，强制检查并确保有足够的 Swap (如果内存低)
+    enforce_swap_if_low_memory || return 1 
+    
     hy2_get_input || return 1
     hy2_install_system_deps || return 1
     hy2_download_and_install || return 1
@@ -875,6 +919,9 @@ ss_run_install() {
     # 优先检查 IPv6 可用性
     ss_check_ipv6 || return 1
     
+    # 在安装 Shadowsocks 之前，强制检查并确保有足够的 Swap (如果内存低)
+    enforce_swap_if_low_memory || return 1
+
     pre_install_check "shadowsocks" || return 1
     
     ss_install_dependencies && \
@@ -1316,7 +1363,7 @@ main() {
     check_root
     detect_system
     detect_network
-    check_and_create_swap # Call swap creation early
+    check_and_create_swap # Call swap creation early (non-blocking suggestion)
     
     exec </dev/tty 2>/dev/null || true
     while read -t 0.1 -n 1000 discard 2>/dev/null; do
