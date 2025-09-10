@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.7
+# 版本: 1.0.8
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -905,11 +905,13 @@ EOF
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then 
         ufw allow "$SS_PORT"/tcp >/dev/null 2>&1
         ufw allow "$SS_PORT"/udp >/dev/null 2>&1
+        success_echo "ufw 防火墙已配置放行 Shadowsocks 端口 ($SS_PORT/tcp, $SS_PORT/udp)。"
     fi
     if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then 
         firewall-cmd --permanent --add-port="$SS_PORT"/tcp >/dev/null 2>&1
         firewall-cmd --permanent --add-port="$SS_PORT"/udp >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
+        success_echo "firewalld 防火墙已配置放行 Shadowsocks 端口 ($SS_PORT/tcp, $SS_PORT/udp)。"
     fi
 
     success_echo "Shadowsocks 服务已成功启动"
@@ -982,7 +984,11 @@ ss_display_result() {
     fi
     echo
 
-    # 调用新的函数生成并显示多种客户端配置
+    # Update global variables for generate_ss_configs to ensure they are current
+    SS_PASSWORD="$password"
+    SS_PORT="$server_port"
+    SS_METHOD="$method"
+
     generate_ss_configs
 
     if command -v qrencode >/dev/null 2>&1; then
@@ -1133,7 +1139,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.7) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.8) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1341,6 +1347,7 @@ show_shadowsocks_config() {
     echo
     local dummy
     safe_read "按 Enter 继续..." dummy
+    return 0
 }
 
 uninstall_services() {
