@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.11
+# 版本: 1.0.12
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -800,6 +800,7 @@ change_debian_apt_sources() {
         fi
 
         # 根据系统代号生成新的阿里云源配置
+        # 注意：这里使用 https 协议，需要确保 ca-certificates 和 apt-transport-https (或直接 curl) 已安装
         cat > "$sources_list" <<EOF
 deb https://mirrors.aliyun.com/debian/ $codename main contrib non-free
 deb-src https://mirrors.aliyun.com/debian/ $codename main contrib non-free
@@ -826,6 +827,7 @@ EOF
     return 0 # 非 Debian/Ubuntu 系统直接返回
 }
 
+
 ss_check_ipv6() {
     info_echo "检测 IPv6 网络环境以安装 Shadowsocks..."
     if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then
@@ -839,7 +841,7 @@ ss_check_ipv6() {
         return 1
     fi
 
-    # 再次确认 IPv6 连通性，虽然 detect_network 已经做了大部分，但为了 Shadowsocks 的特定需求再确认一次
+    # 再次确认 IPv6 连通性
     if ! timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
         warning_echo "检测到 IPv6 地址 ($IPV6_ADDR)，但似乎无法连接外网。"
         local confirm
@@ -850,6 +852,16 @@ ss_check_ipv6() {
         fi
     fi
     success_echo "IPv6 环境检查通过: $IPV6_ADDR"
+
+    # 新增：针对纯IPv6服务器的NAT64/DNS64提示
+    if ! $HAS_IPV4; then
+        warning_echo "⚠️ 检测到您的服务器为纯 IPv6 环境。Shadowsocks 服务若需访问 IPv4-Only 网站，"
+        warning_echo "   必须确保您的网络提供商已启用 NAT64 和 DNS64。否则，Shadowsocks 将只能访问 IPv6 目标。"
+        info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
+        info_echo "   您可以尝试运行 'dig A ipv4.google.com @::1' 或 'ping ipv4.google.com' (如果系统支持自动DNS64/NAT64) 来验证。"
+        local dummy
+        safe_read "按 Enter 继续..." dummy
+    fi
     return 0
 }
 
@@ -1051,6 +1063,16 @@ ss_display_result() {
     fi
     echo
 
+    # 针对纯IPv6服务器的NAT64/DNS64提示
+    if ! $HAS_IPV4; then
+        warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
+        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能。否则，Shadowsocks 将只能访问 IPv6 目标。"
+        info_echo "   您可以尝试运行 'dig A ipv4.google.com @::1' 或 'ping ipv4.google.com' (如果系统支持自动DNS64/NAT64) 来验证。"
+        info_echo "   如果您的 VPS 提供商没有提供 NAT64/DNS64，则您将无法通过此 Shadowsocks 服务访问纯 IPv4 网站。"
+        echo
+    fi
+
+
     # 直接调用 generate_ss_configs，它将使用 ss_generate_config 设置的全局变量
     generate_ss_configs
 
@@ -1208,7 +1230,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.11) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.12) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
