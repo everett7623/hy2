@@ -604,15 +604,16 @@ hy2_update() {
         return 1
     fi
 
+    local current_version_full
     local current_version
-    # 尝试获取当前版本，如果获取失败，则发出警告但继续更新二进制文件
-    current_version=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1 | awk '{print $NF}')
+    # 尝试更健壮地获取当前版本号 (例如：从 "Hysteria2 v2.6.2 (built from ...)" 中提取 "v2.6.2")
+    current_version_full=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1)
+    current_version=$(echo "$current_version_full" | grep -oE '(app/)?v[0-9]+\.[0-9]+\.[0-9]+')
     
-    if [[ -z "$current_version" ]]; then
-        warning_echo "无法获取当前 Hysteria2 版本信息。将尝试下载并替换最新版本，但不会修改现有配置。"
-        # 不在此处返回，继续执行下载和替换二进制的逻辑
-    else
+    if [[ -n "$current_version" ]]; then
         info_echo "当前 Hysteria2 版本: $current_version"
+    else
+        warning_echo "无法获取当前 Hysteria2 版本信息。"
     fi
 
     local latest_version
@@ -626,13 +627,32 @@ hy2_update() {
     fi
     info_echo "Hysteria2 最新版本: $latest_version"
 
-    # 如果成功获取到当前版本，并且已经是最新，则无需更新
-    if [[ -n "$current_version" ]] && [[ "$latest_version" == "$current_version" ]]; then
+    local perform_update=false
+
+    if [[ -z "$current_version" ]]; then
+        # 如果无法获取当前版本，询问用户是否强制更新
+        warning_echo "由于无法检测当前版本，将尝试下载并替换最新版本，但不会修改现有配置。"
+        local confirm_update
+        safe_read "是否仍要下载并替换最新版本 ($latest_version)？ (y/N): " confirm_update
+        if [[ "$confirm_update" =~ ^[yY]$ ]]; then
+            perform_update=true
+        else
+            info_echo "操作已取消。"
+            local dummy; safe_read "按 Enter 继续..." dummy
+            return 0
+        fi
+    elif [[ "$latest_version" == "$current_version" ]]; then
         info_echo "Hysteria2 已经是最新版本，无需更新。"
-    else
+        local dummy; safe_read "按 Enter 继续..." dummy
+        return 0
+    else # 当前版本已知且低于最新版本
         info_echo "发现新版本 ($latest_version)，正在更新 Hysteria2..."
+        perform_update=true
+    fi
+
+    if $perform_update; then
+        info_echo "正在更新 Hysteria2..."
         
-        # 停止服务
         systemctl stop hysteria-server >/dev/null 2>&1 || true
         
         local tmp_dir="/tmp/hysteria2_update"
@@ -645,25 +665,22 @@ hy2_update() {
         if ! timeout 60 wget -q --show-progress -O hysteria "$download_url"; then
             error_echo "下载失败"
             cd / && rm -rf "$tmp_dir"
-            systemctl start hysteria-server >/dev/null 2>&1 || true # 尝试启动旧的服务
-            local dummy
-            safe_read "按 Enter 继续..." dummy
+            systemctl start hysteria-server >/dev/null 2>&1 || true
+            local dummy; safe_read "按 Enter 继续..." dummy
             return 1
         fi
         
         if [[ ! -s hysteria ]] || ! file hysteria | grep -q "executable"; then
             error_echo "下载的文件无效"
             cd / && rm -rf "$tmp_dir"
-            systemctl start hysteria-server >/dev/null 2>&1 || true # 尝试启动旧的服务
-            local dummy
-            safe_read "按 Enter 继续..." dummy
+            systemctl start hysteria-server >/dev/null 2>&1 || true
+            local dummy; safe_read "按 Enter 继续..." dummy
             return 1
         fi
         
         chmod +x hysteria
-        mv hysteria /usr/local/bin/hysteria # 替换旧的二进制文件
+        mv hysteria /usr/local/bin/hysteria
         
-        # 启动服务
         systemctl start hysteria-server
         sleep 3
         
@@ -675,6 +692,7 @@ hy2_update() {
         fi
         cd / && rm -rf "$tmp_dir"
     fi
+    
     local dummy
     safe_read "按 Enter 继续..." dummy
     return 0
