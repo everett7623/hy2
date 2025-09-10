@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.6 (更新版本号以反映修改)
+# 版本: 1.0.7
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -293,15 +293,35 @@ hy2_install_system_deps() {
     
     case "$OS_TYPE" in
         "ubuntu" | "debian")
-            apt-get update -y >/dev/null 2>&1
-            apt-get install -y "${base_packages[@]}" >/dev/null 2>&1
+            info_echo "正在更新 apt 包列表..."
+            if ! apt-get update -qq; then # -qq for quiet update
+                error_echo "apt update 失败。请尝试手动运行 'apt-get update' 并检查错误。"
+                return 1
+            fi
+            info_echo "正在安装基本依赖: ${base_packages[*]}..."
+            if ! apt-get install -y "${base_packages[@]}"; then
+                error_echo "基本依赖安装失败。请检查系统包管理器日志。"
+                return 1
+            fi
             ;;
         "centos" | "rocky" | "almalinux")
-            yum install -y epel-release >/dev/null 2>&1
-            yum install -y "${base_packages[@]}" >/dev/null 2>&1
+            info_echo "正在安装 EPEL 仓库..."
+            if ! yum install -y epel-release; then
+                error_echo "EPEL 仓库安装失败。请检查系统包管理器日志。"
+                return 1
+            fi
+            info_echo "正在安装基本依赖: ${base_packages[*]}..."
+            if ! yum install -y "${base_packages[@]}"; then
+                error_echo "基本依赖安装失败。请检查系统包管理器日志。"
+                return 1
+            fi
             ;;
         "fedora")
-            dnf install -y "${base_packages[@]}" >/dev/null 2>&1
+            info_echo "正在安装基本依赖: ${base_packages[*]}..."
+            if ! dnf install -y "${base_packages[@]}"; then
+                error_echo "基本依赖安装失败。请检查系统包管理器日志。"
+                return 1
+            fi
             ;;
         *)
             error_echo "不支持的操作系统: $OS_TYPE"
@@ -310,7 +330,7 @@ hy2_install_system_deps() {
     esac
     
     if ! command -v openssl >/dev/null 2>&1; then
-        error_echo "OpenSSL 安装失败"
+        error_echo "OpenSSL 安装失败或未找到。"
         return 1
     fi
     
@@ -775,20 +795,54 @@ ss_check_ipv6() {
 
 ss_install_dependencies() {
     info_echo "安装 Shadowsocks 依赖包 (shadowsocks-libev, qrencode)..."
+    
+    local install_log="/tmp/ss_install_deps.log"
+    rm -f "$install_log" # 清理旧日志
+
     case "$OS_TYPE" in
         "ubuntu"|"debian")
-            apt-get update -qq >/dev/null 2>&1 && apt-get install -y shadowsocks-libev qrencode curl >/dev/null 2>&1
+            info_echo "正在更新 apt 包列表 (日志输出到 $install_log)..."
+            if ! apt-get update -qq >"$install_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
+            info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
+            if ! apt-get install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
+                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         "centos" | "rocky" | "almalinux")
-            yum install -y epel-release >/dev/null 2>&1 && yum install -y shadowsocks-libev qrencode curl >/dev/null 2>&1
+            info_echo "正在安装 EPEL 仓库 (日志输出到 $install_log)..."
+            if ! yum install -y epel-release >"$install_log" 2>&1; then
+                error_echo "EPEL 仓库安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
+            info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
+            if ! yum install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
+                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         "fedora")
-            dnf install -y shadowsocks-libev qrencode curl >/dev/null 2>&1
+            info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
+            if ! dnf install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
+                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         *) error_echo "不支持的操作系统: $OS_TYPE"; return 1;;
     esac
+
+    # 再次确认 ss-server 命令是否存在，确保安装成功
     if ! command -v ss-server >/dev/null 2>&1; then
-        error_echo "shadowsocks-libev 安装失败。"
+        error_echo "shadowsocks-libev 未能成功安装或无法找到 ss-server 命令。请检查安装日志 ($install_log)。"
+        cat "$install_log" >&2
         return 1
     fi
     success_echo "依赖包安装完成"
@@ -843,6 +897,7 @@ EOF
     
     if ! systemctl is-active --quiet shadowsocks-libev; then
         error_echo "Shadowsocks 服务启动失败！"
+        info_echo "错误日志："
         journalctl -u shadowsocks-libev -n 10 --no-pager
         return 1
     fi
@@ -861,24 +916,49 @@ EOF
     return 0
 }
 
-ss_display_result() {
+# --- 生成多种 Shadowsocks 客户端配置格式 ---
+generate_ss_configs() {
+    local ss_server_addr_for_uri="[$IPV6_ADDR]"        # IPv6地址用方括号括起来
+    local ss_server_addr_for_config_field="$IPV6_ADDR" # Clash/Surge 'server'字段期望裸IPv6
+
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
-    local tag="${country_code}-IPv6-$(date +%m%d)"
-    local encoded
-    encoded=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
-    local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${SS_PORT}#${tag}" # IPv6地址用方括号括起来
+    local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
+    local encoded_password_method
+    encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
 
+    # Shadowsocks URI (ss://)
+    local ss_link_uri="ss://${encoded_password_method}@${ss_server_addr_for_uri}:${SS_PORT}#${server_name}"
+
+    echo -e "${PURPLE}Shadowsocks配置信息：${ENDCOLOR}"
+    echo
+    
+    echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
+    echo "$ss_link_uri"
+    echo
+    
+    echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
+    # Clash Meta 'server' field expects raw IP (no brackets for IPv6)
+    echo "  - { name: '$server_name', type: ss, server: $ss_server_addr_for_config_field, port: $SS_PORT, password: '$SS_PASSWORD', cipher: $SS_METHOD }"
+    echo
+    
+    echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
+    # Surge 'server' field expects raw IP (no brackets for IPv6)
+    echo "$server_name = ss, $ss_server_addr_for_config_field, $SS_PORT, encrypt-method=$SS_METHOD, password=$SS_PASSWORD"
+    echo
+}
+
+# --- 显示 Shadowsocks 安装结果 ---
+ss_display_result() {
     clear
     echo -e "${BG_PURPLE} Shadowsocks (IPv6) 安装完成！ ${ENDCOLOR}"
     echo
-    echo -e " ${PURPLE}--- Shadowsocks 配置信息 ---${ENDCOLOR}"
+    echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
     echo -e "   服务器地址: ${GREEN}[$IPV6_ADDR]${ENDCOLOR}"
     echo -e "   端口:       ${GREEN}$SS_PORT${ENDCOLOR}"
     echo -e "   密码:       ${GREEN}$SS_PASSWORD${ENDCOLOR}"
     echo -e "   加密方式:   ${GREEN}$SS_METHOD${ENDCOLOR}"
-    echo -e "   SS 链接:    ${CYAN}$ss_link${ENDCOLOR}"
-    echo -e " ${PURPLE}----------------------------${ENDCOLOR}"
+    echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
     
     # 检查 Shadowsocks 监听状态
@@ -897,14 +977,24 @@ ss_display_result() {
         echo -e "$listening_status"
     else
         error_echo "Shadowsocks 未检测到在端口 $SS_PORT on :: (IPv6) 监听。请检查配置和防火墙。"
-        error_echo "可能的日志信息："
+        info_echo "可能的日志信息："
         journalctl -u shadowsocks-libev -n 5 --no-pager
     fi
     echo
 
+    # 调用新的函数生成并显示多种客户端配置
+    generate_ss_configs
+
     if command -v qrencode >/dev/null 2>&1; then
+        local country_code
+        country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
+        local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
+        local encoded_password_method
+        encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
+        local ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
+        
         info_echo "二维码 (请最大化终端窗口显示):"
-        qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
+        qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
     else
         warning_echo "qrencode 未安装，无法显示二维码"
     fi
@@ -929,6 +1019,8 @@ ss_run_install() {
     ss_setup_service && \
     ss_display_result || {
         error_echo "Shadowsocks 安装失败。"
+        local dummy
+        safe_read "按 Enter 返回主菜单..." dummy
         return 1
     }
 }
@@ -956,40 +1048,46 @@ ss_update() {
     systemctl is-active --quiet shadowsocks-libev && ss_is_active=true
 
     info_echo "正在通过系统包管理器更新 shadowsocks-libev..."
+    local update_log="/tmp/ss_update_deps.log"
+    rm -f "$update_log"
+
     case "$OS_TYPE" in
         "ubuntu" | "debian")
-            apt-get update -qq >/dev/null 2>&1
-            apt-get install -y --only-upgrade shadowsocks-libev >/dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
-            else
-                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
-                local dummy
-                safe_read "按 Enter 继续..." dummy
+            info_echo "正在更新 apt 包列表 (日志输出到 $update_log)..."
+            if ! apt-get update -qq >"$update_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                local dummy; safe_read "按 Enter 继续..." dummy
                 return 1
             fi
+            info_echo "正在更新 shadowsocks-libev (日志输出到 $update_log)..."
+            if ! apt-get install -y --only-upgrade shadowsocks-libev >"$update_log" 2>&1; then
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                local dummy; safe_read "按 Enter 继续..." dummy
+                return 1
+            fi
+            success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
             ;;
         "centos" | "rocky" | "almalinux")
-            yum update -y shadowsocks-libev >/dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
-            else
-                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
-                local dummy
-                safe_read "按 Enter 继续..." dummy
+            info_echo "正在更新 shadowsocks-libev (日志输出到 $update_log)..."
+            if ! yum update -y shadowsocks-libev >"$update_log" 2>&1; then
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                local dummy; safe_read "按 Enter 继续..." dummy
                 return 1
             fi
+            success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
             ;;
         "fedora")
-            dnf update -y shadowsocks-libev >/dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
-            else
-                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
-                local dummy
-                safe_read "按 Enter 继续..." dummy
+            info_echo "正在更新 shadowsocks-libev (日志输出到 $update_log)..."
+            if ! dnf update -y shadowsocks-libev >"$update_log" 2>&1; then
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                local dummy; safe_read "按 Enter 继续..." dummy
                 return 1
             fi
+            success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
             ;;
         *)
             error_echo "不支持的操作系统: $OS_TYPE，无法自动更新 Shadowsocks 包。"
@@ -1035,7 +1133,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.6) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.7) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1157,8 +1255,8 @@ show_hysteria2_config() {
     fi
     echo -e "服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
-    echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
-    echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
+    echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
+    echo -e "SNI 域名:   ${GREEN}$HY_DOMAIN${ENDCOLOR}"
     echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"
     echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
     echo -e "${PURPLE}========================${ENDCOLOR}"
@@ -1214,20 +1312,28 @@ show_shadowsocks_config() {
         echo -e "$listening_status"
     else
         error_echo "Shadowsocks 未检测到在端口 $server_port on :: (IPv6) 监听。请检查配置和防火墙。"
-        error_echo "可能的日志信息："
+        info_echo "可能的日志信息："
         journalctl -u shadowsocks-libev -n 5 --no-pager
     fi
     echo
 
+    # Update global variables for generate_ss_configs to ensure they are current
+    SS_PASSWORD="$password"
+    SS_PORT="$server_port"
+    SS_METHOD="$method"
+
+    generate_ss_configs
+
     if command -v qrencode >/dev/null 2>&1; then
-        echo -e "${CYAN}📱 二维码 (请最大化终端窗口显示):${ENDCOLOR}"
         local country_code
         country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
-        local tag="${country_code}-IPv6-$(date +%m%d)"
-        local encoded
-        encoded=$(echo -n "$method:$password" | base64 -w 0)
-        local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${server_port}#${tag}"
-        qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
+        local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
+        local encoded_password_method
+        encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
+        local ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
+        
+        info_echo "二维码 (请最大化终端窗口显示):"
+        qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
     else
         warning_echo "qrencode 未安装，无法显示二维码"
     fi
