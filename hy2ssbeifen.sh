@@ -598,21 +598,23 @@ hy2_uninstall() {
 hy2_update() {
     info_echo "检查 Hysteria2 应用程序更新..."
     if [[ ! -f /usr/local/bin/hysteria ]]; then
-        error_echo "Hysteria2 未安装，无法更新。"
+        error_echo "Hysteria2 未安装，无法更新。请先进行安装。"
         local dummy
         safe_read "按 Enter 继续..." dummy
         return 1
     fi
 
+    local current_version_full
     local current_version
-    current_version=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1 | awk '{print $NF}')
-    if [[ -z "$current_version" ]]; then
-        warning_echo "无法获取当前 Hysteria2 版本，尝试重新安装最新版本。"
-        # Call hy2_install to re-download and set up. This will prompt for config.
-        hy2_install || { error_echo "Hysteria2 更新失败。"; return 1; }
-        return 0
+    # 尝试更健壮地获取当前版本号 (例如：从 "Hysteria2 v2.6.2 (built from ...)" 中提取 "v2.6.2")
+    current_version_full=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1)
+    current_version=$(echo "$current_version_full" | grep -oE '(app/)?v[0-9]+\.[0-9]+\.[0-9]+')
+    
+    if [[ -n "$current_version" ]]; then
+        info_echo "当前 Hysteria2 版本: $current_version"
+    else
+        warning_echo "无法获取当前 Hysteria2 版本信息。"
     fi
-    info_echo "当前 Hysteria2 版本: $current_version"
 
     local latest_version
     latest_version=$(timeout 10 curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name"' | cut -d '"' -f 4)
@@ -625,16 +627,37 @@ hy2_update() {
     fi
     info_echo "Hysteria2 最新版本: $latest_version"
 
-    if [[ "$latest_version" == "$current_version" ]]; then
+    local perform_update=false
+
+    if [[ -z "$current_version" ]]; then
+        # 如果无法获取当前版本，询问用户是否强制更新
+        warning_echo "由于无法检测当前版本，将尝试下载并替换最新版本，但不会修改现有配置。"
+        local confirm_update
+        safe_read "是否仍要下载并替换最新版本 ($latest_version)？ (y/N): " confirm_update
+        if [[ "$confirm_update" =~ ^[yY]$ ]]; then
+            perform_update=true
+        else
+            info_echo "操作已取消。"
+            local dummy; safe_read "按 Enter 继续..." dummy
+            return 0
+        fi
+    elif [[ "$latest_version" == "$current_version" ]]; then
         info_echo "Hysteria2 已经是最新版本，无需更新。"
-    else
+        local dummy; safe_read "按 Enter 继续..." dummy
+        return 0
+    else # 当前版本已知且低于最新版本
         info_echo "发现新版本 ($latest_version)，正在更新 Hysteria2..."
+        perform_update=true
+    fi
+
+    if $perform_update; then
+        info_echo "正在更新 Hysteria2..."
         
         systemctl stop hysteria-server >/dev/null 2>&1 || true
         
         local tmp_dir="/tmp/hysteria2_update"
         rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
-        cd "$tmp_dir" || return 1
+        cd "$tmp_dir" || { error_echo "无法进入临时目录进行更新。"; return 1; }
         
         local download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${ARCH}"
         
@@ -643,8 +666,7 @@ hy2_update() {
             error_echo "下载失败"
             cd / && rm -rf "$tmp_dir"
             systemctl start hysteria-server >/dev/null 2>&1 || true
-            local dummy
-            safe_read "按 Enter 继续..." dummy
+            local dummy; safe_read "按 Enter 继续..." dummy
             return 1
         fi
         
@@ -652,8 +674,7 @@ hy2_update() {
             error_echo "下载的文件无效"
             cd / && rm -rf "$tmp_dir"
             systemctl start hysteria-server >/dev/null 2>&1 || true
-            local dummy
-            safe_read "按 Enter 继续..." dummy
+            local dummy; safe_read "按 Enter 继续..." dummy
             return 1
         fi
         
@@ -664,13 +685,14 @@ hy2_update() {
         sleep 3
         
         if systemctl is-active --quiet hysteria-server; then
-            success_echo "Hysteria2 更新并启动成功！新版本: $(/usr/local/bin/hysteria version | head -n 1)"
+            success_echo "Hysteria2 更新并启动成功！新版本: $(/usr/local/bin/hysteria version 2>/dev/null | head -n 1)"
         else
             error_echo "Hysteria2 更新成功但服务启动失败。请检查日志。"
             journalctl -u hysteria-server -n 10 --no-pager
         fi
         cd / && rm -rf "$tmp_dir"
     fi
+    
     local dummy
     safe_read "按 Enter 继续..." dummy
     return 0
@@ -968,6 +990,8 @@ show_menu() {
 
     echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.5) ${ENDCOLOR}"
     echo "项目地址：https://github.com/everett7623/hy2ipv6"
+    echo "博客地址：https://seedloc.com"
+    echo "论坛地址：https://nodeloc.com"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
