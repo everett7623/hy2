@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.9
+# 版本: 1.0.10
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -232,7 +232,7 @@ enforce_swap_if_low_memory() {
                 dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
                 chmod 600 "$swap_file"
                 mkswap "$swap_file" >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f "$swap_file"; return 1; }
-                swapon "$swap_file" || { error_echo "swapon 失败"; rm -f "$swap_file"; return 1; }
+                swapon "$swap_file" || { error_echo "swapon失败"; rm -f "$swap_file"; return 1; }
                 
                 if ! grep -q "$swap_file" /etc/fstab; then
                     echo "$swap_file none swap sw 0 0" >> /etc/fstab
@@ -755,7 +755,7 @@ hy2_update() {
         else
             error_echo "Hysteria2 更新成功但服务启动失败。请检查日志。"
             journalctl -u hysteria-server -n 10 --no-pager
-        FId.
+        fi # <--- 修正了这里的 'FId.' 为 'fi'
         cd / && rm -rf "$tmp_dir"
     fi
     
@@ -1139,7 +1139,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.9) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.10) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1276,6 +1276,7 @@ show_hysteria2_config() {
     
     local dummy
     safe_read "按 Enter 继续..." dummy
+    return 0
 }
 
 show_shadowsocks_config() {
