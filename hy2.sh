@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.10
+# 版本: 1.0.11
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -199,7 +199,7 @@ check_and_create_swap() {
                 dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
                 chmod 600 "$swap_file"
                 mkswap "$swap_file" >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f "$swap_file"; return 1; }
-                swapon "$swap_file" || { error_echo "swapon 失败"; rm -f "$swap_file"; return 1; }
+                swapon "$swap_file" || { error_echo "swapon失败"; rm -f "$swap_file"; return 1; }
                 
                 if ! grep -q "$swap_file" /etc/fstab; then
                     echo "$swap_file none swap sw 0 0" >> /etc/fstab
@@ -290,36 +290,48 @@ hy2_install_system_deps() {
     info_echo "安装系统依赖包..."
     
     local base_packages=("curl" "wget" "openssl" "ca-certificates" "tar" "unzip")
-    
+    local install_log="/tmp/hy2_install_deps.log" # Hysteria2依赖安装日志
+
     case "$OS_TYPE" in
         "ubuntu" | "debian")
-            info_echo "正在更新 apt 包列表..."
-            if ! apt-get update -qq; then # -qq for quiet update
-                error_echo "apt update 失败。请尝试手动运行 'apt-get update' 并检查错误。"
-                return 1
+            info_echo "正在更新 apt 包列表 (日志输出到 $install_log)..."
+            if ! apt-get update -qq >"$install_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                # 尝试修复 Debian/Ubuntu 的源问题
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$install_log" 2>&1; then # 换源后再次尝试更新
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $install_log"
+                    cat "$install_log" >&2
+                    return 1
+                fi
             fi
-            info_echo "正在安装基本依赖: ${base_packages[*]}..."
-            if ! apt-get install -y "${base_packages[@]}"; then
-                error_echo "基本依赖安装失败。请检查系统包管理器日志。"
+            info_echo "正在安装基本依赖: ${base_packages[*]} (日志输出到 $install_log)..."
+            if ! apt-get install -y "${base_packages[@]}" >"$install_log" 2>&1; then
+                error_echo "基本依赖安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
                 return 1
             fi
             ;;
         "centos" | "rocky" | "almalinux")
-            info_echo "正在安装 EPEL 仓库..."
-            if ! yum install -y epel-release; then
-                error_echo "EPEL 仓库安装失败。请检查系统包管理器日志。"
+            info_echo "正在安装 EPEL 仓库 (日志输出到 $install_log)..."
+            if ! yum install -y epel-release >"$install_log" 2>&1; then
+                error_echo "EPEL 仓库安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
                 return 1
             fi
-            info_echo "正在安装基本依赖: ${base_packages[*]}..."
-            if ! yum install -y "${base_packages[@]}"; then
-                error_echo "基本依赖安装失败。请检查系统包管理器日志。"
+            info_echo "正在安装基本依赖: ${base_packages[*]} (日志输出到 $install_log)..."
+            if ! yum install -y "${base_packages[@]}" >"$install_log" 2>&1; then
+                error_echo "基本依赖安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
                 return 1
             fi
             ;;
         "fedora")
-            info_echo "正在安装基本依赖: ${base_packages[*]}..."
-            if ! dnf install -y "${base_packages[@]}"; then
-                error_echo "基本依赖安装失败。请检查系统包管理器日志。"
+            info_echo "正在安装基本依赖: ${base_packages[*]} (日志输出到 $install_log)..."
+            if ! dnf install -y "${base_packages[@]}" >"$install_log" 2>&1; then
+                error_echo "基本依赖安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
                 return 1
             fi
             ;;
@@ -755,7 +767,7 @@ hy2_update() {
         else
             error_echo "Hysteria2 更新成功但服务启动失败。请检查日志。"
             journalctl -u hysteria-server -n 10 --no-pager
-        fi # <--- 修正了这里的 'FId.' 为 'fi'
+        fi
         cd / && rm -rf "$tmp_dir"
     fi
     
@@ -768,6 +780,52 @@ hy2_update() {
 ################################################################################
 # Shadowsocks (IPv6-Only) 功能模块
 ################################################################################
+
+# --- 尝试修复 Debian/Ubuntu 的 APT 源 ---
+change_debian_apt_sources() {
+    if [[ "$OS_TYPE" == "ubuntu" || "$OS_TYPE" == "debian" ]]; then
+        warning_echo "检测到 APT 源更新失败，尝试更换为阿里云镜像源..."
+        local sources_list="/etc/apt/sources.list"
+        local sources_list_backup="${sources_list}.bak.$(date +%Y%m%d%H%M%S)"
+
+        if [[ -f "$sources_list" ]]; then
+            cp "$sources_list" "$sources_list_backup"
+            info_echo "已备份原有 sources.list 到 $sources_list_backup"
+        fi
+
+        local codename=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
+        if [[ -z "$codename" ]]; then
+            warning_echo "无法获取系统代号，无法自动更换 APT 源。"
+            return 1
+        fi
+
+        # 根据系统代号生成新的阿里云源配置
+        cat > "$sources_list" <<EOF
+deb https://mirrors.aliyun.com/debian/ $codename main contrib non-free
+deb-src https://mirrors.aliyun.com/debian/ $codename main contrib non-free
+
+deb https://mirrors.aliyun.com/debian/ $codename-updates main contrib non-free
+deb-src https://mirrors.aliyun.com/debian/ $codename-updates main contrib non-free
+
+deb https://mirrors.aliyun.com/debian/ $codename-backports main contrib non-free
+deb-src https://mirrors.aliyun.com/debian/ $codename-backports main contrib non-free
+
+deb https://mirrors.aliyun.com/debian-security/ $codename-security main contrib non-free
+deb-src https://mirrors.aliyun.com/debian-security/ $codename-security main contrib non-free
+EOF
+        
+        info_echo "APT 源已更换为阿里云镜像源。现在尝试再次更新 apt 包列表..."
+        if apt-get update -qq; then
+            success_echo "APT 源更新成功。"
+            return 0
+        else
+            error_echo "更换阿里云源后 apt update 仍然失败。请手动检查并修复 /etc/apt/sources.list 文件。"
+            return 1
+        fi
+    fi
+    return 0 # 非 Debian/Ubuntu 系统直接返回
+}
+
 ss_check_ipv6() {
     info_echo "检测 IPv6 网络环境以安装 Shadowsocks..."
     if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then
@@ -807,7 +865,13 @@ ss_install_dependencies() {
             if ! apt-get update -qq >"$install_log" 2>&1; then
                 error_echo "apt update 失败。请检查日志: $install_log"
                 cat "$install_log" >&2
-                return 1
+                # 尝试修复 Debian/Ubuntu 的源问题
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$install_log" 2>&1; then # 换源后再次尝试更新
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $install_log"
+                    cat "$install_log" >&2
+                    return 1
+                fi
             fi
             info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
             if ! apt-get install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
@@ -1063,8 +1127,13 @@ ss_update() {
             if ! apt-get update -qq >"$update_log" 2>&1; then
                 error_echo "apt update 失败。请检查日志: $update_log"
                 cat "$update_log" >&2
-                local dummy; safe_read "按 Enter 继续..." dummy
-                return 1
+                # 尝试修复 Debian/Ubuntu 的源问题
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$update_log" 2>&1; then # 换源后再次尝试更新
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $update_log"
+                    cat "$update_log" >&2
+                    return 1
+                fi
             fi
             info_echo "正在更新 shadowsocks-libev (日志输出到 $update_log)..."
             if ! apt-get install -y --only-upgrade shadowsocks-libev >"$update_log" 2>&1; then
@@ -1139,7 +1208,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.10) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.11) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1414,10 +1483,25 @@ update_system_kernel() {
     case "$OS_TYPE" in
         "ubuntu" | "debian")
             info_echo "正在更新 Debian/Ubuntu 内核和系统..."
-            apt-get update -y >/dev/null 2>&1
-            apt-get upgrade -y >/dev/null 2>&1
+            # 使用与 ss_install_dependencies 类似的日志记录和换源逻辑
+            local kernel_update_log="/tmp/kernel_update.log"
+            if ! apt-get update -qq >"$kernel_update_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$kernel_update_log" 2>&1; then
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $kernel_update_log"
+                    cat "$kernel_update_log" >&2
+                    return 1
+                fi
+            fi
+            if ! apt-get upgrade -y >"$kernel_update_log" 2>&1; then
+                error_echo "apt upgrade 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                return 1
+            fi
+            
             # 检查是否有新的内核版本可用或已安装
-            # More robust check for new kernel version
             if apt-get list --upgradable | grep -q "linux-image"; then
                 reboot_required=true
             fi
@@ -1425,7 +1509,12 @@ update_system_kernel() {
             ;;
         "centos" | "rocky" | "almalinux")
             info_echo "正在更新 CentOS/Rocky/AlmaLinux 内核和系统..."
-            yum update -y >/dev/null 2>&1
+            local kernel_update_log="/tmp/kernel_update.log"
+            if ! yum update -y >"$kernel_update_log" 2>&1; then
+                error_echo "yum update 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                return 1
+            fi
             # 检查是否有新的内核版本可用或已安装
             if rpm -q kernel | grep -qv "$(uname -r)"; then
                  reboot_required=true
@@ -1434,7 +1523,12 @@ update_system_kernel() {
             ;;
         "fedora")
             info_echo "正在更新 Fedora 内核和系统..."
-            dnf update -y >/dev/null 2>&1
+            local kernel_update_log="/tmp/kernel_update.log"
+            if ! dnf update -y >"$kernel_update_log" 2>&1; then
+                error_echo "dnf update 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                return 1
+            fi
             # 检查是否有新的内核版本可用或已安装
             if rpm -q kernel | grep -qv "$(uname -r)"; then
                 reboot_required=true
