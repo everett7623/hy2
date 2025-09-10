@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.8
+# 版本: 1.0.9
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -34,7 +34,7 @@ HY_SERVER_IP_CHOICE="" # "ipv4" or "ipv6" for Hysteria2 client config
 # Shadowsocks 变量
 SS_PORT=""
 SS_PASSWORD=""
-SS_METHOD="chacha20-ietf-poly1305"
+SS_METHOD="chacha20-ietf-poly1305" # 默认加密方式
 
 ################################################################################
 # 辅助函数 & 系统检测
@@ -464,10 +464,12 @@ EOF
     # 配置防火墙
     if command -v ufw >/dev/null 2>&1; then
         ufw allow 443/udp >/dev/null 2>&1
+        success_echo "ufw 防火墙已尝试放行 Hysteria2 端口 (443/udp)。"
     fi
     if command -v firewall-cmd >/dev/null 2>&1; then
         firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
+        success_echo "firewalld 防火墙已尝试放行 Hysteria2 端口 (443/udp)。"
     fi
     
     # 启动服务
@@ -753,7 +755,7 @@ hy2_update() {
         else
             error_echo "Hysteria2 更新成功但服务启动失败。请检查日志。"
             journalctl -u hysteria-server -n 10 --no-pager
-        fi
+        FId.
         cd / && rm -rf "$tmp_dir"
     fi
     
@@ -920,6 +922,7 @@ EOF
 
 # --- 生成多种 Shadowsocks 客户端配置格式 ---
 generate_ss_configs() {
+    # 确保此处使用全局变量 SS_PORT, SS_PASSWORD, SS_METHOD
     local ss_server_addr_for_uri="[$IPV6_ADDR]"        # IPv6地址用方括号括起来
     local ss_server_addr_for_config_field="$IPV6_ADDR" # Clash/Surge 'server'字段期望裸IPv6
 
@@ -932,7 +935,7 @@ generate_ss_configs() {
     # Shadowsocks URI (ss://)
     local ss_link_uri="ss://${encoded_password_method}@${ss_server_addr_for_uri}:${SS_PORT}#${server_name}"
 
-    echo -e "${PURPLE}Shadowsocks配置信息：${ENDCOLOR}"
+    echo -e "${PURPLE}Shadowsocks客户端配置：${ENDCOLOR}" # 更改标题以区分
     echo
     
     echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
@@ -941,12 +944,12 @@ generate_ss_configs() {
     
     echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
     # Clash Meta 'server' field expects raw IP (no brackets for IPv6)
-    echo "  - { name: '$server_name', type: ss, server: $ss_server_addr_for_config_field, port: $SS_PORT, password: '$SS_PASSWORD', cipher: $SS_METHOD }"
+    echo "  - { name: '$server_name', type: ss, server: '$ss_server_addr_for_config_field', port: $SS_PORT, password: '$SS_PASSWORD', cipher: '$SS_METHOD', udp: true }"
     echo
     
     echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
     # Surge 'server' field expects raw IP (no brackets for IPv6)
-    echo "$server_name = ss, $ss_server_addr_for_config_field, $SS_PORT, encrypt-method=$SS_METHOD, password=$SS_PASSWORD"
+    echo "$server_name = ss, $ss_server_addr_for_config_field, $SS_PORT, encrypt-method=$SS_METHOD, password=$SS_PASSWORD, udp-relay=true"
     echo
 }
 
@@ -984,14 +987,11 @@ ss_display_result() {
     fi
     echo
 
-    # Update global variables for generate_ss_configs to ensure they are current
-    SS_PASSWORD="$password"
-    SS_PORT="$server_port"
-    SS_METHOD="$method"
-
+    # 直接调用 generate_ss_configs，它将使用 ss_generate_config 设置的全局变量
     generate_ss_configs
 
     if command -v qrencode >/dev/null 2>&1; then
+        # 重新生成用于二维码的链接，确保与 generate_ss_configs 中的链接一致
         local country_code
         country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
         local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
@@ -1139,7 +1139,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.8) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.9) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1287,7 +1287,7 @@ show_shadowsocks_config() {
         return
     fi
 
-    local server_port password method
+    local server_port password method # Declared local variables here
     server_port=$(grep "server_port" /etc/shadowsocks-libev/config.json | grep -o "[0-9]*")
     password=$(grep "password" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
     method=$(grep "method" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
@@ -1323,7 +1323,7 @@ show_shadowsocks_config() {
     fi
     echo
 
-    # Update global variables for generate_ss_configs to ensure they are current
+    # 更新全局变量，确保 generate_ss_configs 使用的是从文件读取的最新值
     SS_PASSWORD="$password"
     SS_PORT="$server_port"
     SS_METHOD="$method"
