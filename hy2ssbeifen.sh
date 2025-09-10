@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.6
+# 版本: 1.0.11
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -34,7 +34,7 @@ HY_SERVER_IP_CHOICE="" # "ipv4" or "ipv6" for Hysteria2 client config
 # Shadowsocks 变量
 SS_PORT=""
 SS_PASSWORD=""
-SS_METHOD="chacha20-ietf-poly1305"
+SS_METHOD="chacha20-ietf-poly1305" # 默认加密方式
 
 ################################################################################
 # 辅助函数 & 系统检测
@@ -177,7 +177,7 @@ detect_network() {
     exec </dev/tty 2>/dev/null || true
 }
 
-# --- 检查并创建 Swap ---
+# --- 检查并建议创建 Swap (仅提示，不强制中断) ---
 check_and_create_swap() {
     local total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
     local total_ram_mb=$((total_ram_kb / 1024))
@@ -185,31 +185,72 @@ check_and_create_swap() {
     local swap_size_mb=1024 # 1GB swap
 
     if (( total_ram_mb < 512 )); then
-        warning_echo "检测到系统内存 ($total_ram_mb MB) 较低，建议创建 Swap 文件以避免安装时内存不足。"
-        if [ -f "$swap_file" ] && grep -q "$swap_file" /etc/fstab; then
-            info_echo "已检测到现有 Swap 文件 ($swap_file) 且已配置永久启用，无需操作。"
-            return 0
-        fi
-
-        local confirm
-        safe_read "是否创建 ${swap_size_mb}MB 的 Swap 文件? (y/N): " confirm
-        if [[ "$confirm" =~ ^[yY]$ ]]; then
-            info_echo "正在创建 ${swap_size_mb}MB Swap 文件..."
-            dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
-            chmod 600 $swap_file
-            mkswap $swap_file >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f $swap_file; return 1; }
-            swapon $swap_file || { error_echo "swapon 失败"; rm -f $swap_file; return 1; }
-            
-            # Make swap permanent
-            if ! grep -q "$swap_file" /etc/fstab; then
-                echo "$swap_file none swap sw 0 0" >> /etc/fstab
+        local current_swap_mb=$(free -m | grep Swap | awk '{print $2}')
+        if (( current_swap_mb == 0 )); then
+            warning_echo "检测到系统内存 ($total_ram_mb MB) 较低且无 Swap 空间。在执行安装操作前，建议创建 Swap 文件以避免内存不足。"
+            if [ -f "$swap_file" ] && grep -q "$swap_file" /etc/fstab; then
+                info_echo "已检测到现有 Swap 文件 ($swap_file) 且已配置永久启用，无需操作。"
+                return 0
             fi
-            success_echo "Swap 文件创建并启用成功。"
-        else
-            info_echo "用户选择不创建 Swap 文件，请注意内存使用情况。"
+            local confirm
+            safe_read "是否创建 ${swap_size_mb}MB 的 Swap 文件? (y/N): " confirm
+            if [[ "$confirm" =~ ^[yY]$ ]]; then
+                info_echo "正在创建 ${swap_size_mb}MB Swap 文件..."
+                dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
+                chmod 600 "$swap_file"
+                mkswap "$swap_file" >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f "$swap_file"; return 1; }
+                swapon "$swap_file" || { error_echo "swapon失败"; rm -f "$swap_file"; return 1; }
+                
+                if ! grep -q "$swap_file" /etc/fstab; then
+                    echo "$swap_file none swap sw 0 0" >> /etc/fstab
+                fi
+                success_echo "Swap 文件创建并启用成功。"
+            else
+                info_echo "用户选择不创建 Swap 文件。请注意在后续安装时可能需要手动创建。"
+            fi
         fi
     fi
     return 0
+}
+
+# --- 强制检查并创建 Swap (在服务安装前调用，低内存时强制) ---
+enforce_swap_if_low_memory() {
+    local total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local total_ram_mb=$((total_ram_kb / 1024))
+    local swap_file="/swapfile"
+    local swap_size_mb=1024 # 1GB swap
+
+    if (( total_ram_mb < 512 )); then
+        local current_swap_mb=$(free -m | grep Swap | awk '{print $2}')
+        if (( current_swap_mb == 0 )); then
+            error_echo "检测到系统内存 ($total_ram_mb MB) 极低且无 Swap 空间。"
+            warning_echo "强烈建议创建 ${swap_size_mb}MB 的 Swap 文件以确保安装成功和系统稳定性。否则安装可能会失败甚至导致服务闪退。"
+            local confirm
+            safe_read "是否立即创建 Swap 文件? (y/N): " confirm
+            if [[ "$confirm" =~ ^[yY]$ ]]; then
+                info_echo "正在创建 ${swap_size_mb}MB Swap 文件..."
+                dd if=/dev/zero of=$swap_file bs=1M count=$swap_size_mb >/dev/null 2>&1 || { error_echo "Swap 文件创建失败"; return 1; }
+                chmod 600 "$swap_file"
+                mkswap "$swap_file" >/dev/null 2>&1 || { error_echo "mkswap 失败"; rm -f "$swap_file"; return 1; }
+                swapon "$swap_file" || { error_echo "swapon失败"; rm -f "$swap_file"; return 1; }
+                
+                if ! grep -q "$swap_file" /etc/fstab; then
+                    echo "$swap_file none swap sw 0 0" >> /etc/fstab
+                fi
+                success_echo "Swap 文件创建并启用成功。"
+                return 0 # Swap created successfully
+            else
+                error_echo "用户拒绝创建 Swap 文件。安装已取消，建议在充足内存或有 Swap 的环境下重试。"
+                local dummy
+                safe_read "按 Enter 返回主菜单..." dummy
+                return 1 # 用户拒绝，阻止安装继续
+            fi
+        else
+            info_echo "检测到系统内存 ($total_ram_mb MB) 较低，但已存在 ${current_swap_mb}MB Swap 空间，可以继续安装。"
+            return 0 # Swap 存在，继续
+        fi
+    fi
+    return 0 # 内存充足，无需 Swap
 }
 
 
@@ -249,18 +290,50 @@ hy2_install_system_deps() {
     info_echo "安装系统依赖包..."
     
     local base_packages=("curl" "wget" "openssl" "ca-certificates" "tar" "unzip")
-    
+    local install_log="/tmp/hy2_install_deps.log" # Hysteria2依赖安装日志
+
     case "$OS_TYPE" in
         "ubuntu" | "debian")
-            apt-get update -y >/dev/null 2>&1
-            apt-get install -y "${base_packages[@]}" >/dev/null 2>&1
+            info_echo "正在更新 apt 包列表 (日志输出到 $install_log)..."
+            if ! apt-get update -qq >"$install_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                # 尝试修复 Debian/Ubuntu 的源问题
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$install_log" 2>&1; then # 换源后再次尝试更新
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $install_log"
+                    cat "$install_log" >&2
+                    return 1
+                fi
+            fi
+            info_echo "正在安装基本依赖: ${base_packages[*]} (日志输出到 $install_log)..."
+            if ! apt-get install -y "${base_packages[@]}" >"$install_log" 2>&1; then
+                error_echo "基本依赖安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         "centos" | "rocky" | "almalinux")
-            yum install -y epel-release >/dev/null 2>&1
-            yum install -y "${base_packages[@]}" >/dev/null 2>&1
+            info_echo "正在安装 EPEL 仓库 (日志输出到 $install_log)..."
+            if ! yum install -y epel-release >"$install_log" 2>&1; then
+                error_echo "EPEL 仓库安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
+            info_echo "正在安装基本依赖: ${base_packages[*]} (日志输出到 $install_log)..."
+            if ! yum install -y "${base_packages[@]}" >"$install_log" 2>&1; then
+                error_echo "基本依赖安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         "fedora")
-            dnf install -y "${base_packages[@]}" >/dev/null 2>&1
+            info_echo "正在安装基本依赖: ${base_packages[*]} (日志输出到 $install_log)..."
+            if ! dnf install -y "${base_packages[@]}" >"$install_log" 2>&1; then
+                error_echo "基本依赖安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         *)
             error_echo "不支持的操作系统: $OS_TYPE"
@@ -269,7 +342,7 @@ hy2_install_system_deps() {
     esac
     
     if ! command -v openssl >/dev/null 2>&1; then
-        error_echo "OpenSSL 安装失败"
+        error_echo "OpenSSL 安装失败或未找到。"
         return 1
     fi
     
@@ -403,10 +476,12 @@ EOF
     # 配置防火墙
     if command -v ufw >/dev/null 2>&1; then
         ufw allow 443/udp >/dev/null 2>&1
+        success_echo "ufw 防火墙已尝试放行 Hysteria2 端口 (443/udp)。"
     fi
     if command -v firewall-cmd >/dev/null 2>&1; then
         firewall-cmd --permanent --add-port=443/udp >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
+        success_echo "firewalld 防火墙已尝试放行 Hysteria2 端口 (443/udp)。"
     fi
     
     # 启动服务
@@ -572,6 +647,9 @@ hy2_show_result() {
 hy2_install() {
     pre_install_check "hysteria" || return 1
     
+    # 在安装 Hysteria2 之前，强制检查并确保有足够的 Swap (如果内存低)
+    enforce_swap_if_low_memory || return 1 
+    
     hy2_get_input || return 1
     hy2_install_system_deps || return 1
     hy2_download_and_install || return 1
@@ -702,6 +780,52 @@ hy2_update() {
 ################################################################################
 # Shadowsocks (IPv6-Only) 功能模块
 ################################################################################
+
+# --- 尝试修复 Debian/Ubuntu 的 APT 源 ---
+change_debian_apt_sources() {
+    if [[ "$OS_TYPE" == "ubuntu" || "$OS_TYPE" == "debian" ]]; then
+        warning_echo "检测到 APT 源更新失败，尝试更换为阿里云镜像源..."
+        local sources_list="/etc/apt/sources.list"
+        local sources_list_backup="${sources_list}.bak.$(date +%Y%m%d%H%M%S)"
+
+        if [[ -f "$sources_list" ]]; then
+            cp "$sources_list" "$sources_list_backup"
+            info_echo "已备份原有 sources.list 到 $sources_list_backup"
+        fi
+
+        local codename=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
+        if [[ -z "$codename" ]]; then
+            warning_echo "无法获取系统代号，无法自动更换 APT 源。"
+            return 1
+        fi
+
+        # 根据系统代号生成新的阿里云源配置
+        cat > "$sources_list" <<EOF
+deb https://mirrors.aliyun.com/debian/ $codename main contrib non-free
+deb-src https://mirrors.aliyun.com/debian/ $codename main contrib non-free
+
+deb https://mirrors.aliyun.com/debian/ $codename-updates main contrib non-free
+deb-src https://mirrors.aliyun.com/debian/ $codename-updates main contrib non-free
+
+deb https://mirrors.aliyun.com/debian/ $codename-backports main contrib non-free
+deb-src https://mirrors.aliyun.com/debian/ $codename-backports main contrib non-free
+
+deb https://mirrors.aliyun.com/debian-security/ $codename-security main contrib non-free
+deb-src https://mirrors.aliyun.com/debian-security/ $codename-security main contrib non-free
+EOF
+        
+        info_echo "APT 源已更换为阿里云镜像源。现在尝试再次更新 apt 包列表..."
+        if apt-get update -qq; then
+            success_echo "APT 源更新成功。"
+            return 0
+        else
+            error_echo "更换阿里云源后 apt update 仍然失败。请手动检查并修复 /etc/apt/sources.list 文件。"
+            return 1
+        fi
+    fi
+    return 0 # 非 Debian/Ubuntu 系统直接返回
+}
+
 ss_check_ipv6() {
     info_echo "检测 IPv6 网络环境以安装 Shadowsocks..."
     if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then
@@ -731,20 +855,60 @@ ss_check_ipv6() {
 
 ss_install_dependencies() {
     info_echo "安装 Shadowsocks 依赖包 (shadowsocks-libev, qrencode)..."
+    
+    local install_log="/tmp/ss_install_deps.log"
+    rm -f "$install_log" # 清理旧日志
+
     case "$OS_TYPE" in
         "ubuntu"|"debian")
-            apt-get update -qq >/dev/null 2>&1 && apt-get install -y shadowsocks-libev qrencode curl >/dev/null 2>&1
+            info_echo "正在更新 apt 包列表 (日志输出到 $install_log)..."
+            if ! apt-get update -qq >"$install_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                # 尝试修复 Debian/Ubuntu 的源问题
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$install_log" 2>&1; then # 换源后再次尝试更新
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $install_log"
+                    cat "$install_log" >&2
+                    return 1
+                fi
+            fi
+            info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
+            if ! apt-get install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
+                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         "centos" | "rocky" | "almalinux")
-            yum install -y epel-release >/dev/null 2>&1 && yum install -y shadowsocks-libev qrencode curl >/dev/null 2>&1
+            info_echo "正在安装 EPEL 仓库 (日志输出到 $install_log)..."
+            if ! yum install -y epel-release >"$install_log" 2>&1; then
+                error_echo "EPEL 仓库安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
+            info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
+            if ! yum install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
+                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         "fedora")
-            dnf install -y shadowsocks-libev qrencode curl >/dev/null 2>&1
+            info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
+            if ! dnf install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
+                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
+                cat "$install_log" >&2
+                return 1
+            fi
             ;;
         *) error_echo "不支持的操作系统: $OS_TYPE"; return 1;;
     esac
+
+    # 再次确认 ss-server 命令是否存在，确保安装成功
     if ! command -v ss-server >/dev/null 2>&1; then
-        error_echo "shadowsocks-libev 安装失败。"
+        error_echo "shadowsocks-libev 未能成功安装或无法找到 ss-server 命令。请检查安装日志 ($install_log)。"
+        cat "$install_log" >&2
         return 1
     fi
     success_echo "依赖包安装完成"
@@ -799,6 +963,7 @@ EOF
     
     if ! systemctl is-active --quiet shadowsocks-libev; then
         error_echo "Shadowsocks 服务启动失败！"
+        info_echo "错误日志："
         journalctl -u shadowsocks-libev -n 10 --no-pager
         return 1
     fi
@@ -806,35 +971,63 @@ EOF
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then 
         ufw allow "$SS_PORT"/tcp >/dev/null 2>&1
         ufw allow "$SS_PORT"/udp >/dev/null 2>&1
+        success_echo "ufw 防火墙已配置放行 Shadowsocks 端口 ($SS_PORT/tcp, $SS_PORT/udp)。"
     fi
     if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then 
         firewall-cmd --permanent --add-port="$SS_PORT"/tcp >/dev/null 2>&1
         firewall-cmd --permanent --add-port="$SS_PORT"/udp >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
+        success_echo "firewalld 防火墙已配置放行 Shadowsocks 端口 ($SS_PORT/tcp, $SS_PORT/udp)。"
     fi
 
     success_echo "Shadowsocks 服务已成功启动"
     return 0
 }
 
-ss_display_result() {
+# --- 生成多种 Shadowsocks 客户端配置格式 ---
+generate_ss_configs() {
+    # 确保此处使用全局变量 SS_PORT, SS_PASSWORD, SS_METHOD
+    local ss_server_addr_for_uri="[$IPV6_ADDR]"        # IPv6地址用方括号括起来
+    local ss_server_addr_for_config_field="$IPV6_ADDR" # Clash/Surge 'server'字段期望裸IPv6
+
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
-    local tag="${country_code}-IPv6-$(date +%m%d)"
-    local encoded
-    encoded=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
-    local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${SS_PORT}#${tag}" # IPv6地址用方括号括起来
+    local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
+    local encoded_password_method
+    encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
 
+    # Shadowsocks URI (ss://)
+    local ss_link_uri="ss://${encoded_password_method}@${ss_server_addr_for_uri}:${SS_PORT}#${server_name}"
+
+    echo -e "${PURPLE}Shadowsocks客户端配置：${ENDCOLOR}" # 更改标题以区分
+    echo
+    
+    echo -e "${CYAN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${ENDCOLOR}"
+    echo "$ss_link_uri"
+    echo
+    
+    echo -e "${CYAN}⚔️ Clash Meta 配置:${ENDCOLOR}"
+    # Clash Meta 'server' field expects raw IP (no brackets for IPv6)
+    echo "  - { name: '$server_name', type: ss, server: '$ss_server_addr_for_config_field', port: $SS_PORT, password: '$SS_PASSWORD', cipher: '$SS_METHOD', udp: true }"
+    echo
+    
+    echo -e "${CYAN}🌊 Surge 配置:${ENDCOLOR}"
+    # Surge 'server' field expects raw IP (no brackets for IPv6)
+    echo "$server_name = ss, $ss_server_addr_for_config_field, $SS_PORT, encrypt-method=$SS_METHOD, password=$SS_PASSWORD, udp-relay=true"
+    echo
+}
+
+# --- 显示 Shadowsocks 安装结果 ---
+ss_display_result() {
     clear
     echo -e "${BG_PURPLE} Shadowsocks (IPv6) 安装完成！ ${ENDCOLOR}"
     echo
-    echo -e " ${PURPLE}--- Shadowsocks 配置信息 ---${ENDCOLOR}"
+    echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
     echo -e "   服务器地址: ${GREEN}[$IPV6_ADDR]${ENDCOLOR}"
     echo -e "   端口:       ${GREEN}$SS_PORT${ENDCOLOR}"
     echo -e "   密码:       ${GREEN}$SS_PASSWORD${ENDCOLOR}"
     echo -e "   加密方式:   ${GREEN}$SS_METHOD${ENDCOLOR}"
-    echo -e "   SS 链接:    ${CYAN}$ss_link${ENDCOLOR}"
-    echo -e " ${PURPLE}----------------------------${ENDCOLOR}"
+    echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
     
     # 检查 Shadowsocks 监听状态
@@ -853,14 +1046,25 @@ ss_display_result() {
         echo -e "$listening_status"
     else
         error_echo "Shadowsocks 未检测到在端口 $SS_PORT on :: (IPv6) 监听。请检查配置和防火墙。"
-        error_echo "可能的日志信息："
+        info_echo "可能的日志信息："
         journalctl -u shadowsocks-libev -n 5 --no-pager
     fi
     echo
 
+    # 直接调用 generate_ss_configs，它将使用 ss_generate_config 设置的全局变量
+    generate_ss_configs
+
     if command -v qrencode >/dev/null 2>&1; then
+        # 重新生成用于二维码的链接，确保与 generate_ss_configs 中的链接一致
+        local country_code
+        country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
+        local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
+        local encoded_password_method
+        encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
+        local ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
+        
         info_echo "二维码 (请最大化终端窗口显示):"
-        qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
+        qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
     else
         warning_echo "qrencode 未安装，无法显示二维码"
     fi
@@ -875,6 +1079,9 @@ ss_run_install() {
     # 优先检查 IPv6 可用性
     ss_check_ipv6 || return 1
     
+    # 在安装 Shadowsocks 之前，强制检查并确保有足够的 Swap (如果内存低)
+    enforce_swap_if_low_memory || return 1
+
     pre_install_check "shadowsocks" || return 1
     
     ss_install_dependencies && \
@@ -882,6 +1089,8 @@ ss_run_install() {
     ss_setup_service && \
     ss_display_result || {
         error_echo "Shadowsocks 安装失败。"
+        local dummy
+        safe_read "按 Enter 返回主菜单..." dummy
         return 1
     }
 }
@@ -909,40 +1118,51 @@ ss_update() {
     systemctl is-active --quiet shadowsocks-libev && ss_is_active=true
 
     info_echo "正在通过系统包管理器更新 shadowsocks-libev..."
+    local update_log="/tmp/ss_update_deps.log"
+    rm -f "$update_log"
+
     case "$OS_TYPE" in
         "ubuntu" | "debian")
-            apt-get update -qq >/dev/null 2>&1
-            apt-get install -y --only-upgrade shadowsocks-libev >/dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
-            else
-                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
-                local dummy
-                safe_read "按 Enter 继续..." dummy
+            info_echo "正在更新 apt 包列表 (日志输出到 $update_log)..."
+            if ! apt-get update -qq >"$update_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                # 尝试修复 Debian/Ubuntu 的源问题
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$update_log" 2>&1; then # 换源后再次尝试更新
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $update_log"
+                    cat "$update_log" >&2
+                    return 1
+                fi
+            fi
+            info_echo "正在更新 shadowsocks-libev (日志输出到 $update_log)..."
+            if ! apt-get install -y --only-upgrade shadowsocks-libev >"$update_log" 2>&1; then
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                local dummy; safe_read "按 Enter 继续..." dummy
                 return 1
             fi
+            success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
             ;;
         "centos" | "rocky" | "almalinux")
-            yum update -y shadowsocks-libev >/dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
-            else
-                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
-                local dummy
-                safe_read "按 Enter 继续..." dummy
+            info_echo "正在更新 shadowsocks-libev (日志输出到 $update_log)..."
+            if ! yum update -y shadowsocks-libev >"$update_log" 2>&1; then
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                local dummy; safe_read "按 Enter 继续..." dummy
                 return 1
             fi
+            success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
             ;;
         "fedora")
-            dnf update -y shadowsocks-libev >/dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
-            else
-                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。"
-                local dummy
-                safe_read "按 Enter 继续..." dummy
+            info_echo "正在更新 shadowsocks-libev (日志输出到 $update_log)..."
+            if ! dnf update -y shadowsocks-libev >"$update_log" 2>&1; then
+                error_echo "Shadowsocks (shadowsocks-libev) 更新失败。请检查日志: $update_log"
+                cat "$update_log" >&2
+                local dummy; safe_read "按 Enter 继续..." dummy
                 return 1
             fi
+            success_echo "Shadowsocks (shadowsocks-libev) 更新完成。"
             ;;
         *)
             error_echo "不支持的操作系统: $OS_TYPE，无法自动更新 Shadowsocks 包。"
@@ -988,7 +1208,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.6) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.11) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1110,8 +1330,8 @@ show_hysteria2_config() {
     fi
     echo -e "服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
-    echo -e "连接密码:   ${GREEN}${password}${ENDCOLOR}"
-    echo -e "SNI 域名:   ${GREEN}${domain}${ENDCOLOR}"
+    echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
+    echo -e "SNI 域名:   ${GREEN}$HY_DOMAIN${ENDCOLOR}"
     echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"
     echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
     echo -e "${PURPLE}========================${ENDCOLOR}"
@@ -1125,6 +1345,7 @@ show_hysteria2_config() {
     
     local dummy
     safe_read "按 Enter 继续..." dummy
+    return 0
 }
 
 show_shadowsocks_config() {
@@ -1136,7 +1357,7 @@ show_shadowsocks_config() {
         return
     fi
 
-    local server_port password method
+    local server_port password method # Declared local variables here
     server_port=$(grep "server_port" /etc/shadowsocks-libev/config.json | grep -o "[0-9]*")
     password=$(grep "password" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
     method=$(grep "method" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
@@ -1167,20 +1388,28 @@ show_shadowsocks_config() {
         echo -e "$listening_status"
     else
         error_echo "Shadowsocks 未检测到在端口 $server_port on :: (IPv6) 监听。请检查配置和防火墙。"
-        error_echo "可能的日志信息："
+        info_echo "可能的日志信息："
         journalctl -u shadowsocks-libev -n 5 --no-pager
     fi
     echo
 
+    # 更新全局变量，确保 generate_ss_configs 使用的是从文件读取的最新值
+    SS_PASSWORD="$password"
+    SS_PORT="$server_port"
+    SS_METHOD="$method"
+
+    generate_ss_configs
+
     if command -v qrencode >/dev/null 2>&1; then
-        echo -e "${CYAN}📱 二维码 (请最大化终端窗口显示):${ENDCOLOR}"
         local country_code
         country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
-        local tag="${country_code}-IPv6-$(date +%m%d)"
-        local encoded
-        encoded=$(echo -n "$method:$password" | base64 -w 0)
-        local ss_link="ss://${encoded}@[${IPV6_ADDR}]:${server_port}#${tag}"
-        qrencode -t ANSIUTF8 "$ss_link" 2>/dev/null || echo "二维码生成失败"
+        local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
+        local encoded_password_method
+        encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
+        local ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
+        
+        info_echo "二维码 (请最大化终端窗口显示):"
+        qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
     else
         warning_echo "qrencode 未安装，无法显示二维码"
     fi
@@ -1188,6 +1417,7 @@ show_shadowsocks_config() {
     echo
     local dummy
     safe_read "按 Enter 继续..." dummy
+    return 0
 }
 
 uninstall_services() {
@@ -1253,10 +1483,25 @@ update_system_kernel() {
     case "$OS_TYPE" in
         "ubuntu" | "debian")
             info_echo "正在更新 Debian/Ubuntu 内核和系统..."
-            apt-get update -y >/dev/null 2>&1
-            apt-get upgrade -y >/dev/null 2>&1
+            # 使用与 ss_install_dependencies 类似的日志记录和换源逻辑
+            local kernel_update_log="/tmp/kernel_update.log"
+            if ! apt-get update -qq >"$kernel_update_log" 2>&1; then
+                error_echo "apt update 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                change_debian_apt_sources || { error_echo "尝试修复 APT 源失败。请手动检查并修复 /etc/apt/sources.list 文件。"; return 1; }
+                if ! apt-get update -qq >"$kernel_update_log" 2>&1; then
+                    error_echo "换源后 apt update 仍然失败。请检查日志: $kernel_update_log"
+                    cat "$kernel_update_log" >&2
+                    return 1
+                fi
+            fi
+            if ! apt-get upgrade -y >"$kernel_update_log" 2>&1; then
+                error_echo "apt upgrade 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                return 1
+            fi
+            
             # 检查是否有新的内核版本可用或已安装
-            # More robust check for new kernel version
             if apt-get list --upgradable | grep -q "linux-image"; then
                 reboot_required=true
             fi
@@ -1264,7 +1509,12 @@ update_system_kernel() {
             ;;
         "centos" | "rocky" | "almalinux")
             info_echo "正在更新 CentOS/Rocky/AlmaLinux 内核和系统..."
-            yum update -y >/dev/null 2>&1
+            local kernel_update_log="/tmp/kernel_update.log"
+            if ! yum update -y >"$kernel_update_log" 2>&1; then
+                error_echo "yum update 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                return 1
+            fi
             # 检查是否有新的内核版本可用或已安装
             if rpm -q kernel | grep -qv "$(uname -r)"; then
                  reboot_required=true
@@ -1273,7 +1523,12 @@ update_system_kernel() {
             ;;
         "fedora")
             info_echo "正在更新 Fedora 内核和系统..."
-            dnf update -y >/dev/null 2>&1
+            local kernel_update_log="/tmp/kernel_update.log"
+            if ! dnf update -y >"$kernel_update_log" 2>&1; then
+                error_echo "dnf update 失败。请检查日志: $kernel_update_log"
+                cat "$kernel_update_log" >&2
+                return 1
+            fi
             # 检查是否有新的内核版本可用或已安装
             if rpm -q kernel | grep -qv "$(uname -r)"; then
                 reboot_required=true
@@ -1316,7 +1571,7 @@ main() {
     check_root
     detect_system
     detect_network
-    check_and_create_swap # Call swap creation early
+    check_and_create_swap # Call swap creation early (non-blocking suggestion)
     
     exec </dev/tty 2>/dev/null || true
     while read -t 0.1 -n 1000 discard 2>/dev/null; do
