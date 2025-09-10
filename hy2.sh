@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.18
+# 版本: 1.0.19
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -954,9 +954,9 @@ ss_install_dependencies() {
                 cat "$install_log" >&2
                 return 1
             fi
-            info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
-            if ! yum install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
-                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
+            info_echo "正在安装基本依赖: ${base_packages[*]} (日志输出到 $install_log)..."
+            if ! yum install -y "${base_packages[@]}" >"$install_log" 2>&1; then
+                error_echo "基本依赖安装失败。请检查日志: $install_log"
                 cat "$install_log" >&2
                 return 1
             fi
@@ -1123,7 +1123,7 @@ ss_display_result() {
     echo -e "   加密方式:   ${GREEN}$SS_METHOD${ENDCOLOR}"
     echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
-    
+
     # 检查 Shadowsocks 监听状态
     info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6，确保 IPv6 地址可用):"
     local listening_status=""
@@ -1319,7 +1319,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.18) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.19) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1633,7 +1633,6 @@ uninstall_services() {
                 ;;
             0) return ;;
             *) error_echo "无效选择"; sleep 1 ;;
-        在 Shadowsocks 安装成功后的 `ss_display_result` 函数中，针对纯 IPv6 服务器，仍然会保留关于 NAT64/DNS64 的提示，以确保用户了解其网络环境的潜在限制。
         esac
     done
 }
