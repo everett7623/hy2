@@ -897,11 +897,21 @@ ss_check_ipv6() {
     fi
     success_echo "IPv6 环境检查通过: $IPV6_ADDR"
 
-    # 新增：针对纯IPv6服务器的NAT64/DNS64提示，仅当确定是纯IPv6环境时显示
+    # 新增：针对纯IPv6服务器的NAT64/DNS64提示，并在纯IPv6环境下强烈建议Hysteria2
     if ! $HAS_IPV4 && $HAS_IPV6; then # 确定是纯IPv6且IPv6可用
-        warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
-        warning_echo "   必须确保您的网络提供商已启用 NAT64 和 DNS64。否则，Shadowsocks 将只能访问 IPv6 目标。"
-        info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
+        warning_echo "${RED}⚠️ 重要警告：您的服务器是纯 IPv6 环境。Shadowsocks 服务端虽然能监听 IPv6，但要访问 IPv4-Only 网站，您的网络必须提供 DNS64 和 NAT64 功能。${ENDCOLOR}"
+        warning_echo "${RED}   如果您的 VPS 提供商没有提供这些功能，Shadowsocks 将无法访问纯 IPv4 网站，这可能导致连接问题。${ENDCOLOR}"
+        warning_echo "${BLUE}   强烈建议您考虑安装 Hysteria2 (主菜单选项 1)，其在纯 IPv6 环境下通常表现更稳定，不易受 IPv4 限制。${ENDCOLOR}"
+        local confirm_ss_ipv6_only
+        safe_read "${YELLOW}您确定仍要在纯 IPv6 环境下继续安装 Shadowsocks 吗? (y/N): ${ENDCOLOR}" confirm_ss_ipv6_only
+        if [[ ! "$confirm_ss_ipv6_only" =~ ^[yY]$ ]]; then
+            info_echo "Shadowsocks 安装已取消，推荐您尝试安装 Hysteria2。"
+            local dummy
+            safe_read "按 Enter 返回主菜单..." dummy
+            return 1 # User cancelled SS installation
+        fi
+
+        info_echo "   如果您不确定 NAT64/DNS64，请咨询您的 VPS 提供商或查阅相关文档。"
         info_echo "   您可以尝试运行 'ping ipv4.google.com' 或 'curl -4 https://ip.p3terx.com' 来验证 IPv4 连通性。"
         echo
         local dummy
@@ -1138,10 +1148,9 @@ ss_display_result() {
     # 针对纯IPv6服务器的NAT64/DNS64提示
     if ! $HAS_IPV4; then # 如果没有IPv4，即为纯IPv6环境
         warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
-        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能，或者您已部署了 IPv4 隧道（如 Cloudflare Warp）。"
+        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能。否则，Shadowsocks 将只能访问 IPv6 目标。"
         info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
         info_echo "   您可以尝试运行 'ping ipv4.google.com' 或 'curl -4 https://ip.p3terx.com' 来验证 IPv4 连通性。"
-        info_echo "   如果 IPv4 访问存在问题，请考虑使用主菜单中的 '${CYAN}8. 配置 DNS64 解析器${ENDCOLOR}' 或 '${CYAN}9. 安装 Cloudflare Warp IPv4 隧道${ENDCOLOR}' 功能。"
         echo
     fi
 
@@ -1286,111 +1295,6 @@ ss_update() {
     return 0
 }
 
-# --- 配置 DNS64 解析器 ---
-install_dns64_resolvers() {
-    clear
-    info_echo "正在配置 DNS64 解析器..."
-    if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then
-        error_echo "未检测到可用的公网 IPv6 地址，DNS64 配置无效。此功能仅适用于纯 IPv6 或双栈 VPS。"
-        safe_read "按 Enter 继续..." dummy
-        return 1
-    fi
-
-    info_echo "备份原有 /etc/resolv.conf 到 /etc/resolv.conf.bak.$(date +%Y%m%d%H%M%S)"
-    cp /etc/resolv.conf{,.bak."$(date +%Y%m%d%H%M%S)"} || { error_echo "备份失败。"; safe_read "按 Enter 继续..." dummy; return 1; }
-
-    info_echo "写入新的 DNS64 解析器到 /etc/resolv.conf..."
-    # 使用多个免费且可靠的 DNS64 服务器
-    cat > /etc/resolv.conf <<EOF
-nameserver 2a00:1098:2b::1
-nameserver 2a01:4f9:c010:3f02::1
-nameserver 2a01:4f8:c2c:123f::1
-nameserver 2a00:1098:2c::1
-# Fallback to Google Public DNS64 (if primary fail)
-nameserver 2001:4860:4860::6464
-EOF
-            
-    success_echo "DNS64 解析器配置完成。请注意，这仅允许通过域名访问 IPv4 网站，并且需要您的网络提供商支持 NAT64。"
-    
-    info_echo "尝试验证 IPv4 域名解析及连通性 (ping ipv4.google.com)..."
-    # 使用 curl -4 -s ip.p3terx.com 来更可靠地测试IPv4连通性，避免ping的一些限制
-    if timeout 10 ping -c 4 ipv4.google.com >/dev/null 2>&1 && timeout 10 curl -4 -s https://ip.p3terx.com >/dev/null 2>&1; then
-        success_echo "IPv4 域名解析及连通性测试成功！您的纯 IPv6 服务器现在应该可以通过 Shadowsocks 访问 IPv4 网站了。"
-    else
-        warning_echo "IPv4 域名解析或连通性测试失败。DNS64 可能未完全生效，或者您的网络环境缺少 NAT64 支持。"
-        warning_echo "请确保您的 VPS 提供商在网络层面提供了 NAT64 服务。"
-    fi
-    safe_read "按 Enter 继续..." dummy
-    return 0
-}
-
-# --- 安装 Cloudflare Warp IPv4 隧道 ---
-install_warp_ipv4() {
-    clear
-    info_echo "正在安装 Cloudflare Warp IPv4 隧道..."
-    if $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
-        warning_echo "您的服务器已检测到公网 IPv4 地址 ($IPV4_ADDR)。安装 Warp IPv4 隧道可能不是必需的，并且可能会导致不必要的复杂性或冲突。"
-        local confirm
-        safe_read "是否仍要继续安装 Cloudflare Warp IPv4 隧道? (y/N): " confirm
-        if [[ ! "$confirm" =~ ^[yY]$ ]]; then
-            info_echo "操作已取消。"
-            safe_read "按 Enter 继续..." dummy
-            return 0
-        fi
-    fi
-
-    # Check if warp is already installed (basic check)
-    if systemctl is-active --quiet warp-svc 2>/dev/null || command -v warp &>/dev/null; then
-        warning_echo "检测到 Cloudflare Warp 可能已安装或正在运行。建议先卸载现有 Warp 服务，或选择更新 Warp。"
-        local confirm_continue
-        safe_read "是否仍要继续尝试安装/覆盖 Warp? (y/N): " confirm_continue
-        if [[ ! "$confirm_continue" =~ ^[yY]$ ]]; then
-            info_echo "操作已取消。"
-            safe_read "按 Enter 继续..." dummy
-            return 0
-        fi
-    fi
-
-    info_echo "正在下载并执行 Warp 安装脚本..."
-    local warp_script_log="/tmp/warp_install.log"
-    if ! wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >"$warp_script_log" 2>&1; then
-        error_echo "Warp 安装脚本下载失败。请检查网络连接和日志: $warp_script_log"
-        cat "$warp_script_log" >&2
-        safe_read "按 Enter 继续..." dummy
-        return 1
-    fi
-    chmod +x /tmp/warp_menu.sh
-
-    info_echo "正在安装 Warp IPv4 隧道 (日志输出到 $warp_script_log)..."
-    # The 'bash menu.sh 4' command should install warp and configure IPv4.
-    # It will also configure DNS correctly.
-    if ! bash /tmp/warp_menu.sh 4 >>"$warp_script_log" 2>&1; then
-        error_echo "Cloudflare Warp IPv4 隧道安装失败。请检查日志: $warp_script_log"
-        cat "$warp_script_log" >&2
-        rm -f /tmp/warp_menu.sh
-        safe_read "按 Enter 继续..." dummy
-        return 1
-    fi
-
-    rm -f /tmp/warp_menu.sh
-    
-    # Verify Warp installation
-    sleep 5 # Give Warp some time to initialize
-    if systemctl is-active --quiet warp-svc 2>/dev/null; then
-        success_echo "Cloudflare Warp IPv4 隧道安装并启动成功！"
-        info_echo "您的纯 IPv6 服务器现在已通过 Warp 获得了虚拟 IPv4 连接，Shadowsocks 将能访问 IPv4 网站。"
-        info_echo "Warp 会自动配置 DNS。您可以通过访问 ip.p3terx.com 等网站验证 IPv4 地址是否已变为 Cloudflare IP。"
-        # Note: We don't change HAS_IPV4/IPV4_ADDR globals here because it's a virtual interface,
-        # and the original public IPv4 (if dual-stack) should still be represented.
-        # This Warp solution is for outbound connectivity from the server.
-    else
-        error_echo "Cloudflare Warp IPv4 隧道安装成功但服务未能正常启动。请检查日志: $warp_script_log"
-        cat "$warp_script_log" >&2
-    fi
-    safe_read "按 Enter 继续..." dummy
-    return 0
-}
-
 
 ################################################################################
 # UI 与管理功能
@@ -1423,16 +1327,23 @@ show_menu() {
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}==========================================================${ENDCOLOR}"
+
+    # New recommendation logic for pure IPv6 machines
+    if ! $HAS_IPV4 && $HAS_IPV6; then # Pure IPv6 machine
+        echo -e "${BG_YELLOW}${RED}⚠️ 纯 IPv6 服务器特别提示：${ENDCOLOR}"
+        echo -e "${BG_YELLOW}${BLUE}推荐优先安装 Hysteria2 (选项 1)。${ENDCOLOR}"
+        echo -e "${BG_YELLOW}${BLUE}Hysteria2 在纯 IPv6 环境下通常表现更稳定，不易受 IPv4 限制。${ENDCOLOR}"
+        echo -e "${BG_YELLOW}${BLUE}Shadowsocks (选项 2) 在纯 IPv6 环境下可能需要额外的 DNS64/NAT64 配置才能访问 IPv4 网站，且可能不稳定。${ENDCOLOR}"
+        echo
+    fi
+
     echo -e "1. 安装 Hysteria2 (自签名证书模式，无需域名解析)"
-    echo -e "2. 安装 Shadowsocks (仅 IPv6)"
+    echo -e "2. 安装 Shadowsocks (仅 IPv6)" 
     echo -e "3. 服务管理 (启动/停止/日志/显示连接配置)"
     echo -e "4. 卸载服务"
     echo -e "5. 更新系统内核"
     echo -e "6. 更新 Hysteria2 应用"
     echo -e "7. 更新 Shadowsocks (系统包)"
-    echo -e "${CYAN}--- IPv6-Only VPS 增强功能 (解决访问IPv4网站) ---${ENDCOLOR}"
-    echo -e "8. 配置 DNS64 解析器 (使纯IPv6机器可访问IPv4域名)"
-    echo -e "9. 安装 Cloudflare Warp IPv4 隧道 (为纯IPv6机器提供虚拟IPv4)"
     echo -e "0. 退出脚本"    
     echo -e "${PURPLE}==========================================================${ENDCOLOR}"
 }
@@ -1631,10 +1542,9 @@ show_shadowsocks_config() {
     # 针对纯IPv6服务器的NAT64/DNS64提示
     if ! $HAS_IPV4; then # 如果没有IPv4，即为纯IPv6环境
         warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
-        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能，或者您已部署了 IPv4 隧道（如 Cloudflare Warp）。"
+        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能。否则，Shadowsocks 将只能访问 IPv6 目标。"
         info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
         info_echo "   您可以尝试运行 'ping ipv4.google.com' 或 'curl -4 https://ip.p3terx.com' 来验证 IPv4 连通性。"
-        info_echo "   如果 IPv4 访问存在问题，请考虑使用主菜单中的 '${CYAN}8. 配置 DNS64 解析器${ENDCOLOR}' 或 '${CYAN}9. 安装 Cloudflare Warp IPv4 隧道${ENDCOLOR}' 功能。"
         echo
     fi
 
@@ -1681,7 +1591,6 @@ uninstall_services() {
         echo " 1. 卸载 Hysteria2"
         echo " 2. 卸载 Shadowsocks"
         echo " 3. 卸载所有服务"
-        echo " 4. 卸载 Cloudflare Warp" # Add Warp uninstall option
         echo " 0. 返回主菜单"
         echo "----------------"
         local uninstall_choice
@@ -1717,26 +1626,10 @@ uninstall_services() {
                 if [[ "$confirm" =~ ^[yY]$ ]]; then
                     hy2_uninstall
                     ss_uninstall
-                    # If Warp is installed, consider adding an option to uninstall it too.
-                    # For now, let's keep it separate or let user handle it via option 4.
                     success_echo "所有服务已卸载完成"
                     local dummy
                     safe_read "按 Enter 继续..." dummy
                 fi
-                ;;
-            4)  # Uninstall Cloudflare Warp
-                info_echo "正在尝试卸载 Cloudflare Warp..."
-                if [[ -f /usr/local/bin/warp ]]; then # Check if warp script exists
-                    bash /usr/local/bin/warp uninstall # Assuming the warp script has an uninstall option
-                    success_echo "Cloudflare Warp 卸载命令已执行，请根据提示确认。"
-                elif command -v warp &>/dev/null; then
-                    warp uninstall >/dev/null 2>&1
-                    success_echo "Cloudflare Warp 卸载命令已执行，请根据提示确认。"
-                else
-                    error_echo "未检测到 Cloudflare Warp 安装，无需卸载。"
-                fi
-                local dummy
-                safe_read "按 Enter 继续..." dummy
                 ;;
             0) return ;;
             *) error_echo "无效选择"; sleep 1 ;;
@@ -1852,7 +1745,7 @@ main() {
     while true; do
         show_menu
         local choice
-        safe_read "请选择操作 [0-9]: " choice
+        safe_read "请选择操作 [0-7]: " choice
         
         choice=$(echo "$choice" | tr -cd '0-9')
         
@@ -1864,21 +1757,20 @@ main() {
             5) update_system_kernel ;; # Update OS kernel
             6) hy2_update ;; # Update Hysteria2 application
             7) ss_update ;; # Update Shadowsocks application
-            8) install_dns64_resolvers ;; # New option for DNS64
-            9) install_warp_ipv4 ;; # New option for Cloudflare Warp IPv4
             0) 
                 echo
                 success_echo "感谢使用脚本！"
                 exit 0 
                 ;;
             "")
-                warning_echo "请输入一个有效的数字选项 (0-9)"
+                warning_echo "请输入一个有效的数字选项 (0-7)"
                 sleep 1
                 ;;
             *)
-                error_echo "无效的选择 '$choice'，请输入 0-9 之间的数字"
+                error_echo "无效的选择 '$choice'，请输入 0-7 之间的数字"
                 sleep 1
                 ;;
+        在 Shadowsocks 安装成功后的 `ss_display_result` 函数中，针对纯 IPv6 服务器，仍然会保留关于 NAT64/DNS64 的提示，以确保用户了解其网络环境的潜在限制。
         esac
     done
 }
