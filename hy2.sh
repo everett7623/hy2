@@ -989,9 +989,9 @@ show_menu() {
     fi
 
     echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.5) ${ENDCOLOR}"
-    echo "项目地址：https://github.com/everett7623/hy2ipv6"
-    echo "博客地址：https://seedloc.com"
-    echo "论坛地址：https://nodeloc.com"
+    echo -e "${PURPLE}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
+    echo -e "${PURPLE}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
+    echo -e "${PURPLE}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
     echo
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
