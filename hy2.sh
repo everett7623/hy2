@@ -598,21 +598,22 @@ hy2_uninstall() {
 hy2_update() {
     info_echo "检查 Hysteria2 应用程序更新..."
     if [[ ! -f /usr/local/bin/hysteria ]]; then
-        error_echo "Hysteria2 未安装，无法更新。"
+        error_echo "Hysteria2 未安装，无法更新。请先进行安装。"
         local dummy
         safe_read "按 Enter 继续..." dummy
         return 1
     fi
 
     local current_version
+    # 尝试获取当前版本，如果获取失败，则发出警告但继续更新二进制文件
     current_version=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1 | awk '{print $NF}')
+    
     if [[ -z "$current_version" ]]; then
-        warning_echo "无法获取当前 Hysteria2 版本，尝试重新安装最新版本。"
-        # Call hy2_install to re-download and set up. This will prompt for config.
-        hy2_install || { error_echo "Hysteria2 更新失败。"; return 1; }
-        return 0
+        warning_echo "无法获取当前 Hysteria2 版本信息。将尝试下载并替换最新版本，但不会修改现有配置。"
+        # 不在此处返回，继续执行下载和替换二进制的逻辑
+    else
+        info_echo "当前 Hysteria2 版本: $current_version"
     fi
-    info_echo "当前 Hysteria2 版本: $current_version"
 
     local latest_version
     latest_version=$(timeout 10 curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name"' | cut -d '"' -f 4)
@@ -625,16 +626,18 @@ hy2_update() {
     fi
     info_echo "Hysteria2 最新版本: $latest_version"
 
-    if [[ "$latest_version" == "$current_version" ]]; then
+    # 如果成功获取到当前版本，并且已经是最新，则无需更新
+    if [[ -n "$current_version" ]] && [[ "$latest_version" == "$current_version" ]]; then
         info_echo "Hysteria2 已经是最新版本，无需更新。"
     else
         info_echo "发现新版本 ($latest_version)，正在更新 Hysteria2..."
         
+        # 停止服务
         systemctl stop hysteria-server >/dev/null 2>&1 || true
         
         local tmp_dir="/tmp/hysteria2_update"
         rm -rf "$tmp_dir" && mkdir -p "$tmp_dir"
-        cd "$tmp_dir" || return 1
+        cd "$tmp_dir" || { error_echo "无法进入临时目录进行更新。"; return 1; }
         
         local download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${ARCH}"
         
@@ -642,7 +645,7 @@ hy2_update() {
         if ! timeout 60 wget -q --show-progress -O hysteria "$download_url"; then
             error_echo "下载失败"
             cd / && rm -rf "$tmp_dir"
-            systemctl start hysteria-server >/dev/null 2>&1 || true
+            systemctl start hysteria-server >/dev/null 2>&1 || true # 尝试启动旧的服务
             local dummy
             safe_read "按 Enter 继续..." dummy
             return 1
@@ -651,20 +654,21 @@ hy2_update() {
         if [[ ! -s hysteria ]] || ! file hysteria | grep -q "executable"; then
             error_echo "下载的文件无效"
             cd / && rm -rf "$tmp_dir"
-            systemctl start hysteria-server >/dev/null 2>&1 || true
+            systemctl start hysteria-server >/dev/null 2>&1 || true # 尝试启动旧的服务
             local dummy
             safe_read "按 Enter 继续..." dummy
             return 1
         fi
         
         chmod +x hysteria
-        mv hysteria /usr/local/bin/hysteria
+        mv hysteria /usr/local/bin/hysteria # 替换旧的二进制文件
         
+        # 启动服务
         systemctl start hysteria-server
         sleep 3
         
         if systemctl is-active --quiet hysteria-server; then
-            success_echo "Hysteria2 更新并启动成功！新版本: $(/usr/local/bin/hysteria version | head -n 1)"
+            success_echo "Hysteria2 更新并启动成功！新版本: $(/usr/local/bin/hysteria version 2>/dev/null | head -n 1)"
         else
             error_echo "Hysteria2 更新成功但服务启动失败。请检查日志。"
             journalctl -u hysteria-server -n 10 --no-pager
