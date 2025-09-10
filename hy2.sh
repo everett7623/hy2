@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.13
+# 版本: 1.0.14
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -843,26 +843,27 @@ ss_get_input() {
         info_echo "自动生成密码: $SS_PASSWORD"
     fi
 
-    # IP 地址选择 (根据检测到的网络环境进行智能选择或提示)
-    if $HAS_IPV4 && $HAS_IPV6; then
-        echo
-        info_echo "您的服务器同时拥有 IPv4 (${IPV4_ADDR}) 和 IPv6 (${IPV6_ADDR}) 地址。"
-        local ip_choice_valid=false
-        while ! $ip_choice_valid; do
-            safe_read "请选择 Shadowsocks 客户端连接使用的 IP 类型 (1=IPv4, 2=IPv6, 留空默认 IPv6): " ip_choice
-            case "$ip_choice" in
-                1) SS_SERVER_IP_CHOICE="ipv4"; ip_choice_valid=true; info_echo "Shadowsocks 客户端配置将优先使用 IPv4 地址。";;
-                2|"") SS_SERVER_IP_CHOICE="ipv6"; ip_choice_valid=true; info_echo "Shadowsocks 客户端配置将优先使用 IPv6 地址。";;
-                *) error_echo "无效选择，请重新输入。";;
-            esac
-        done
-    elif $HAS_IPV6; then # 纯 IPv6 环境
+    # IP 地址选择 (根据检测到的网络环境进行智能选择或强制使用 IPv6)
+    if $HAS_IPV6 && [[ "$IPV6_ADDR" != "N/A" ]]; then
         SS_SERVER_IP_CHOICE="ipv6"
-        info_echo "服务器仅有公网 IPv6 地址 (${IPV6_ADDR})，Shadowsocks 客户端配置将强制使用 IPv6。"
-    # else if $HAS_IPV4 but no IPv6, this case should be caught by ss_check_ipv6 already and return 1
-    # If no IP at all, also caught by ss_check_ipv6
-    else # Fallback, should ideally not be reached if ss_check_ipv6 works
-        error_echo "无法确定 Shadowsocks 客户端配置使用的 IP 地址。脚本逻辑错误或网络检测异常。"
+        info_echo "检测到公网 IPv6 地址 (${IPV6_ADDR})，Shadowsocks 客户端配置将使用 IPv6 地址。"
+        if $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
+            info_echo "服务器同时拥有 IPv4 地址 (${IPV4_ADDR})，但根据要求，Shadowsocks 客户端配置将默认优先使用 IPv6。"
+            local confirm
+            safe_read "您是否需要强制 Shadowsocks 客户端配置使用 IPv4 地址? (y/N): " confirm
+            if [[ "$confirm" =~ ^[yY]$ ]]; then
+                SS_SERVER_IP_CHOICE="ipv4"
+                info_echo "Shadowsocks 客户端配置将使用 IPv4 地址。"
+            fi
+        fi
+    elif $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
+        error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。"
+        error_echo "${RED}Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。${ENDCOLOR}"
+        local dummy
+        safe_read "按 Enter 返回主菜单..." dummy
+        return 1 # Cannot proceed with SS installation
+    else
+        error_echo "未检测到任何有效的公网 IP 地址，Shadowsocks 无法安装。"
         local dummy
         safe_read "按 Enter 返回主菜单..." dummy
         return 1
@@ -1311,7 +1312,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.13) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.14) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1470,15 +1471,26 @@ show_shadowsocks_config() {
     local display_ip_for_info=""
     # 在管理界面显示时，需要从全局变量 SS_SERVER_IP_CHOICE 决定显示哪个IP
     # 如果 SS_SERVER_IP_CHOICE 为空（例如脚本重启后），则重新推断
+    # The logic here should be consistent with ss_get_input: prefer IPv6 if available.
     if [[ -z "$SS_SERVER_IP_CHOICE" ]]; then
-        if $HAS_IPV6; then SS_SERVER_IP_CHOICE="ipv6";
-        elif $HAS_IPV4; then SS_SERVER_IP_CHOICE="ipv4"; fi
+        if $HAS_IPV6 && [[ "$IPV6_ADDR" != "N/A" ]]; then 
+            SS_SERVER_IP_CHOICE="ipv6"
+        elif $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then 
+            # This case means the server *has* IPv4, but if it's pure IPv4, 
+            # installation would have failed. This is mostly for display on dual-stack
+            # if the user *forced* IPv4 during setup.
+            SS_SERVER_IP_CHOICE="ipv4" 
+        else 
+            SS_SERVER_IP_CHOICE="unknown"; 
+        fi
     fi
 
     if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
         display_ip_for_info="[$IPV6_ADDR]"
-    else # 此时 SS_SERVER_IP_CHOICE 必定是 ipv4
+    elif [[ "$SS_SERVER_IP_CHOICE" == "ipv4" ]]; then 
         display_ip_for_info="$IPV4_ADDR"
+    else
+        display_ip_for_info="N/A (IP选择逻辑异常)"
     fi
     echo -e "   服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
     echo -e "   端口:       ${GREEN}$server_port${ENDCOLOR}"
