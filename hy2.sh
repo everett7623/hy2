@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.15
+# 版本: 1.0.16
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -714,7 +714,7 @@ hy2_update() {
         warning_echo "由于无法检测当前版本，将尝试下载并替换最新版本，但不会修改现有配置。"
         local confirm_update
         safe_read "是否仍要下载并替换最新版本 ($latest_version)？ (y/N): " confirm_update
-        if [[ "$confirm" =~ ^[yY]$ ]]; then
+        if [[ "$confirm_update" =~ ^[yY]$ ]]; then
             perform_update=true
         else
             info_echo "操作已取消。"
@@ -979,9 +979,10 @@ ss_generate_config() {
     # SS_PASSWORD 和 SS_METHOD 已经在 ss_get_input 中获取或生成
 
     mkdir -p /etc/shadowsocks-libev
+    # Removed the JSON comment '#' from the "server" line.
     cat > /etc/shadowsocks-libev/config.json <<EOF
 {
-    "server": "::", # Shadowsocks 服务器监听所有可用IP地址
+    "server": "::", 
     "server_port": $SS_PORT,
     "password": "$SS_PASSWORD",
     "timeout": 300,
@@ -1310,7 +1311,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.15) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.16) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1474,13 +1475,9 @@ show_shadowsocks_config() {
         if $HAS_IPV6 && [[ "$IPV6_ADDR" != "N/A" ]]; then 
             SS_SERVER_IP_CHOICE="ipv6"
         elif $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then 
-            # This case means the server *has* IPv4, but if it's pure IPv4, 
-            # installation would have failed. This is mostly for display on dual-stack
-            # if the user *forced* IPv4 during setup.
-            # However, with the new requirement "ss只有ipv6输出", this part should ideally not be reached
-            # or if reached, it must force to ipv6. Re-evaluate this logic for consistency.
-            # Since ss_get_input now forces ipv6 if available, this part also should.
-            SS_SERVER_IP_CHOICE="ipv6" # If script was restarted, and was a dual-stack setup, force IPv6 as per requirement.
+            # As per the requirement "ss只有ipv6输出", even if IPv4 exists,
+            # the client configuration should default to IPv6.
+            SS_SERVER_IP_CHOICE="ipv6" 
         else 
             SS_SERVER_IP_CHOICE="unknown"; 
         fi
@@ -1490,7 +1487,8 @@ show_shadowsocks_config() {
         display_ip_for_info="[$IPV6_ADDR]"
     elif [[ "$SS_SERVER_IP_CHOICE" == "ipv4" ]]; then 
         # This branch should ideally not be reachable now for SS client config based on the new logic.
-        # But keeping it as a fallback in case something unforeseen happens.
+        # However, if some older config was made, it might still show up. 
+        # But for new setups, it will always be IPv6 if available.
         display_ip_for_info="$IPV4_ADDR"
     else
         display_ip_for_info="N/A (IP选择逻辑异常)"
