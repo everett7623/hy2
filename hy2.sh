@@ -642,6 +642,7 @@ hy2_show_result() {
     
     local dummy
     safe_read "按 Enter 继续..." dummy
+    return 0
 }
 
 # --- 安装主函数 ---
@@ -829,10 +830,10 @@ EOF
 }
 
 
-# --- Shadowsocks 用户输入处理 (新增) ---
+# --- Shadowsocks 用户输入处理 (优化 IP 选择逻辑) ---
 ss_get_input() {
     echo
-    echo -e "${CYAN}=== Shadowsocks (IPv6) 安装 ===${ENDCOLOR}"
+    echo -e "${CYAN}=== Shadowsocks 安装参数设置 ===${ENDCOLOR}"
     echo
     
     # 密码
@@ -842,27 +843,26 @@ ss_get_input() {
         info_echo "自动生成密码: $SS_PASSWORD"
     fi
 
-    # IP 地址选择 (仅在双栈环境下提供选择)
+    # IP 地址选择 (根据检测到的网络环境进行智能选择或提示)
     if $HAS_IPV4 && $HAS_IPV6; then
         echo
-        info_echo "您的服务器同时拥有 IPv4 ($IPV4_ADDR) 和 IPv6 ($IPV6_ADDR) 地址。"
+        info_echo "您的服务器同时拥有 IPv4 (${IPV4_ADDR}) 和 IPv6 (${IPV6_ADDR}) 地址。"
         local ip_choice_valid=false
         while ! $ip_choice_valid; do
             safe_read "请选择 Shadowsocks 客户端连接使用的 IP 类型 (1=IPv4, 2=IPv6, 留空默认 IPv6): " ip_choice
             case "$ip_choice" in
-                1) SS_SERVER_IP_CHOICE="ipv4"; ip_choice_valid=true; info_echo "Shadowsocks 将优先使用 IPv4 地址。";;
-                2|"") SS_SERVER_IP_CHOICE="ipv6"; ip_choice_valid=true; info_echo "Shadowsocks 将优先使用 IPv6 地址。";;
+                1) SS_SERVER_IP_CHOICE="ipv4"; ip_choice_valid=true; info_echo "Shadowsocks 客户端配置将优先使用 IPv4 地址。";;
+                2|"") SS_SERVER_IP_CHOICE="ipv6"; ip_choice_valid=true; info_echo "Shadowsocks 客户端配置将优先使用 IPv6 地址。";;
                 *) error_echo "无效选择，请重新输入。";;
             esac
         done
-    elif $HAS_IPV4; then
-        SS_SERVER_IP_CHOICE="ipv4"
-        info_echo "服务器仅有 IPv4 地址，Shadowsocks 将使用 IPv4。"
-    elif $HAS_IPV6; then
+    elif $HAS_IPV6; then # 纯 IPv6 环境
         SS_SERVER_IP_CHOICE="ipv6"
-        info_echo "服务器仅有 IPv6 地址，Shadowsocks 将使用 IPv6。"
-    else
-        error_echo "无法检测到有效的公网 IP 地址，Shadowsocks 无法安装。"
+        info_echo "服务器仅有公网 IPv6 地址 (${IPV6_ADDR})，Shadowsocks 客户端配置将强制使用 IPv6。"
+    # else if $HAS_IPV4 but no IPv6, this case should be caught by ss_check_ipv6 already and return 1
+    # If no IP at all, also caught by ss_check_ipv6
+    else # Fallback, should ideally not be reached if ss_check_ipv6 works
+        error_echo "无法确定 Shadowsocks 客户端配置使用的 IP 地址。脚本逻辑错误或网络检测异常。"
         local dummy
         safe_read "按 Enter 返回主菜单..." dummy
         return 1
@@ -874,10 +874,11 @@ ss_get_input() {
 
 ss_check_ipv6() {
     info_echo "检测 IPv6 网络环境以安装 Shadowsocks..."
-    if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then
-        if $HAS_IPV4; then
-            error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。"
-        else
+    if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then # If no routable IPv6 detected
+        if $HAS_IPV4; then # If only IPv4 is present
+            error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。"
+            error_echo "${RED}Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。${ENDCOLOR}"
+        else # No IPv4 and no IPv6 detected
             error_echo "未检测到任何有效的公网 IP 地址，Shadowsocks 无法安装。"
         fi
         local dummy
@@ -897,9 +898,9 @@ ss_check_ipv6() {
     fi
     success_echo "IPv6 环境检查通过: $IPV6_ADDR"
 
-    # 新增：针对纯IPv6服务器的NAT64/DNS64提示
-    if ! $HAS_IPV4; then
-        warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。Shadowsocks 服务若需访问 IPv4-Only 网站，"
+    # 新增：针对纯IPv6服务器的NAT64/DNS64提示，仅当确定是纯IPv6环境时显示
+    if ! $HAS_IPV4 && $HAS_IPV6; then # 确定是纯IPv6且IPv6可用
+        warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
         warning_echo "   必须确保您的网络提供商已启用 NAT64 和 DNS64。否则，Shadowsocks 将只能访问 IPv6 目标。"
         info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
         info_echo "   您可以尝试运行 'dig A ipv4.google.com @::1' 或 'ping ipv4.google.com' (如果系统支持自动DNS64/NAT64) 来验证。"
@@ -981,7 +982,7 @@ ss_generate_config() {
     mkdir -p /etc/shadowsocks-libev
     cat > /etc/shadowsocks-libev/config.json <<EOF
 {
-    "server": "::",
+    "server": "::", # Shadowsocks 服务器监听所有可用IP地址
     "server_port": $SS_PORT,
     "password": "$SS_PASSWORD",
     "timeout": 300,
@@ -1034,7 +1035,7 @@ EOF
     if command -v firewall-cmd &>/dev/null && systemctl is-active --quiet firewalld; then 
         firewall-cmd --permanent --add-port="$SS_PORT"/tcp >/dev/null 2>&1
         firewall-cmd --permanent --add-port="$SS_PORT"/udp >/dev/null 2>&1
-        fireeral-cmd --reload >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
         success_echo "firewalld 防火墙已配置放行 Shadowsocks 端口 ($SS_PORT/tcp, $SS_PORT/udp)。"
     fi
 
@@ -1046,26 +1047,24 @@ EOF
 generate_ss_configs() {
     local ss_server_addr_for_uri=""
     local ss_server_addr_for_config_field=""
-
+    
+    # 根据全局变量 SS_SERVER_IP_CHOICE 决定客户端配置中的服务器地址
     if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
-        # Ensure IPV6_ADDR is valid before using
         if [[ "$IPV6_ADDR" == "N/A" ]]; then
-            error_echo "Shadowsocks配置生成失败: 未检测到有效的IPv6地址。"
+            error_echo "Shadowsocks配置生成失败: 未检测到有效的IPv6地址，但选择了IPv6作为客户端连接IP。"
             return 1
         fi
         ss_server_addr_for_uri="[$IPV6_ADDR]"
         ss_server_addr_for_config_field="$IPV6_ADDR"
     elif [[ "$SS_SERVER_IP_CHOICE" == "ipv4" ]]; then
-        # Ensure IPV4_ADDR is valid before using
         if [[ "$IPV4_ADDR" == "N/A" ]]; then
-            error_echo "Shadowsocks配置生成失败: 未检测到有效的IPv4地址。"
+            error_echo "Shadowsocks配置生成失败: 未检测到有效的IPv4地址，但选择了IPv4作为客户端连接IP。"
             return 1
         fi
         ss_server_addr_for_uri="$IPV4_ADDR"
         ss_server_addr_for_config_field="$IPV4_ADDR"
     else
-        # Fallback if SS_SERVER_IP_CHOICE is not set correctly or IPs are N/A
-        error_echo "Shadowsocks配置生成失败：IP选择逻辑异常或无可用IP地址。"
+        error_echo "Shadowsocks配置生成失败：IP选择逻辑异常或未设置客户端连接IP类型。"
         return 1
     fi
 
@@ -1103,9 +1102,10 @@ ss_display_result() {
     echo
     echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
     local display_ip_for_info=""
+    # 这里使用 SS_SERVER_IP_CHOICE 来决定显示哪个IP
     if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
         display_ip_for_info="[$IPV6_ADDR]"
-    else
+    else # 此时 SS_SERVER_IP_CHOICE 必定是 ipv4
         display_ip_for_info="$IPV4_ADDR"
     fi
     echo -e "   服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
@@ -1137,7 +1137,7 @@ ss_display_result() {
     echo
 
     # 针对纯IPv6服务器的NAT64/DNS64提示
-    if ! $HAS_IPV4; then
+    if ! $HAS_IPV4; then # 如果没有IPv4，即为纯IPv6环境
         warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
         warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能。否则，Shadowsocks 将只能访问 IPv6 目标。"
         info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
@@ -1146,8 +1146,7 @@ ss_display_result() {
         echo
     fi
 
-
-    # 直接调用 generate_ss_configs，它将使用 ss_generate_config 设置的全局变量
+    # 直接调用 generate_ss_configs，它将使用 ss_generate_config 设置的全局变量和 SS_SERVER_IP_CHOICE
     generate_ss_configs
 
     if command -v qrencode >/dev/null 2>&1; then
@@ -1157,7 +1156,14 @@ ss_display_result() {
         local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
         local encoded_password_method
         encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
-        local ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
+        
+        local ss_qr_link_ip_display=""
+        if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
+            ss_qr_link_ip_display="[$IPV6_ADDR]"
+        else
+            ss_qr_link_ip_display="$IPV4_ADDR"
+        fi
+        local ss_link_uri="ss://${encoded_password_method}@${ss_qr_link_ip_display}:${SS_PORT}#${server_name}"
         
         info_echo "二维码 (请最大化终端窗口显示):"
         qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
@@ -1180,7 +1186,7 @@ ss_run_install() {
 
     pre_install_check "shadowsocks" || return 1
     
-    ss_get_input || return 1 # 新增：获取 Shadowsocks 用户输入
+    ss_get_input || return 1 # 新增：获取 Shadowsocks 用户输入，设置 SS_SERVER_IP_CHOICE
     ss_install_dependencies && \
     ss_generate_config && \
     ss_setup_service && \
@@ -1463,9 +1469,15 @@ show_shadowsocks_config() {
     echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
     local display_ip_for_info=""
     # 在管理界面显示时，需要从全局变量 SS_SERVER_IP_CHOICE 决定显示哪个IP
+    # 如果 SS_SERVER_IP_CHOICE 为空（例如脚本重启后），则重新推断
+    if [[ -z "$SS_SERVER_IP_CHOICE" ]]; then
+        if $HAS_IPV6; then SS_SERVER_IP_CHOICE="ipv6";
+        elif $HAS_IPV4; then SS_SERVER_IP_CHOICE="ipv4"; fi
+    fi
+
     if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
         display_ip_for_info="[$IPV6_ADDR]"
-    else
+    else # 此时 SS_SERVER_IP_CHOICE 必定是 ipv4
         display_ip_for_info="$IPV4_ADDR"
     fi
     echo -e "   服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
@@ -1496,11 +1508,21 @@ show_shadowsocks_config() {
     fi
     echo
 
+    # 针对纯IPv6服务器的NAT64/DNS64提示
+    if ! $HAS_IPV4; then # 如果没有IPv4，即为纯IPv6环境
+        warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
+        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能。否则，Shadowsocks 将只能访问 IPv6 目标。"
+        info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
+        info_echo "   您可以尝试运行 'dig A ipv4.google.com @::1' 或 'ping ipv4.google.com' (如果系统支持自动DNS64/NAT64) 来验证。"
+        info_echo "   如果您的 VPS 提供商没有提供 NAT64/DNS64，则您将无法通过此 Shadowsocks 服务访问纯 IPv4 网站。"
+        echo
+    fi
+
     # 更新全局变量，确保 generate_ss_configs 使用的是从文件读取的最新值
     SS_PASSWORD="$password"
     SS_PORT="$server_port"
     SS_METHOD="$method"
-    # SS_SERVER_IP_CHOICE 已经从 ss_get_input 或 detect_network 设置
+    # SS_SERVER_IP_CHOICE 已经根据上方逻辑或安装时用户选择设置
 
     generate_ss_configs
 
@@ -1511,12 +1533,14 @@ show_shadowsocks_config() {
         local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
         local encoded_password_method
         encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
-        local ss_link_uri=""
+        
+        local ss_qr_link_ip_display=""
         if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
-             ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
+            ss_qr_link_ip_display="[$IPV6_ADDR]"
         else
-             ss_link_uri="ss://${encoded_password_method}@${IPV4_ADDR}:${SS_PORT}#${server_name}"
+            ss_qr_link_ip_display="$IPV4_ADDR"
         fi
+        local ss_link_uri="ss://${encoded_password_method}@${ss_qr_link_ip_display}:${SS_PORT}#${server_name}"
         
         info_echo "二维码 (请最大化终端窗口显示):"
         qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
