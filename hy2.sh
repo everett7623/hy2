@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.14
+# 版本: 1.0.15
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -714,7 +714,7 @@ hy2_update() {
         warning_echo "由于无法检测当前版本，将尝试下载并替换最新版本，但不会修改现有配置。"
         local confirm_update
         safe_read "是否仍要下载并替换最新版本 ($latest_version)？ (y/N): " confirm_update
-        if [[ "$confirm_update" =~ ^[yY]$ ]]; then
+        if [[ "$confirm" =~ ^[yY]$ ]]; then
             perform_update=true
         else
             info_echo "操作已取消。"
@@ -830,7 +830,7 @@ EOF
 }
 
 
-# --- Shadowsocks 用户输入处理 (优化 IP 选择逻辑) ---
+# --- Shadowsocks 用户输入处理 (强制 IPv6 作为客户端配置IP) ---
 ss_get_input() {
     echo
     echo -e "${CYAN}=== Shadowsocks 安装参数设置 ===${ENDCOLOR}"
@@ -843,25 +843,23 @@ ss_get_input() {
         info_echo "自动生成密码: $SS_PASSWORD"
     fi
 
-    # IP 地址选择 (根据检测到的网络环境进行智能选择或强制使用 IPv6)
+    # IP 地址选择 (根据检测到的网络环境，强制使用 IPv6 作为客户端配置IP)
     if $HAS_IPV6 && [[ "$IPV6_ADDR" != "N/A" ]]; then
         SS_SERVER_IP_CHOICE="ipv6"
-        info_echo "检测到公网 IPv6 地址 (${IPV6_ADDR})，Shadowsocks 客户端配置将使用 IPv6 地址。"
+        info_echo "检测到公网 IPv6 地址 (${IPV6_ADDR})。"
         if $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
-            info_echo "服务器同时拥有 IPv4 地址 (${IPV4_ADDR})，但根据要求，Shadowsocks 客户端配置将默认优先使用 IPv6。"
-            local confirm
-            safe_read "您是否需要强制 Shadowsocks 客户端配置使用 IPv4 地址? (y/N): " confirm
-            if [[ "$confirm" =~ ^[yY]$ ]]; then
-                SS_SERVER_IP_CHOICE="ipv4"
-                info_echo "Shadowsocks 客户端配置将使用 IPv4 地址。"
-            fi
+            info_echo "服务器同时拥有 IPv4 地址 (${IPV4_ADDR})。根据要求，Shadowsocks 客户端配置将强制使用 IPv6 地址。"
+        else
+            info_echo "服务器为纯 IPv6 环境，Shadowsocks 客户端配置将使用 IPv6 地址。"
         fi
     elif $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
+        # This branch should ideally be caught by ss_check_ipv6 earlier and prevent reaching here.
+        # But as a safeguard, reiterate the refusal for IPv4-only setup.
         error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。"
         error_echo "${RED}Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。${ENDCOLOR}"
         local dummy
         safe_read "按 Enter 返回主菜单..." dummy
-        return 1 # Cannot proceed with SS installation
+        return 1
     else
         error_echo "未检测到任何有效的公网 IP 地址，Shadowsocks 无法安装。"
         local dummy
@@ -1312,7 +1310,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.14) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.15) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1479,7 +1477,10 @@ show_shadowsocks_config() {
             # This case means the server *has* IPv4, but if it's pure IPv4, 
             # installation would have failed. This is mostly for display on dual-stack
             # if the user *forced* IPv4 during setup.
-            SS_SERVER_IP_CHOICE="ipv4" 
+            # However, with the new requirement "ss只有ipv6输出", this part should ideally not be reached
+            # or if reached, it must force to ipv6. Re-evaluate this logic for consistency.
+            # Since ss_get_input now forces ipv6 if available, this part also should.
+            SS_SERVER_IP_CHOICE="ipv6" # If script was restarted, and was a dual-stack setup, force IPv6 as per requirement.
         else 
             SS_SERVER_IP_CHOICE="unknown"; 
         fi
@@ -1488,6 +1489,8 @@ show_shadowsocks_config() {
     if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
         display_ip_for_info="[$IPV6_ADDR]"
     elif [[ "$SS_SERVER_IP_CHOICE" == "ipv4" ]]; then 
+        # This branch should ideally not be reachable now for SS client config based on the new logic.
+        # But keeping it as a fallback in case something unforeseen happens.
         display_ip_for_info="$IPV4_ADDR"
     else
         display_ip_for_info="N/A (IP选择逻辑异常)"
