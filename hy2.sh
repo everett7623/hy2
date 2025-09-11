@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.20
+# 版本: 1.0.21
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -371,12 +371,12 @@ hy2_download_and_install() {
     
     info_echo "正在下载: $download_url"
     if ! timeout 60 wget -q --show-progress -O hysteria "$download_url"; then
-        error_echo "下载失败"
+        error_echo "下载失败，请检查网络连接或 GitHub 访问情况。"
         return 1
     fi
     
     if [[ ! -s hysteria ]] || ! file hysteria | grep -q "executable"; then
-        error_echo "下载的文件无效"
+        error_echo "下载的文件无效或已损坏，请重试。"
         return 1
     fi
     
@@ -384,7 +384,7 @@ hy2_download_and_install() {
     mv hysteria /usr/local/bin/hysteria
     
     if ! /usr/local/bin/hysteria version >/dev/null 2>&1; then
-        error_echo "Hysteria2 安装验证失败"
+        error_echo "Hysteria2 安装验证失败，程序可能无法正常运行。"
         return 1
     fi
     
@@ -1341,7 +1341,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.20) ${ENDCOLOR}" # 版本号更新为 v1.0.20
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.21) ${ENDCOLOR}" # 版本号更新为 v1.0.21
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1735,8 +1735,26 @@ main() {
         choice=$(echo "$choice" | tr -cd '0-9')
         
         case $choice in
-            1) hy2_install ;;
-            2) ss_run_install ;;
+            1) 
+                if hy2_install; then
+                    # 成功安装后，hy2_show_result 内部已有 safe_read 暂停
+                    true 
+                else
+                    # Hysteria2 安装失败，暂停让用户查看错误信息
+                    local dummy
+                    safe_read "Hysteria2 安装失败，请检查以上错误信息。按 Enter 返回主菜单..." dummy
+                fi
+                ;;
+            2) 
+                if ss_run_install; then
+                    # 成功安装后，ss_display_result 内部已有 safe_read 暂停
+                    true
+                else
+                    # Shadowsocks 安装失败，暂停让用户查看错误信息
+                    local dummy
+                    safe_read "Shadowsocks 安装失败，请检查以上错误信息。按 Enter 返回主菜单..." dummy
+                fi
+                ;;
             3) manage_services ;; # This will lead to the sub-menu for managing individual services
             4) uninstall_services ;; # This will lead to the sub-menu for uninstalling individual services
             5) update_system_kernel ;; # Update OS kernel
