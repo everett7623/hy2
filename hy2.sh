@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.20
+# 版本: 1.0.19
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -53,21 +53,20 @@ safe_read() {
     local var_name="$2"
     local input
     
-    # 清理输入缓冲区
-    # 局部重定向，避免影响整个脚本
+    # 清理输入缓冲区，确保只清除当前调用前的残留
     while read -t 0; do
         read -r discard
     done
     
     echo -n "$prompt"
-    # 尝试从 /dev/tty 读取，如果失败则回退到标准输入 (此脚本为交互式，通常 /dev/tty 可用)
+    # 优先从 /dev/tty 读取，这通常是最可靠的交互式输入方式
     if read -r input </dev/tty 2>/dev/null; then
-        # 清理输入，去除控制字符和首尾空格
         input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         eval "$var_name='$input'"
         return 0
     else
-        # 如果 /dev/tty 不可用，使用标准输入
+        # 如果 /dev/tty 不可用，回退到标准输入。
+        # 考虑到 main 函数开头的 exec，通常这里的标准输入也已经被重定向到 /dev/tty 了。
         if read -r input; then
             input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             eval "$var_name='$input'"
@@ -96,7 +95,7 @@ safe_read_password() {
         return 0
     else
         if read -s -r input; then
-            input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space_:]]*//;s/[[:space_:]]*$//')
             eval "$var_name='$input'"
             echo
             return 0
@@ -175,9 +174,6 @@ detect_network() {
             IPV6_ADDR="N/A"
         fi
     fi
-    
-    # 移除全局 exec 重定向，避免干扰后续输入
-    # exec </dev/tty 2>/dev/null || true # <--- 已移除
 }
 
 # --- 检查并建议创建 Swap (仅提示，不强制中断) ---
@@ -523,6 +519,8 @@ hy2_get_input() {
             break
         else
             warning_echo "请输入一个有效的域名格式"
+        在 `main` 函数的开头，重新加入了 `exec </dev/tty 2>/dev/null || true`。这是一个在交互式 shell 脚本中常用的健壮性措施，它强制将脚本的标准输入和标准错误重定向到当前终端设备 `/dev/tty`。这可以解决当脚本的初始标准输入被意外关闭、重定向或处于非交互式模式时（例如通过某些 `ssh` 客户端或 `nohup` 运行），`read` 命令无法正常工作的问题。
+    *   `safe_read` 和 `safe_read_password` 函数内部的输入缓冲区清理逻辑保持不变，它只清理当前 `read` 操作前的残留输入。
         fi
     done
 
@@ -1722,15 +1720,14 @@ update_system_kernel() {
 ################################################################################
 
 main() {
+    # 确保脚本始终从 /dev/tty 读取输入，并将标准错误重定向到 /dev/null。
+    # 这有助于在某些非标准执行环境（如 ssh -t 或某些脚本调度）中保证交互性。
+    exec </dev/tty 2>/dev/null || true
+
     check_root
     detect_system
     detect_network
     check_and_create_swap # Call swap creation early (non-blocking suggestion)
-    
-    # 移除冗余的输入缓冲区清理
-    # while read -t 0.1 -n 1000 discard 2>/dev/null; do
-    #     true
-    # done
     
     while true; do
         show_menu
