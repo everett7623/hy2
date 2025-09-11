@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.19
+# 版本: 1.0.20
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
 #       Shadowsocks 仅监听 IPv6 地址。
@@ -519,8 +519,6 @@ hy2_get_input() {
             break
         else
             warning_echo "请输入一个有效的域名格式"
-        在 `main` 函数的开头，重新加入了 `exec </dev/tty 2>/dev/null || true`。这是一个在交互式 shell 脚本中常用的健壮性措施，它强制将脚本的标准输入和标准错误重定向到当前终端设备 `/dev/tty`。这可以解决当脚本的初始标准输入被意外关闭、重定向或处于非交互式模式时（例如通过某些 `ssh` 客户端或 `nohup` 运行），`read` 命令无法正常工作的问题。
-    *   `safe_read` 和 `safe_read_password` 函数内部的输入缓冲区清理逻辑保持不变，它只清理当前 `read` 操作前的残留输入。
         fi
     done
 
@@ -1343,7 +1341,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.19) ${ENDCOLOR}"
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.20) ${ENDCOLOR}" # 版本号更新为 v1.0.20
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
