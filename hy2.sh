@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.22
+# 版本: 1.0.11
 # 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
 #       Hysteria2 使用自签名证书模式，无需域名。
-#       Shadowsocks 服务默认只支持 IPv6 机器，或者在双栈 VPS 上优先输出 IPv6 地址。
+#       Shadowsocks 仅监听 IPv6 地址。
 
 # --- 脚本行为设置 ---
 set -o pipefail
@@ -35,7 +35,6 @@ HY_SERVER_IP_CHOICE="" # "ipv4" or "ipv6" for Hysteria2 client config
 SS_PORT=""
 SS_PASSWORD=""
 SS_METHOD="chacha20-ietf-poly1305" # 默认加密方式
-SS_SERVER_IP_CHOICE="" # "ipv4" or "ipv6" for Shadowsocks client config
 
 ################################################################################
 # 辅助函数 & 系统检测
@@ -53,20 +52,19 @@ safe_read() {
     local var_name="$2"
     local input
     
-    # 清理输入缓冲区，确保只清除当前调用前的残留
+    # 清理输入缓冲区
     while read -t 0; do
         read -r discard
     done
     
     echo -n "$prompt"
-    # 优先从 /dev/tty 读取，这通常是最可靠的交互式输入方式
     if read -r input </dev/tty 2>/dev/null; then
+        # 清理输入，去除控制字符和首尾空格
         input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         eval "$var_name='$input'"
         return 0
     else
-        # 如果 /dev/tty 不可用，回退到标准输入。
-        # 考虑到 main 函数开头的 exec，通常这里的标准输入也已经被重定向到 /dev/tty 了。
+        # 如果 /dev/tty 不可用，使用标准输入
         if read -r input; then
             input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             eval "$var_name='$input'"
@@ -95,7 +93,7 @@ safe_read_password() {
         return 0
     else
         if read -s -r input; then
-            input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space_:]]*//;s/[[:space_:]]*$//')
+            input=$(echo "$input" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             eval "$var_name='$input'"
             echo
             return 0
@@ -174,6 +172,9 @@ detect_network() {
             IPV6_ADDR="N/A"
         fi
     fi
+    
+    # Clean possible input pollution
+    exec </dev/tty 2>/dev/null || true
 }
 
 # --- 检查并建议创建 Swap (仅提示，不强制中断) ---
@@ -361,7 +362,7 @@ hy2_download_and_install() {
     latest_version=$(timeout 10 curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name"' | cut -d '"' -f 4)
     
     if [[ -z "$latest_version" ]]; then
-        error_echo "无法获取最新版本信息，请检查网络连接或 GitHub API 访问情况。"
+        error_echo "无法获取最新版本信息"
         return 1
     fi
     
@@ -371,14 +372,12 @@ hy2_download_and_install() {
     
     info_echo "正在下载: $download_url"
     if ! timeout 60 wget -q --show-progress -O hysteria "$download_url"; then
-        error_echo "Hysteria2 应用程序下载失败，请检查网络连接或 GitHub 访问情况。"
-        cd / && rm -rf "$tmp_dir" # 清理临时文件
+        error_echo "下载失败"
         return 1
     fi
     
     if [[ ! -s hysteria ]] || ! file hysteria | grep -q "executable"; then
-        error_echo "下载的文件无效或已损坏，请重试。"
-        cd / && rm -rf "$tmp_dir" # 清理临时文件
+        error_echo "下载的文件无效"
         return 1
     fi
     
@@ -386,7 +385,7 @@ hy2_download_and_install() {
     mv hysteria /usr/local/bin/hysteria
     
     if ! /usr/local/bin/hysteria version >/dev/null 2>&1; then
-        error_echo "Hysteria2 安装验证失败，程序可能无法正常运行。"
+        error_echo "Hysteria2 安装验证失败"
         return 1
     fi
     
@@ -642,7 +641,6 @@ hy2_show_result() {
     
     local dummy
     safe_read "按 Enter 继续..." dummy
-    return 0
 }
 
 # --- 安装主函数 ---
@@ -658,16 +656,6 @@ hy2_install() {
     hy2_create_self_signed_cert || return 1
     hy2_create_config || return 1
     hy2_create_service || return 1
-
-    # 持久化 Hysteria2 配置变量
-    mkdir -p /etc/hysteria2
-    echo "HY_PASSWORD='$HY_PASSWORD'" > /etc/hysteria2/hy2_vars.conf
-    echo "HY_DOMAIN='$HY_DOMAIN'" >> /etc/hysteria2/hy2_vars.conf
-    echo "HY_SERVER_IP_CHOICE='$HY_SERVER_IP_CHOICE'" >> /etc/hysteria2/hy2_vars.conf
-    echo "FAKE_URL='$FAKE_URL'" >> /etc/hysteria2/hy2_vars.conf
-    chmod 600 /etc/hysteria2/hy2_vars.conf # 保护敏感信息
-    success_echo "Hysteria2 配置变量已保存至 /etc/hysteria2/hy2_vars.conf"
-
     hy2_show_result
 }
 
@@ -812,7 +800,6 @@ change_debian_apt_sources() {
         fi
 
         # 根据系统代号生成新的阿里云源配置
-        # 注意：这里使用 https 协议，需要确保 ca-certificates 和 apt-transport-https (或直接 curl) 已安装
         cat > "$sources_list" <<EOF
 deb https://mirrors.aliyun.com/debian/ $codename main contrib non-free
 deb-src https://mirrors.aliyun.com/debian/ $codename main contrib non-free
@@ -839,55 +826,12 @@ EOF
     return 0 # 非 Debian/Ubuntu 系统直接返回
 }
 
-
-# --- Shadowsocks 用户输入处理 (强制 IPv6 作为客户端配置IP) ---
-ss_get_input() {
-    echo
-    echo -e "${CYAN}=== Shadowsocks 安装参数设置 ===${ENDCOLOR}"
-    echo
-    
-    # 密码
-    safe_read_password "请输入连接密码 (留空自动生成): " SS_PASSWORD
-    if [[ -z "$SS_PASSWORD" ]]; then
-        SS_PASSWORD=$(openssl rand -base64 16)
-        info_echo "自动生成密码: $SS_PASSWORD"
-    fi
-
-    # IP 地址选择 (根据检测到的网络环境，强制使用 IPv6 作为客户端配置IP)
-    if $HAS_IPV6 && [[ "$IPV6_ADDR" != "N/A" ]]; then
-        SS_SERVER_IP_CHOICE="ipv6"
-        info_echo "检测到公网 IPv6 地址 (${IPV6_ADDR})。"
-        if $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
-            info_echo "服务器同时拥有 IPv4 地址 (${IPV4_ADDR})。根据要求，Shadowsocks 客户端配置将强制使用 IPv6 地址。"
-        else
-            info_echo "服务器为纯 IPv6 环境，Shadowsocks 客户端配置将使用 IPv6 地址。"
-        fi
-    elif $HAS_IPV4 && [[ "$IPV4_ADDR" != "N/A" ]]; then
-        # This branch should ideally be caught by ss_check_ipv6 earlier and prevent reaching here.
-        # But as a safeguard, reiterate the refusal for IPv4-only setup.
-        error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。"
-        error_echo "${RED}Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。${ENDCOLOR}"
-        local dummy
-        safe_read "按 Enter 返回主菜单..." dummy
-        return 1
-    else
-        error_echo "未检测到任何有效的公网 IP 地址，Shadowsocks 无法安装。"
-        local dummy
-        safe_read "按 Enter 返回主菜单..." dummy
-        return 1
-    fi
-    
-    return 0
-}
-
-
 ss_check_ipv6() {
     info_echo "检测 IPv6 网络环境以安装 Shadowsocks..."
-    if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then # If no routable IPv6 detected
-        if $HAS_IPV4; then # If only IPv4 is present
-            error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。"
-            error_echo "${RED}Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。${ENDCOLOR}"
-        else # No IPv4 and no IPv6 detected
+    if ! $HAS_IPV6 || [[ "$IPV6_ADDR" == "N/A" ]]; then
+        if $HAS_IPV4; then
+            error_echo "检测到您的服务器仅有 IPv4 地址 ($IPV4_ADDR)。Shadowsocks 服务在此脚本中仅支持 IPv6 或双栈 IPv6 优先模式，无法在 IPv4 Only 环境下安装。"
+        else
             error_echo "未检测到任何有效的公网 IP 地址，Shadowsocks 无法安装。"
         fi
         local dummy
@@ -895,7 +839,7 @@ ss_check_ipv6() {
         return 1
     fi
 
-    # 再次确认 IPv6 连通性
+    # 再次确认 IPv6 连通性，虽然 detect_network 已经做了大部分，但为了 Shadowsocks 的特定需求再确认一次
     if ! timeout 5 ping6 -c 1 google.com >/dev/null 2>&1; then
         warning_echo "检测到 IPv6 地址 ($IPV6_ADDR)，但似乎无法连接外网。"
         local confirm
@@ -906,27 +850,6 @@ ss_check_ipv6() {
         fi
     fi
     success_echo "IPv6 环境检查通过: $IPV6_ADDR"
-
-    # 新增：针对纯IPv6服务器的NAT64/DNS64提示，并在纯IPv6环境下强烈建议Hysteria2
-    if ! $HAS_IPV4 && $HAS_IPV6; then # 确定是纯IPv6且IPv6可用
-        warning_echo "${RED}⚠️ 重要警告：您的服务器是纯 IPv6 环境。Shadowsocks 服务端虽然能监听 IPv6，但要访问 IPv4-Only 网站，您的网络必须提供 DNS64 和 NAT64 功能。${ENDCOLOR}"
-        warning_echo "${RED}   如果您的 VPS 提供商没有提供这些功能，Shadowsocks 将无法访问纯 IPv4 网站，这可能导致连接问题。${ENDCOLOR}"
-        warning_echo "${BLUE}   强烈建议您考虑安装 Hysteria2 (主菜单选项 1)，其在纯 IPv6 环境下通常表现更稳定，不易受 IPv4 限制。${ENDCOLOR}"
-        local confirm_ss_ipv6_only
-        safe_read "${YELLOW}您确定仍要在纯 IPv6 环境下继续安装 Shadowsocks 吗? (y/N): ${ENDCOLOR}" confirm_ss_ipv6_only
-        if [[ ! "$confirm_ss_ipv6_only" =~ ^[yY]$ ]]; then
-            info_echo "Shadowsocks 安装已取消，推荐您尝试安装 Hysteria2。"
-            local dummy
-            safe_read "按 Enter 返回主菜单..." dummy
-            return 1 # User cancelled SS installation
-        fi
-
-        info_echo "   如果您不确定 NAT64/DNS64，请咨询您的 VPS 提供商或查阅相关文档。"
-        info_echo "   您可以尝试运行 'ping ipv4.google.com' 或 'curl -4 https://ip.p3terx.com' 来验证 IPv4 连通性。"
-        echo
-        local dummy
-        safe_read "按 Enter 继续..." dummy
-    fi
     return 0
 }
 
@@ -965,9 +888,8 @@ ss_install_dependencies() {
                 return 1
             fi
             info_echo "正在安装 Shadowsocks (shadowsocks-libev, qrencode) 和 curl (日志输出到 $install_log)..."
-            # 修正：确保在 RHEL-based 系统上安装 shadowsocks-libev 和 qrencode
             if ! yum install -y shadowsocks-libev qrencode curl >"$install_log" 2>&1; then
-                error_echo "Shadowsocks 或 qrencode 安装失败。请检查日志: $install_log"
+                error_echo "shadowsocks-libev 或 qrencode 安装失败。请检查日志: $install_log"
                 cat "$install_log" >&2
                 return 1
             fi
@@ -996,13 +918,12 @@ ss_install_dependencies() {
 ss_generate_config() {
     info_echo "生成 Shadowsocks 配置文件..."
     SS_PORT=$(shuf -i 20000-40000 -n 1)
-    # SS_PASSWORD 和 SS_METHOD 已经在 ss_get_input 中获取或生成
+    SS_PASSWORD=$(openssl rand -base64 16)
 
     mkdir -p /etc/shadowsocks-libev
-    # Removed the JSON comment '#' from the "server" line, as it caused a JSON parsing error.
     cat > /etc/shadowsocks-libev/config.json <<EOF
 {
-    "server": "::", 
+    "server": "::",
     "server_port": $SS_PORT,
     "password": "$SS_PASSWORD",
     "timeout": 300,
@@ -1065,28 +986,9 @@ EOF
 
 # --- 生成多种 Shadowsocks 客户端配置格式 ---
 generate_ss_configs() {
-    local ss_server_addr_for_uri=""
-    local ss_server_addr_for_config_field=""
-    
-    # 根据全局变量 SS_SERVER_IP_CHOICE 决定客户端配置中的服务器地址
-    if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
-        if [[ "$IPV6_ADDR" == "N/A" ]]; then
-            error_echo "Shadowsocks配置生成失败: 未检测到有效的IPv6地址，但选择了IPv6作为客户端连接IP。"
-            return 1
-        fi
-        ss_server_addr_for_uri="[$IPV6_ADDR]"
-        ss_server_addr_for_config_field="$IPV6_ADDR"
-    elif [[ "$SS_SERVER_IP_CHOICE" == "ipv4" ]]; then
-        if [[ "$IPV4_ADDR" == "N/A" ]]; then
-            error_echo "Shadowsocks配置生成失败: 未检测到有效的IPv4地址，但选择了IPv4作为客户端连接IP。"
-            return 1
-        fi
-        ss_server_addr_for_uri="$IPV4_ADDR"
-        ss_server_addr_for_config_field="$IPV4_ADDR"
-    else
-        error_echo "Shadowsocks配置生成失败：IP选择逻辑异常或未设置客户端连接IP类型。"
-        return 1
-    fi
+    # 确保此处使用全局变量 SS_PORT, SS_PASSWORD, SS_METHOD
+    local ss_server_addr_for_uri="[$IPV6_ADDR]"        # IPv6地址用方括号括起来
+    local ss_server_addr_for_config_field="$IPV6_ADDR" # Clash/Surge 'server'字段期望裸IPv6
 
     local country_code
     country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
@@ -1121,20 +1023,13 @@ ss_display_result() {
     echo -e "${BG_PURPLE} Shadowsocks (IPv6) 安装完成！ ${ENDCOLOR}"
     echo
     echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
-    local display_ip_for_info=""
-    # 这里使用 SS_SERVER_IP_CHOICE 来决定显示哪个IP
-    if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
-        display_ip_for_info="[$IPV6_ADDR]"
-    else # 此时 SS_SERVER_IP_CHOICE 必定是 ipv4
-        display_ip_for_info="$IPV4_ADDR"
-    fi
-    echo -e "   服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
+    echo -e "   服务器地址: ${GREEN}[$IPV6_ADDR]${ENDCOLOR}"
     echo -e "   端口:       ${GREEN}$SS_PORT${ENDCOLOR}"
     echo -e "   密码:       ${GREEN}$SS_PASSWORD${ENDCOLOR}"
     echo -e "   加密方式:   ${GREEN}$SS_METHOD${ENDCOLOR}"
     echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
-
+    
     # 检查 Shadowsocks 监听状态
     info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6，确保 IPv6 地址可用):"
     local listening_status=""
@@ -1156,16 +1051,7 @@ ss_display_result() {
     fi
     echo
 
-    # 针对纯IPv6服务器的NAT64/DNS64提示
-    if ! $HAS_IPV4; then # 如果没有IPv4，即为纯IPv6环境
-        warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
-        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能。否则，Shadowsocks 将只能访问 IPv6 目标。"
-        info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
-        info_echo "   您可以尝试运行 'ping ipv4.google.com' 或 'curl -4 https://ip.p3terx.com' 来验证 IPv4 连通性。"
-        echo
-    fi
-
-    # 直接调用 generate_ss_configs，它将使用 ss_generate_config 设置的全局变量和 SS_SERVER_IP_CHOICE
+    # 直接调用 generate_ss_configs，它将使用 ss_generate_config 设置的全局变量
     generate_ss_configs
 
     if command -v qrencode >/dev/null 2>&1; then
@@ -1175,14 +1061,7 @@ ss_display_result() {
         local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
         local encoded_password_method
         encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
-        
-        local ss_qr_link_ip_display=""
-        if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
-            ss_qr_link_ip_display="[$IPV6_ADDR]"
-        else
-            ss_qr_link_ip_display="$IPV4_ADDR"
-        fi
-        local ss_link_uri="ss://${encoded_password_method}@${ss_qr_link_ip_display}:${SS_PORT}#${server_name}"
+        local ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
         
         info_echo "二维码 (请最大化终端窗口显示):"
         qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
@@ -1205,28 +1084,15 @@ ss_run_install() {
 
     pre_install_check "shadowsocks" || return 1
     
-    ss_get_input || return 1 # 新增：获取 Shadowsocks 用户输入，设置 SS_SERVER_IP_CHOICE
-    
-    if ss_install_dependencies && \
-       ss_generate_config && \
-       ss_setup_service; then
-
-        # 持久化 Shadowsocks 配置变量
-        mkdir -p /etc/shadowsocks-libev
-        echo "SS_PORT='$SS_PORT'" > /etc/shadowsocks-libev/ss_vars.conf
-        echo "SS_PASSWORD='$SS_PASSWORD'" >> /etc/shadowsocks-libev/ss_vars.conf
-        echo "SS_METHOD='$SS_METHOD'" >> /etc/shadowsocks-libev/ss_vars.conf
-        echo "SS_SERVER_IP_CHOICE='$SS_SERVER_IP_CHOICE'" >> /etc/shadowsocks-libev/ss_vars.conf
-        chmod 600 /etc/shadowsocks-libev/ss_vars.conf # 保护敏感信息
-        success_echo "Shadowsocks 配置变量已保存至 /etc/shadowsocks-libev/ss_vars.conf"
-
-        ss_display_result
-    else
+    ss_install_dependencies && \
+    ss_generate_config && \
+    ss_setup_service && \
+    ss_display_result || {
         error_echo "Shadowsocks 安装失败。"
         local dummy
         safe_read "按 Enter 返回主菜单..." dummy
         return 1
-    fi
+    }
 }
 
 ss_uninstall() {
@@ -1234,7 +1100,6 @@ ss_uninstall() {
     systemctl disable --now shadowsocks-libev >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/shadowsocks-libev.service
     rm -f /etc/shadowsocks-libev/config.json
-    rm -f /etc/shadowsocks-libev/ss_vars.conf # 移除持久化配置文件
     systemctl daemon-reload
     success_echo "Shadowsocks 已卸载完成。"
 }
@@ -1343,7 +1208,7 @@ show_menu() {
         ss_status="${RED}已停止${ENDCOLOR}"
     fi
 
-    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.22) ${ENDCOLOR}" # 版本号更新为 v1.0.22
+    echo -e "${BG_PURPLE} Hysteria2 & Shadowsocks (IPv6) Management Script (v1.0.11) ${ENDCOLOR}"
     echo -e "${YELLOW}项目地址：${CYAN}https://github.com/everett7623/hy2ipv6${ENDCOLOR}"
     echo -e "${YELLOW}博客地址：${CYAN}https://seedloc.com${ENDCOLOR}"
     echo -e "${YELLOW}论坛地址：${CYAN}https://nodeloc.com${ENDCOLOR}"
@@ -1351,18 +1216,8 @@ show_menu() {
     echo -e " ${YELLOW}服务器IP:${ENDCOLOR} ${GREEN}${ipv4_display}${ENDCOLOR} (IPv4) / ${GREEN}${ipv6_display}${ENDCOLOR} (IPv6)"
     echo -e " ${YELLOW}服务状态:${ENDCOLOR} Hysteria2: ${hy2_status} | Shadowsocks(IPv6): ${ss_status}"
     echo -e "${PURPLE}==========================================================${ENDCOLOR}"
-
-    # New recommendation logic for pure IPv6 machines
-    if ! $HAS_IPV4 && $HAS_IPV6; then # Pure IPv6 machine
-        echo -e "${BG_YELLOW}${RED}⚠️ 纯 IPv6 服务器特别提示：${ENDCOLOR}"
-        echo -e "${BG_YELLOW}${BLUE}推荐优先安装 Hysteria2 (选项 1)。${ENDCOLOR}"
-        echo -e "${BG_YELLOW}${BLUE}Hysteria2 在纯 IPv6 环境下通常表现更稳定，不易受 IPv4 限制。${ENDCOLOR}"
-        echo -e "${BG_YELLOW}${BLUE}Shadowsocks (选项 2) 在纯 IPv6 环境下可能需要额外的 DNS64/NAT64 配置才能访问 IPv4 网站，且可能不稳定。${ENDCOLOR}"
-        echo
-    fi
-
     echo -e "1. 安装 Hysteria2 (自签名证书模式，无需域名解析)"
-    echo -e "2. 安装 Shadowsocks (仅 IPv6)" 
+    echo -e "2. 安装 Shadowsocks (仅 IPv6)"
     echo -e "3. 服务管理 (启动/停止/日志/显示连接配置)"
     echo -e "4. 卸载服务"
     echo -e "5. 更新系统内核"
@@ -1444,15 +1299,20 @@ manage_single_service() {
 
 show_hysteria2_config() {
     clear
-    if [[ ! -f /etc/hysteria2/hy2_vars.conf ]]; then
-        error_echo "Hysteria2 配置变量文件不存在，请先安装 Hysteria2。"
+    if [[ ! -f /etc/hysteria2/server.yaml ]]; then
+        error_echo "Hysteria2 配置文件不存在"
         local dummy
         safe_read "按 Enter 继续..." dummy
         return
     fi
 
-    # 从持久化文件中加载配置变量
-    source /etc/hysteria2/hy2_vars.conf
+    local password
+    local domain
+    password=$(grep "password:" /etc/hysteria2/server.yaml | awk '{print $2}')
+    
+    if [[ -f /etc/hysteria2/certs/server.crt ]]; then
+        domain=$(openssl x509 -in /etc/hysteria2/certs/server.crt -noout -subject | grep -o "CN=[^,]*" | cut -d= -f2)
+    fi
 
     echo -e "${BG_PURPLE} Hysteria2 连接信息 ${ENDCOLOR}"
     echo
@@ -1460,6 +1320,8 @@ show_hysteria2_config() {
     echo
     
     echo -e "${PURPLE}=== 基本连接信息 ===${ENDCOLOR}"
+    # This logic assumes HY_SERVER_IP_CHOICE is still valid from previous run.
+    # If script restarted, it defaults based on detect_network
     local display_ip_for_info=""
     if [[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]]; then
         display_ip_for_info="[$IPV6_ADDR]"
@@ -1470,9 +1332,14 @@ show_hysteria2_config() {
     echo -e "服务器端口: ${GREEN}443${ENDCOLOR}"
     echo -e "连接密码:   ${GREEN}$HY_PASSWORD${ENDCOLOR}"
     echo -e "SNI 域名:   ${GREEN}$HY_DOMAIN${ENDCOLOR}"
+    echo -e "证书类型:   ${YELLOW}自签名证书${ENDCOLOR}"
     echo -e "允许不安全: ${YELLOW}是${ENDCOLOR}"
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
+    
+    # Update global variables for generate_hy2_configs to ensure they are current
+    HY_PASSWORD="$password"
+    HY_DOMAIN="$domain"
     
     generate_hy2_configs
     
@@ -1483,32 +1350,25 @@ show_hysteria2_config() {
 
 show_shadowsocks_config() {
     clear
-    if [[ ! -f /etc/shadowsocks-libev/ss_vars.conf ]]; then
-        error_echo "Shadowsocks 配置变量文件不存在，请先安装 Shadowsocks。"
+    if [[ ! -f /etc/shadowsocks-libev/config.json ]]; then
+        error_echo "Shadowsocks 配置文件不存在"
         local dummy
         safe_read "按 Enter 继续..." dummy
         return
     fi
 
-    # 从持久化文件中加载配置变量
-    source /etc/shadowsocks-libev/ss_vars.conf
+    local server_port password method # Declared local variables here
+    server_port=$(grep "server_port" /etc/shadowsocks-libev/config.json | grep -o "[0-9]*")
+    password=$(grep "password" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
+    method=$(grep "method" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
 
     echo -e "${BG_PURPLE} Shadowsocks (IPv6) 连接信息 ${ENDCOLOR}"
     echo
     echo -e " ${PURPLE}--- Shadowsocks 基本配置信息 ---${ENDCOLOR}"
-    local display_ip_for_info=""
-    # 直接使用加载的 SS_SERVER_IP_CHOICE
-    if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
-        display_ip_for_info="[$IPV6_ADDR]"
-    elif [[ "$SS_SERVER_IP_CHOICE" == "ipv4" ]]; then
-        display_ip_for_info="$IPV4_ADDR"
-    else
-        display_ip_for_info="N/A (IP选择逻辑异常)"
-    fi
-    echo -e "   服务器地址: ${GREEN}$display_ip_for_info${ENDCOLOR}"
-    echo -e "   端口:       ${GREEN}$SS_PORT${ENDCOLOR}"
-    echo -e "   密码:       ${GREEN}$SS_PASSWORD${ENDCOLOR}"
-    echo -e "   加密方式:   ${GREEN}$SS_METHOD${ENDCOLOR}"
+    echo -e "   服务器地址: ${GREEN}[$IPV6_ADDR]${ENDCOLOR}"
+    echo -e "   端口:       ${GREEN}$server_port${ENDCOLOR}"
+    echo -e "   密码:       ${GREEN}$password${ENDCOLOR}"
+    echo -e "   加密方式:   ${GREEN}$method${ENDCOLOR}"
     echo -e " ${PURPLE}-----------------------------------${ENDCOLOR}"
     echo
 
@@ -1516,49 +1376,37 @@ show_shadowsocks_config() {
     info_echo "检查 Shadowsocks 监听状态 (::表示监听所有IPv4/IPv6，确保 IPv6 地址可用):"
     local listening_status=""
     if command -v ss >/dev/null 2>&1; then
-        listening_status=$(ss -ltunp | grep ":$SS_PORT" | grep "::")
+        listening_status=$(ss -ltunp | grep ":$server_port" | grep "::")
     elif command -v netstat >/dev/null 2>&1; then
-        listening_status=$(netstat -ltunp | grep ":$SS_PORT" | grep "::")
+        listening_status=$(netstat -ltunp | grep ":$server_port" | grep "::")
     else
         warning_echo "需要安装 'ss' 或 'netstat' 来检查端口监听状态。"
     fi
 
     if [[ -n "$listening_status" ]]; then
-        success_echo "Shadowsocks 正在监听端口 $SS_PORT on :: (IPv6/IPv4双栈或IPv6)。"
+        success_echo "Shadowsocks 正在监听端口 $server_port on :: (IPv6/IPv4双栈或IPv6)。"
         echo -e "$listening_status"
     else
-        error_echo "Shadowsocks 未检测到在端口 $SS_PORT on :: (IPv6) 监听。请检查配置和防火墙。"
+        error_echo "Shadowsocks 未检测到在端口 $server_port on :: (IPv6) 监听。请检查配置和防火墙。"
         info_echo "可能的日志信息："
         journalctl -u shadowsocks-libev -n 5 --no-pager
     fi
     echo
 
-    # 针对纯IPv6服务器的NAT64/DNS64提示
-    if ! $HAS_IPV4; then # 如果没有IPv4，即为纯IPv6环境
-        warning_echo "⚠️ 重要提示：您的服务器是纯 IPv6 环境。为了 Shadowsocks 能访问 IPv4-Only 网站，"
-        warning_echo "   您的网络必须提供 DNS64 和 NAT64 功能。否则，Shadowsocks 将只能访问 IPv6 目标。"
-        info_echo "   如果您不确定，请咨询您的 VPS 提供商或查阅相关文档。"
-        info_echo "   您可以尝试运行 'ping ipv4.google.com' 或 'curl -4 https://ip.p3terx.com' 来验证 IPv4 连通性。"
-        echo
-    fi
+    # 更新全局变量，确保 generate_ss_configs 使用的是从文件读取的最新值
+    SS_PASSWORD="$password"
+    SS_PORT="$server_port"
+    SS_METHOD="$method"
 
     generate_ss_configs
 
     if command -v qrencode >/dev/null 2>&1; then
-        # 重新生成用于二维码的链接，确保与 generate_ss_configs 中的链接一致
         local country_code
         country_code=$(curl -s --connect-timeout 2 https://ipapi.co/country_code 2>/dev/null || echo "UN")
         local server_name="🚀Shadowsocks-${country_code}-$(date +%m%d)"
         local encoded_password_method
         encoded_password_method=$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)
-        
-        local ss_qr_link_ip_display=""
-        if [[ "$SS_SERVER_IP_CHOICE" == "ipv6" ]]; then
-            ss_qr_link_ip_display="[$IPV6_ADDR]"
-        else
-            ss_qr_link_ip_display="$IPV4_ADDR"
-        fi
-        local ss_link_uri="ss://${encoded_password_method}@${ss_qr_link_ip_display}:${SS_PORT}#${server_name}"
+        local ss_link_uri="ss://${encoded_password_method}@[${IPV6_ADDR}]:${SS_PORT}#${server_name}"
         
         info_echo "二维码 (请最大化终端窗口显示):"
         qrencode -t ANSIUTF8 "$ss_link_uri" 2>/dev/null || echo "二维码生成失败"
@@ -1720,14 +1568,15 @@ update_system_kernel() {
 ################################################################################
 
 main() {
-    # 确保脚本始终从 /dev/tty 读取输入，并将标准错误重定向到 /dev/null。
-    # 这有助于在某些非标准执行环境（如 ssh -t 或某些脚本调度）中保证交互性。
-    exec </dev/tty 2>/dev/null || true
-
     check_root
     detect_system
     detect_network
     check_and_create_swap # Call swap creation early (non-blocking suggestion)
+    
+    exec </dev/tty 2>/dev/null || true
+    while read -t 0.1 -n 1000 discard 2>/dev/null; do
+        true
+    done
     
     while true; do
         show_menu
@@ -1737,26 +1586,8 @@ main() {
         choice=$(echo "$choice" | tr -cd '0-9')
         
         case $choice in
-            1) 
-                if hy2_install; then
-                    # Hysteria2 安装成功，hy2_show_result 内部已有 safe_read 暂停
-                    true 
-                else
-                    # Hysteria2 安装失败，暂停让用户查看错误信息
-                    local dummy
-                    safe_read "Hysteria2 安装失败，请检查以上错误信息。按 Enter 返回主菜单..." dummy
-                fi
-                ;;
-            2) 
-                if ss_run_install; then
-                    # Shadowsocks 安装成功，ss_display_result 内部已有 safe_read 暂停
-                    true
-                else
-                    # Shadowsocks 安装失败，暂停让用户查看错误信息
-                    local dummy
-                    safe_read "Shadowsocks 安装失败，请检查以上错误信息。按 Enter 返回主菜单..." dummy
-                fi
-                ;;
+            1) hy2_install ;;
+            2) ss_run_install ;;
             3) manage_services ;; # This will lead to the sub-menu for managing individual services
             4) uninstall_services ;; # This will lead to the sub-menu for uninstalling individual services
             5) update_system_kernel ;; # Update OS kernel
