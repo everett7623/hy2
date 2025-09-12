@@ -1,10 +1,13 @@
 #!/bin/bash
 
-# Hysteria2 & Shadowsocks (IPv6-Only) 二合一管理脚本
-# 版本: 1.0.11
-# 描述: 此脚本用于在 IPv6-Only 或双栈服务器上快速安装和管理 Hysteria2 和 Shadowsocks 服务。
-#       Hysteria2 使用自签名证书模式，无需域名。
-#       Shadowsocks 仅监听 IPv6 地址。
+#====================================================================================
+# 项目：Hysteria2 & Shadowsocks Management Script
+# 作者：Jensfrank
+# 版本：v2.0
+# GitHub: https://github.com/everett7623/hy2ipv6
+# 博客: https://seedloc.com
+# 论坛: https://nodeloc.com
+#====================================================================================
 
 # --- 脚本行为设置 ---
 set -o pipefail
