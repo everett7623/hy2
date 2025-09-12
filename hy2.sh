@@ -1,4 +1,4 @@
-﻿﻿﻿#!/bin/bash
+#!/bin/bash
 
 #====================================================================================
 # 项目：Hysteria2 & Shadowsocks (IPv6) Management Script
@@ -560,11 +560,11 @@ Hysteria2 配置信息
     echo
     
     echo -e "${YELLOW}⚔️ Clash Meta 配置:${NC}"
-    echo -e "${WHITE}- { name: '🌟Hysteria2-$(date +%m%d)', type: hysteria2, server: ${server_ip}, port: ${port}, password: ${password}, sni: ${sni_domain}, skip-cert-verify: true, up: 50, down: 100 }${NC}"
+    echo -e "${WHITE}- { name: 'Hysteria2-$(date +%m%d)', type: hysteria2, server: ${server_ip}, port: ${port}, password: ${password}, sni: ${sni_domain}, skip-cert-verify: true, up: 50, down: 100 }${NC}"
     echo
     
     echo -e "${YELLOW}🌊 Surge 配置:${NC}"
-    echo -e "${WHITE}🌟Hysteria2-$(date +%m%d) = hysteria2, ${server_ip}, ${port}, password=${password}, sni=${sni_domain}, skip-cert-verify=true${NC}"
+    echo -e "${WHITE}Hysteria2-$(date +%m%d) = hysteria2, ${server_ip}, ${port}, password=${password}, sni=${sni_domain}, skip-cert-verify=true${NC}"
     echo
 }
 
