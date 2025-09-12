@@ -271,11 +271,11 @@ install_dependencies() {
     case $PACKAGE_MANAGER in
         apt)
             apt update >/dev/null 2>&1
-            apt install -y curl wget unzip tar xz-utils jq bc iproute2 lsof file >/dev/null 2>&1
+            apt install -y curl wget unzip tar xz-utils jq bc iproute2 lsof file netcat-openbsd >/dev/null 2>&1
             ;;
         yum|dnf)
             $PACKAGE_MANAGER update -y >/dev/null 2>&1
-            $PACKAGE_MANAGER install -y curl wget unzip tar xz jq bc iproute lsof file >/dev/null 2>&1
+            $PACKAGE_MANAGER install -y curl wget unzip tar xz jq bc iproute lsof file nc >/dev/null 2>&1
             ;;
     esac
     
@@ -304,13 +304,31 @@ configure_firewall() {
     local service_name=$2
     
     if [[ "$FIREWALL" == "ufw" ]]; then
-        ufw allow $port >/dev/null 2>&1
-        print_message $GREEN "UFW防火墙已允许端口 $port ($service_name)"
+        ufw allow $port/tcp >/dev/null 2>&1
+        ufw allow $port/udp >/dev/null 2>&1
+        print_message $GREEN "UFW防火墙已允许端口 $port TCP/UDP ($service_name)"
     elif [[ "$FIREWALL" == "firewalld" ]]; then
         firewall-cmd --permanent --add-port=$port/tcp >/dev/null 2>&1
         firewall-cmd --permanent --add-port=$port/udp >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
-        print_message $GREEN "Firewalld防火墙已允许端口 $port ($service_name)"
+        print_message $GREEN "Firewalld防火墙已允许端口 $port TCP/UDP ($service_name)"
+    else
+        print_message $BLUE "未检测到防火墙，请手动开放端口 $port TCP/UDP"
+    fi
+    
+    # 对于 Shadowsocks，还需要开放 IPv6 端口
+    if [[ "$service_name" == "Shadowsocks" ]] && $IPV6_AVAILABLE; then
+        local ipv6_port=$((port + 1))
+        if [[ "$FIREWALL" == "ufw" ]]; then
+            ufw allow $ipv6_port/tcp >/dev/null 2>&1
+            ufw allow $ipv6_port/udp >/dev/null 2>&1
+            print_message $GREEN "UFW防火墙已允许IPv6端口 $ipv6_port TCP/UDP"
+        elif [[ "$FIREWALL" == "firewalld" ]]; then
+            firewall-cmd --permanent --add-port=$ipv6_port/tcp >/dev/null 2>&1
+            firewall-cmd --permanent --add-port=$ipv6_port/udp >/dev/null 2>&1
+            firewall-cmd --reload >/dev/null 2>&1
+            print_message $GREEN "Firewalld防火墙已允许IPv6端口 $ipv6_port TCP/UDP"
+        fi
     fi
 }
 
@@ -616,19 +634,38 @@ install_shadowsocks() {
     # 创建配置目录
     mkdir -p /etc/shadowsocks-rust
     
-    # 创建配置文件 (支持IPv4和IPv6)
+    # 创建配置文件 (优化网络配置)
     cat > "$SHADOWSOCKS_CONFIG_FILE" << EOF
 {
-    "server": "::",
+    "server": "0.0.0.0",
     "server_port": $port,
     "password": "$password",
     "timeout": 300,
     "method": "$method",
     "mode": "tcp_and_udp",
     "fast_open": false,
-    "no_delay": true
+    "no_delay": true,
+    "reuse_port": true
 }
 EOF
+    
+    # 如果系统支持IPv6，创建IPv6专用配置
+    if $IPV6_AVAILABLE; then
+        cat > "/etc/shadowsocks-rust/config-ipv6.json" << EOF
+{
+    "server": "::",
+    "server_port": $((port + 1)),
+    "password": "$password",
+    "timeout": 300,
+    "method": "$method",
+    "mode": "tcp_and_udp",
+    "fast_open": false,
+    "no_delay": true,
+    "reuse_port": true
+}
+EOF
+        print_message $BLUE "已创建IPv6专用配置，端口: $((port + 1))"
+    fi
     
     # 创建systemd服务
     cat > /etc/systemd/system/shadowsocks-rust.service << EOF
@@ -665,11 +702,42 @@ EOF
     # 检查服务状态
     if systemctl is-active --quiet shadowsocks-rust; then
         print_message $GREEN "Shadowsocks 安装成功！"
+        
+        # 测试端口连通性
+        print_message $BLUE "正在测试端口连通性..."
+        sleep 2
+        
+        # 测试IPv4端口
+        if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+            if nc -z -v -w5 $SERVER_IPV4 $port 2>/dev/null; then
+                print_message $GREEN "IPv4 端口 $port 连通性测试通过"
+            else
+                print_message $YELLOW "IPv4 端口 $port 连通性测试失败，可能需要检查防火墙设置"
+            fi
+        fi
+        
+        # 测试IPv6端口
+        if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV6" ]]; then
+            if nc -z -v -w5 $SERVER_IPV6 $((port + 1)) 2>/dev/null; then
+                print_message $GREEN "IPv6 端口 $((port + 1)) 连通性测试通过"
+            else
+                print_message $YELLOW "IPv6 端口 $((port + 1)) 连通性测试失败，可能需要检查防火墙设置"
+            fi
+        fi
+        
         show_shadowsocks_config "$port" "$password" "$method"
     else
         print_message $RED "Shadowsocks 启动失败"
         print_message $YELLOW "正在查看错误日志..."
         journalctl -u shadowsocks-rust --no-pager -n 10
+        
+        # 提供故障排除建议
+        print_message $CYAN "\n🔧 故障排除建议:"
+        print_message $WHITE "1. 检查端口是否被占用: ss -tuln | grep :$port"
+        print_message $WHITE "2. 检查配置文件: cat $SHADOWSOCKS_CONFIG_FILE"
+        print_message $WHITE "3. 查看详细日志: journalctl -u shadowsocks-rust -f"
+        print_message $WHITE "4. 重启服务: systemctl restart shadowsocks-rust"
+        
         return 1
     fi
 }
@@ -685,17 +753,43 @@ show_shadowsocks_config() {
 Shadowsocks 配置信息
 ================================================"
     
-    echo -e "${YELLOW}📱 客户端配置信息:${NC}"
-    echo -e "${WHITE}服务器地址: ${SERVER_IPV6}${NC}"
-    echo -e "${WHITE}端口: ${port}${NC}"
-    echo -e "${WHITE}密码: ${password}${NC}"
-    echo -e "${WHITE}加密方式: ${method}${NC}"
-    echo
+    echo -e "${YELLOW}📱 IPv4 客户端配置:${NC}"
+    if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+        echo -e "${WHITE}服务器地址: ${SERVER_IPV4}${NC}"
+        echo -e "${WHITE}端口: ${port}${NC}"
+        echo -e "${WHITE}密码: ${password}${NC}"
+        echo -e "${WHITE}加密方式: ${method}${NC}"
+        echo
+        
+        # 生成IPv4分享链接
+        local ss_link_ipv4=$(echo -n "${method}:${password}@${SERVER_IPV4}:${port}" | base64 -w 0)
+        echo -e "${YELLOW}🔗 IPv4 分享链接:${NC}"
+        echo -e "${WHITE}ss://${ss_link_ipv4}#🌟SS-IPv4-$(date +%m%d)${NC}"
+        echo
+    else
+        echo -e "${RED}IPv4 地址不可用${NC}"
+        echo
+    fi
     
-    # 生成分享链接
-    local ss_link=$(echo -n "${method}:${password}@[${SERVER_IPV6}]:${port}" | base64 -w 0)
-    echo -e "${YELLOW}🔗 分享链接:${NC}"
-    echo -e "${WHITE}ss://${ss_link}#🌟SS-IPv6-$(date +%m%d)${NC}"
+    if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV6" ]]; then
+        echo -e "${YELLOW}📱 IPv6 客户端配置:${NC}"
+        echo -e "${WHITE}服务器地址: ${SERVER_IPV6}${NC}"
+        echo -e "${WHITE}端口: $((port + 1))${NC}"
+        echo -e "${WHITE}密码: ${password}${NC}"
+        echo -e "${WHITE}加密方式: ${method}${NC}"
+        echo
+        
+        # 生成IPv6分享链接
+        local ss_link_ipv6=$(echo -n "${method}:${password}@[${SERVER_IPV6}]:$((port + 1))" | base64 -w 0)
+        echo -e "${YELLOW}🔗 IPv6 分享链接:${NC}"
+        echo -e "${WHITE}ss://${ss_link_ipv6}#🌟SS-IPv6-$(date +%m%d)${NC}"
+        echo
+    fi
+    
+    echo -e "${CYAN}💡 使用建议:${NC}"
+    echo -e "${WHITE}• 优先使用 IPv4 配置，兼容性更好${NC}"
+    echo -e "${WHITE}• 如果 IPv4 不可用，可尝试 IPv6 配置${NC}"
+    echo -e "${WHITE}• 确保客户端支持所选的加密方式${NC}"
     echo
 }
 
