@@ -1,12 +1,13 @@
-#!/bin.bash
+#!/bin/bash
 
 #====================================================================================
 # 项目：Hysteria2 & Shadowsocks Management Script
 # 作者：Jensfrank
-# 版本：v1.0
+# 版本：v1.1
 # GitHub: https://github.com/everett7623/hy2
 # 博客: https://seedloc.com
 # 论坛: https://nodeloc.com
+# 更新：增加了主机名解析问题的自动检测与修复功能。
 #====================================================================================
 
 # --- 颜色定义 ---
@@ -62,10 +63,31 @@ check_root() {
     fi
 }
 
+# === 新增功能：修复主机名解析问题 ===
+fix_hostname_resolution() {
+    local hostname
+    hostname=$(hostname)
+    if ! sudo -n true 2>&1 | grep -q "unable to resolve host ${hostname}"; then
+        return # 如果没有错误，直接返回
+    fi
+
+    # 如果 sudo 命令因主机名解析失败，则尝试修复
+    if ! grep -q "127.0.0.1\s*${hostname}" /etc/hosts; then
+        msg "warning" "检测到主机名解析问题 (unable to resolve host ${hostname})。"
+        read -rp "是否尝试自动向 /etc/hosts 文件添加 '127.0.0.1 ${hostname}' 来修复此问题？(Y/n): " fix_hosts
+        if [[ -z "$fix_hosts" || "$fix_hosts" =~ ^[yY]$ ]]; then
+            echo "127.0.0.1 ${hostname}" | sudo tee -a /etc/hosts > /dev/null
+            msg "success" "/etc/hosts 文件已修复。sudo 警告将不再出现。"
+        fi
+    fi
+}
+
+
 # 系统检查
 check_system() {
     local os_release=""
-    local arch=$(uname -m)
+    local arch
+    arch=$(uname -m)
 
     if [ -f /etc/os-release ]; then
         os_release=$(grep -oP '(?<=^ID=).+' /etc/os-release | tr -d '"')
@@ -86,7 +108,7 @@ check_system() {
 # 依赖安装
 install_dependencies() {
     msg "info" "正在检查并安装必要的依赖..."
-    local pkgs=("curl" "wget" "jq" "qrencode" "openssl")
+    local pkgs=("curl" "wget" "jq" "openssl")
     local pkg_manager=""
     
     if command -v apt-get &>/dev/null; then
@@ -153,37 +175,42 @@ install_hy2() {
 
     # 下载并安装
     msg "info" "正在从 GitHub 获取最新版本的 Hysteria2..."
-    local latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-    local arch=$(uname -m)
+    local latest_version
+    latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+    if [ -z "$latest_version" ]; then
+        msg "error" "无法获取 Hysteria2 最新版本号，请检查网络或 GitHub API 限制。"
+    fi
+    local arch
+    arch=$(uname -m)
     case "$arch" in
         x86_64) arch="amd64" ;;
         aarch64) arch="arm64" ;;
     esac
     local download_url="https://github.com/apernet/hysteria/releases/download/v${latest_version}/hysteria-linux-${arch}"
 
-    (sudo wget -O "$HY2_BINARY_PATH" "$download_url" && sudo chmod +x "$HY2_BINARY_PATH") &> /dev/null &
+    (sudo wget -q -O "$HY2_BINARY_PATH" "$download_url" && sudo chmod +x "$HY2_BINARY_PATH") &> /dev/null &
     show_progress $!
     
     # 创建目录和证书
-    sudo mkdir -p "$HY2_CERT_PATH"
-    openssl ecparam -genkey -name prime256v1 -out "$HY2_CERT_PATH/private.key" &> /dev/null
-    openssl req -new -x509 -days 3650 -key "$HY2_CERT_PATH/private.key" -out "$HY2_CERT_PATH/public.crt" -subj "/CN=bing.com" &> /dev/null
+    sudo mkdir -p "$HY2_INSTALL_PATH"
+    sudo openssl ecparam -genkey -name prime256v1 -out "$HY2_CERT_PATH/private.key" &> /dev/null
+    sudo openssl req -new -x509 -days 36500 -key "$HY2_CERT_PATH/private.key" -out "$HY2_CERT_PATH/public.crt" -subj "/CN=bing.com" &> /dev/null
     
     # 创建配置文件
-    cat > "$HY2_CONFIG_PATH" << EOF
+    sudo tee "$HY2_CONFIG_PATH" > /dev/null << EOF
 listen: :${hy2_port}
 tls:
   cert: ${HY2_CERT_PATH}/public.crt
   key: ${HY2_CERT_PATH}/private.key
-obfs:
+auth:
   type: password
   password: ${hy2_password}
 EOF
 
     # 创建 systemd 服务
-    cat > "$HY2_SERVICE_PATH" << EOF
+    sudo tee "$HY2_SERVICE_PATH" > /dev/null << EOF
 [Unit]
-Description=Hysteria 2 Service
+Description=Hysteria 2 Service (Server Mode)
 After=network.target
 
 [Service]
@@ -206,31 +233,44 @@ EOF
     # 配置防火墙
     configure_firewall "$hy2_port"
 
-    msg "success" "Hysteria2 安装并启动成功！"
-    display_hy2_config
+    if systemctl is-active --quiet hysteria; then
+        msg "success" "Hysteria2 安装并启动成功！"
+        display_hy2_config
+    else
+        msg "error" "Hysteria2 服务启动失败，请检查日志。"
+        sudo journalctl -u hysteria -n 20 --no-pager
+    fi
 }
 
 display_hy2_config() {
-    local port=$(grep -oP '(?<=listen: :)\d+' "$HY2_CONFIG_PATH")
-    local password=$(grep -oP '(?<=password: ).*' "$HY2_CONFIG_PATH")
-    local sni=$(grep -oP '(?<=sni: ).*' "$HY2_CONFIG_PATH" 2>/dev/null || echo "amd.com")
+    local port
+    port=$(grep -oP '(?<=listen: :)\d+' "$HY2_CONFIG_PATH")
+    local password
+    password=$(grep -oP '(?<=password: ).*' "$HY2_CONFIG_PATH")
+    local sni="amd.com" # SNI 是客户端配置，这里保持默认用于显示
     local server_ip=$ipv4
+    local server_name
+
+    server_name=$(hostname)
 
     if [[ "$server_ip" == "N/A" && "$ipv6" != "N/A" ]]; then
         server_ip="[${ipv6}]"
+    elif [[ "$server_ip" == "N/A" && "$ipv6" == "N/A" ]]; then
+        msg "error" "无法获取任何公网 IP 地址！"
+        return
     fi
 
-    local share_link="hysteria2://${password}@${server_ip}:${port}/?insecure=true&sni=${sni}#🌟Hysteria2-$(hostname)"
+    local share_link="hysteria2://${password}@${server_ip}:${port}/?insecure=1&sni=${sni}#🌟Hysteria2-${server_name}"
     
     echo -e "\n--- ${GREEN}Hysteria2 配置信息${NC} ---"
     echo -e "🚀 ${YELLOW}V2rayN / NekoBox / Shadowrocket 分享链接:${NC}"
     echo -e "${share_link}"
     echo
     echo -e "⚔️ ${YELLOW}Clash Meta 配置:${NC}"
-    echo -e "- { name: '🌟Hysteria2-$(hostname)', type: hysteria2, server: ${server_ip}, port: ${port}, password: ${password}, sni: ${sni}, skip-cert-verify: true, up: 50, down: 100 }"
+    echo -e "- { name: '🌟Hysteria2-${server_name}', type: hysteria2, server: ${server_ip}, port: ${port}, password: ${password}, sni: ${sni}, skip-cert-verify: true, up: 50, down: 100 }"
     echo
     echo -e "🌊 ${YELLOW}Surge 配置:${NC}"
-    echo -e "🌟Hysteria2-$(hostname) = hysteria2, ${server_ip}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
+    echo -e "🌟Hysteria2-${server_name} = hysteria2, ${server_ip}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
     echo -e "-----------------------------------\n"
 }
 
@@ -250,22 +290,29 @@ install_ss() {
     [[ -z "$ss_password" ]] && ss_password=$(openssl rand -base64 12)
 
     local ciphers=("chacha20-ietf-poly1305" "aes-256-gcm" "aes-128-gcm")
-    echo "请选择加密方式:"
+    echo "请选择加密方式 (默认 chacha20-ietf-poly1305):"
     select ss_cipher in "${ciphers[@]}"; do
-        [[ -n "$ss_cipher" ]] && break || echo "无效选择，请重试。"
+        [[ -n "$ss_cipher" ]] && break || { ss_cipher="chacha20-ietf-poly1305"; break; }
     done
+    msg "info" "已选择加密方式: ${ss_cipher}"
 
     msg "info" "正在从 GitHub 获取最新版本的 shadowsocks-rust..."
-    local latest_version=$(curl -s "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-    local arch=$(uname -m)
+    local latest_version
+    latest_version=$(curl -s "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+    if [ -z "$latest_version" ]; then
+        msg "error" "无法获取 shadowsocks-rust 最新版本号，请检查网络或 GitHub API 限制。"
+    fi
+
+    local arch
+    arch=$(uname -m)
     local download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/v${latest_version}/shadowsocks-v${latest_version}.${arch}-unknown-linux-gnu.tar.xz"
 
-    (wget -O /tmp/ss.tar.xz "$download_url" && tar -xf /tmp/ss.tar.xz -C /tmp && sudo mv /tmp/ssserver "$SS_BINARY_PATH" && rm -rf /tmp/ss* ) &> /dev/null &
+    (wget -q -O /tmp/ss.tar.xz "$download_url" && tar -xf /tmp/ss.tar.xz -C /tmp && sudo mv /tmp/ssserver "$SS_BINARY_PATH" && rm -rf /tmp/ss* ) &> /dev/null &
     show_progress $!
 
     # 创建目录和配置文件
     sudo mkdir -p "$SS_INSTALL_PATH"
-    cat > "$SS_CONFIG_PATH" << EOF
+    sudo tee "$SS_CONFIG_PATH" > /dev/null << EOF
 {
     "server": "::",
     "server_port": ${ss_port},
@@ -276,9 +323,9 @@ install_ss() {
 EOF
 
     # 创建 systemd 服务
-    cat > "$SS_SERVICE_PATH" << EOF
+    sudo tee "$SS_SERVICE_PATH" > /dev/null << EOF
 [Unit]
-Description=Shadowsocks-rust server
+Description=Shadowsocks-rust server service
 After=network.target
 
 [Service]
@@ -298,23 +345,34 @@ EOF
     # 配置防火墙
     configure_firewall "$ss_port"
 
-    msg "success" "Shadowsocks 安装并启动成功！"
-    display_ss_config
+    if systemctl is-active --quiet shadowsocks; then
+        msg "success" "Shadowsocks 安装并启动成功！"
+        display_ss_config
+    else
+        msg "error" "Shadowsocks 服务启动失败，请检查日志。"
+        sudo journalctl -u shadowsocks -n 20 --no-pager
+    fi
 }
 
 display_ss_config() {
-    local port=$(jq -r '.server_port' "$SS_CONFIG_PATH")
-    local password=$(jq -r '.password' "$SS_CONFIG_PATH")
-    local cipher=$(jq -r '.method' "$SS_CONFIG_PATH")
-    local encoded_part=$(echo -n "${cipher}:${password}" | base64 | tr -d '\n')
-    local share_link="ss://${encoded_part}@[${ipv6}]:${port}#🌟SS-IPv6-$(hostname)"
+    local port
+    port=$(jq -r '.server_port' "$SS_CONFIG_PATH")
+    local password
+    password=$(jq -r '.password' "$SS_CONFIG_PATH")
+    local cipher
+    cipher=$(jq -r '.method' "$SS_CONFIG_PATH")
+    local encoded_part
+    encoded_part=$(echo -n "${cipher}:${password}" | base64 | tr -d '\n')
+    local server_name
+    server_name=$(hostname)
+    local share_link="ss://${encoded_part}@[${ipv6}]:${port}#🌟SS-IPv6-${server_name}"
 
     echo -e "\n--- ${GREEN}Shadowsocks 配置信息${NC} ---"
     echo -e "🚀 ${YELLOW}V2rayN / NekoBox / Shadowrocket 分享链接:${NC}"
     echo -e "${share_link}"
     echo
     echo -e "⚔️ ${YELLOW}Clash Meta 配置:${NC}"
-    echo -e "- { name: '🌟SS-IPv6-$(hostname)', type: ss, server: '${ipv6}', port: ${port}, cipher: '${cipher}', password: '${password}', udp: true}"
+    echo -e "- { name: '🌟SS-IPv6-${server_name}', type: ss, server: '${ipv6}', port: ${port}, cipher: '${cipher}', password: '${password}', udp: true}"
     echo -e "-----------------------------------\n"
 }
 
@@ -337,7 +395,7 @@ service_management() {
 }
 
 manage_hy2_menu() {
-    if ! systemctl list-units --type=service | grep -q "hysteria.service"; then
+    if ! [ -f "$HY2_SERVICE_PATH" ]; then
         msg "warning" "Hysteria2 未安装。"
         return
     fi
@@ -355,7 +413,7 @@ manage_hy2_menu() {
         1) sudo systemctl start hysteria && msg "success" "Hysteria2 已启动。" ;;
         2) sudo systemctl stop hysteria && msg "success" "Hysteria2 已停止。" ;;
         3) sudo systemctl restart hysteria && msg "success" "Hysteria2 已重启。" ;;
-        4) systemctl status hysteria ;;
+        4) systemctl status hysteria --no-pager ;;
         5) display_hy2_config ;;
         0) ;;
         *) msg "warning" "无效输入。" ;;
@@ -363,7 +421,7 @@ manage_hy2_menu() {
 }
 
 manage_ss_menu() {
-    if ! systemctl list-units --type=service | grep -q "shadowsocks.service"; then
+    if ! [ -f "$SS_SERVICE_PATH" ]; then
         msg "warning" "Shadowsocks 未安装。"
         return
     fi
@@ -381,7 +439,7 @@ manage_ss_menu() {
         1) sudo systemctl start shadowsocks && msg "success" "Shadowsocks 已启动。" ;;
         2) sudo systemctl stop shadowsocks && msg "success" "Shadowsocks 已停止。" ;;
         3) sudo systemctl restart shadowsocks && msg "success" "Shadowsocks 已重启。" ;;
-        4) systemctl status shadowsocks ;;
+        4) systemctl status shadowsocks --no-pager ;;
         5) display_ss_config ;;
         0) ;;
         *) msg "warning" "无效输入。" ;;
@@ -433,14 +491,14 @@ update_menu() {
     echo "=== 更新服务 ==="
     echo " 1. 更新 Hysteria2"
     echo " 2. 更新 Shadowsocks"
-    echo " 3. 更新系统内核 (慎用)"
+    echo " 3. 更新系统 (apt/yum)"
     echo " 0. 返回主菜单"
     echo "================"
     read -rp "请输入选项: " choice
     case "$choice" in
         1) update_hy2 ;;
         2) update_ss ;;
-        3) update_kernel ;;
+        3) update_system ;;
         0) ;;
         *) msg "warning" "无效输入。" ;;
     esac
@@ -449,14 +507,16 @@ update_menu() {
 update_hy2() {
     msg "info" "正在更新 Hysteria2..."
     sudo systemctl stop hysteria
-    local latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-    local arch=$(uname -m)
+    local latest_version
+    latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+    local arch
+    arch=$(uname -m)
     case "$arch" in
         x86_64) arch="amd64" ;;
         aarch64) arch="arm64" ;;
     esac
     local download_url="https://github.com/apernet/hysteria/releases/download/v${latest_version}/hysteria-linux-${arch}"
-    (sudo wget -O "$HY2_BINARY_PATH" "$download_url" && sudo chmod +x "$HY2_BINARY_PATH") &> /dev/null &
+    (sudo wget -q -O "$HY2_BINARY_PATH" "$download_url" && sudo chmod +x "$HY2_BINARY_PATH") &> /dev/null &
     show_progress $!
     sudo systemctl start hysteria
     msg "success" "Hysteria2 已更新至最新版本。"
@@ -465,33 +525,30 @@ update_hy2() {
 update_ss() {
     msg "info" "正在更新 Shadowsocks..."
     sudo systemctl stop shadowsocks
-    local latest_version=$(curl -s "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-    local arch=$(uname -m)
+    local latest_version
+    latest_version=$(curl -s "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+    local arch
+    arch=$(uname -m)
     local download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/v${latest_version}/shadowsocks-v${latest_version}.${arch}-unknown-linux-gnu.tar.xz"
-    (wget -O /tmp/ss.tar.xz "$download_url" && tar -xf /tmp/ss.tar.xz -C /tmp && sudo mv /tmp/ssserver "$SS_BINARY_PATH" && rm -rf /tmp/ss*) &> /dev/null &
+    (wget -q -O /tmp/ss.tar.xz "$download_url" && tar -xf /tmp/ss.tar.xz -C /tmp && sudo mv /tmp/ssserver "$SS_BINARY_PATH" && rm -rf /tmp/ss*) &> /dev/null &
     show_progress $!
     sudo systemctl start shadowsocks
     msg "success" "Shadowsocks 已更新至最新版本。"
 }
 
-update_kernel() {
-    msg "warning" "更新内核是高风险操作，可能导致服务器无法启动。"
-    read -rp "您确定要继续吗？(y/N): " confirm
-    if [[ "$confirm" =~ ^[yY]$ ]]; then
-        if command -v apt-get &>/dev/null; then
-            (sudo apt-get update && sudo apt-get dist-upgrade -y) &
-            show_progress $!
-        elif command -v yum &>/dev/null; then
-            (sudo yum update -y) &
-            show_progress $!
-        else
-            msg "error" "不支持的包管理器。"
-            return
-        fi
-        msg "success" "内核及系统更新完成，建议重启服务器。"
+update_system() {
+    msg "info" "正在更新系统软件包..."
+    if command -v apt-get &>/dev/null; then
+        (sudo apt-get update && sudo apt-get upgrade -y) &
+        show_progress $!
+    elif command -v yum &>/dev/null; then
+        (sudo yum update -y) &
+        show_progress $!
     else
-        msg "info" "操作已取消。"
+        msg "error" "不支持的包管理器。"
+        return
     fi
+    msg "success" "系统更新完成。"
 }
 
 # --- 系统优化 ---
@@ -520,9 +577,13 @@ manage_swap() {
         msg "info" "检测到已存在 Swap。"
         read -rp "是否需要移除现有 Swap？ (y/N): " remove_swap
         if [[ "$remove_swap" =~ ^[yY]$ ]]; then
-            sudo swapoff -a && sudo rm -f /swapfile
+            local swap_path
+            swap_path=$(grep -oP '^\S+' /proc/swaps | tail -n1)
+            sudo swapoff -a && sudo rm -f "$swap_path"
+            sudo sed -i "\|$swap_path|d" /etc/fstab
             msg "success" "Swap 已移除。"
         fi
+        return
     fi
     
     read -rp "请输入要创建的 Swap 大小 (MB, 建议 512): " swap_size
@@ -540,7 +601,7 @@ optimize_network() {
         msg "info" "正在启用 BBR..."
         echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
-        sudo sysctl -p
+        sudo sysctl -p >/dev/null
         msg "success" "BBR 已启用。"
     else
         msg "info" "BBR 已启用。"
@@ -550,10 +611,10 @@ optimize_network() {
 optimize_limits() {
     msg "info" "正在优化系统文件描述符限制..."
     local limits_conf="/etc/security/limits.conf"
-    if ! grep -q "* soft nofile 65536" "$limits_conf"; then
+    if ! grep -q "^\* soft nofile 65536" "$limits_conf"; then
         echo "* soft nofile 65536" | sudo tee -a "$limits_conf"
         echo "* hard nofile 65536" | sudo tee -a "$limits_conf"
-        msg "success" "系统限制已优化。"
+        msg "success" "系统限制已优化，重新登录 Shell 后生效。"
     else
         msg "info" "系统限制已是优化状态。"
     fi
@@ -562,7 +623,7 @@ optimize_limits() {
 clean_system() {
     msg "info" "正在清理系统缓存..."
     if command -v apt-get &>/dev/null; then
-        (sudo apt-get autoremove -y && sudo apt-get clean) &
+        (sudo apt-get autoremove -y && sudo apt-get clean -y) &
         show_progress $!
     elif command -v yum &>/dev/null; then
         (sudo yum clean all) &
@@ -579,22 +640,26 @@ main_menu() {
     local hy2_status="${RED}未安装${NC}"
     if systemctl is-active --quiet hysteria; then
         hy2_status="${GREEN}运行中${NC}"
+    elif [ -f "$HY2_SERVICE_PATH" ]; then
+        hy2_status="${YELLOW}已安装但未运行${NC}"
     fi
     
     local ss_status="${RED}未安装${NC}"
     if systemctl is-active --quiet shadowsocks; then
         ss_status="${GREEN}运行中${NC}"
+    elif [ -f "$SS_SERVICE_PATH" ]; then
+        ss_status="${YELLOW}已安装但未运行${NC}"
     fi
 
     echo "===================================================================================="
-    echo -e "          ${BLUE}Hysteria2 & Shadowsocks Management Script (v1.0)${NC}"
+    echo -e "          ${BLUE}Hysteria2 & Shadowsocks Management Script (v1.1)${NC}"
     echo " 项目地址：https://github.com/everett7623/hy2"
     echo " 博客地址：https://seedloc.com"
     echo " 论坛地址：https://nodeloc.com"
     echo "===================================================================================="
-    echo -e " 服务器 IPv4:  ${YELLOW}${ipv4}${NC}"
-    echo -e " 服务器 IPv6:  ${YELLOW}${ipv6}${NC}"
-    echo -e " Hysteria 2 状态: ${hy2_status}"
+    echo -e " 服务器 IPv4:      ${YELLOW}${ipv4}${NC}"
+    echo -e " 服务器 IPv6:      ${YELLOW}${ipv6}${NC}"
+    echo -e " Hysteria 2 状态:  ${hy2_status}"
     echo -e " Shadowsocks 状态: ${ss_status}"
     echo "===================================================================================="
     echo " 1. 安装 Hysteria2 (自签证书，无需域名)"
@@ -624,12 +689,13 @@ main_menu() {
 # --- 脚本入口 ---
 main() {
     check_root
+    fix_hostname_resolution # <-- 在这里调用修复功能
     check_system
     install_dependencies
     
     while true; do
         main_menu
-        read -rp "按 Enter 键返回主菜单..."
+        read -n 1 -s -r -p "按任意键返回主菜单..."
     done
 }
 
