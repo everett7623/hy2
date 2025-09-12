@@ -271,11 +271,11 @@ install_dependencies() {
     case $PACKAGE_MANAGER in
         apt)
             apt update >/dev/null 2>&1
-            apt install -y curl wget unzip tar jq bc >/dev/null 2>&1
+            apt install -y curl wget unzip tar jq bc iproute2 lsof >/dev/null 2>&1
             ;;
         yum|dnf)
             $PACKAGE_MANAGER update -y >/dev/null 2>&1
-            $PACKAGE_MANAGER install -y curl wget unzip tar jq bc >/dev/null 2>&1
+            $PACKAGE_MANAGER install -y curl wget unzip tar jq bc iproute lsof >/dev/null 2>&1
             ;;
     esac
     
@@ -484,8 +484,8 @@ install_shadowsocks() {
     
     # 生成配置参数
     local port=$(generate_port)
-    # 检查端口是否被占用
-    while netstat -tuln | grep -q ":$port "; do
+    # 检查端口是否被占用（使用 ss 命令替代 netstat）
+    while ss -tuln 2>/dev/null | grep -q ":$port " || lsof -i :$port >/dev/null 2>&1; do
         print_message $YELLOW "端口 $port 已被占用，重新生成..."
         port=$(generate_port)
     done
@@ -671,15 +671,15 @@ service_management() {
 === 服务管理 ==="
         echo -e " 1. 管理 Hysteria2"
         echo -e " 2. 管理 Shadowsocks"
-        echo -e " 3. 返回主菜单"
+        echo -e " 0. 返回主菜单"
         echo
         
-        read -p "请选择操作 [1-3]: " choice
+        read -p "请选择操作 [0-2]: " choice
         
         case $choice in
             1) manage_hysteria2 ;;
             2) manage_shadowsocks ;;
-            3) break ;;
+            0) break ;;
             *) print_message $RED "无效选择，请重新输入" ;;
         esac
     done
@@ -697,10 +697,10 @@ manage_hysteria2() {
         echo -e " 4. 查看状态"
         echo -e " 5. 查看配置"
         echo -e " 6. 查看日志"
-        echo -e " 7. 返回上级菜单"
+        echo -e " 0. 返回上级菜单"
         echo
         
-        read -p "请选择操作 [1-7]: " choice
+        read -p "请选择操作 [0-6]: " choice
         
         case $choice in
             1)
@@ -728,7 +728,7 @@ manage_hysteria2() {
             6)
                 journalctl -u hysteria2 -f
                 ;;
-            7) break ;;
+            0) break ;;
             *) print_message $RED "无效选择，请重新输入" ;;
         esac
         
@@ -750,10 +750,10 @@ manage_shadowsocks() {
         echo -e " 4. 查看状态"
         echo -e " 5. 查看配置"
         echo -e " 6. 查看日志"
-        echo -e " 7. 返回上级菜单"
+        echo -e " 0. 返回上级菜单"
         echo
         
-        read -p "请选择操作 [1-7]: " choice
+        read -p "请选择操作 [0-6]: " choice
         
         case $choice in
             1)
@@ -781,7 +781,7 @@ manage_shadowsocks() {
             6)
                 journalctl -u shadowsocks-rust -f
                 ;;
-            7) break ;;
+            0) break ;;
             *) print_message $RED "无效选择，请重新输入" ;;
         esac
         
@@ -800,16 +800,16 @@ uninstall_services() {
         echo -e " 1. 卸载 Hysteria2"
         echo -e " 2. 卸载 Shadowsocks"
         echo -e " 3. 卸载所有服务"
-        echo -e " 4. 返回主菜单"
+        echo -e " 0. 返回主菜单"
         echo
         
-        read -p "请选择操作 [1-4]: " choice
+        read -p "请选择操作 [0-3]: " choice
         
         case $choice in
             1) uninstall_hysteria2 ;;
             2) uninstall_shadowsocks ;;
             3) uninstall_all_services ;;
-            4) break ;;
+            0) break ;;
             *) print_message $RED "无效选择，请重新输入" ;;
         esac
         
@@ -862,16 +862,16 @@ update_services() {
         echo -e " 1. 更新 Hysteria2"
         echo -e " 2. 更新 Shadowsocks"
         echo -e " 3. 更新系统内核"
-        echo -e " 4. 返回主菜单"
+        echo -e " 0. 返回主菜单"
         echo
         
-        read -p "请选择操作 [1-4]: " choice
+        read -p "请选择操作 [0-3]: " choice
         
         case $choice in
             1) update_hysteria2 ;;
             2) update_shadowsocks ;;
             3) update_kernel ;;
-            4) break ;;
+            0) break ;;
             *) print_message $RED "无效选择，请重新输入" ;;
         esac
         
@@ -961,17 +961,17 @@ system_optimization() {
         echo -e " 2. 优化网络参数"
         echo -e " 3. 优化系统限制"
         echo -e " 4. 清理系统垃圾"
-        echo -e " 5. 返回主菜单"
+        echo -e " 0. 返回主菜单"
         echo
         
-        read -p "请选择操作 [1-5]: " choice
+        read -p "请选择操作 [0-4]: " choice
         
         case $choice in
             1) manage_swap ;;
             2) optimize_network ;;
             3) optimize_limits ;;
             4) clean_system ;;
-            5) break ;;
+            0) break ;;
             *) print_message $RED "无效选择，请重新输入" ;;
         esac
         
@@ -988,7 +988,7 @@ manage_swap() {
     if [[ -f /swapfile ]]; then
         echo -e " 1. 删除现有Swap"
         echo -e " 2. 重新创建Swap"
-        echo -e " 3. 返回"
+        echo -e " 0. 返回"
         read -p "请选择操作 [1-3]: " swap_choice
         
         case $swap_choice in
@@ -1004,7 +1004,7 @@ manage_swap() {
                 sed -i '/\/swapfile/d' /etc/fstab
                 create_swap_file
                 ;;
-            3) return ;;
+            0) return ;;
         esac
     else
         read -p "是否创建1GB Swap? (y/n): " create_swap
