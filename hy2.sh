@@ -385,7 +385,8 @@ show_main_menu() {
 Hysteria2 Management Script ($SCRIPT_VERSION)
 ================================================
 项目地址：https://github.com/everett7623/hy2ipv6
-
+博客地址: https://seedloc.com
+论坛地址: https://nodeloc.com
 服务器 IPv4: ${SERVER_IPV4:-N/A}
 服务器 IPv6: ${SERVER_IPV6:-N/A}
 Hysteria2 状态: $(check_hysteria2_status)
