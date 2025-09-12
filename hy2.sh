@@ -399,43 +399,113 @@ install_shadowsocks() {
     
     # 生成配置参数
     local port=$(generate_port)
+    # 检查端口是否被占用
+    while netstat -tuln | grep -q ":$port "; do
+        print_message $YELLOW "端口 $port 已被占用，重新生成..."
+        port=$(generate_port)
+    done
+    
     local password=$(generate_password)
     local method="chacha20-ietf-poly1305"
     
     # 下载Shadowsocks-rust
     show_progress 20 "正在下载 Shadowsocks-rust"
-    local ss_version=$(curl -s https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest | jq -r .tag_name)
-    local download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${ss_version}/shadowsocks-${ss_version}.x86_64-unknown-linux-gnu.tar.xz"
     
-    if [[ "$ARCH" == "arm64" ]]; then
-        download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${ss_version}/shadowsocks-${ss_version}.aarch64-unknown-linux-gnu.tar.xz"
+    # 尝试多个下载源
+    local ss_version
+    local download_url
+    local download_success=false
+    
+    # 首先尝试获取最新版本
+    ss_version=$(curl -s --connect-timeout 10 https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest | jq -r .tag_name 2>/dev/null)
+    
+    # 如果获取失败，使用固定版本
+    if [[ -z "$ss_version" || "$ss_version" == "null" ]]; then
+        ss_version="v1.18.0"
+        print_message $YELLOW "无法获取最新版本，使用固定版本: $ss_version"
     fi
     
-    cd /tmp
-    curl -L -o shadowsocks.tar.xz "$download_url" >/dev/null 2>&1
+    # 根据架构选择下载链接
+    case "$ARCH" in
+        "amd64")
+            download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${ss_version}/shadowsocks-${ss_version}.x86_64-unknown-linux-gnu.tar.xz"
+            ;;
+        "arm64")
+            download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${ss_version}/shadowsocks-${ss_version}.aarch64-unknown-linux-gnu.tar.xz"
+            ;;
+        *)
+            print_message $RED "不支持的架构: $ARCH"
+            return 1
+            ;;
+    esac
     
-    if [[ $? -ne 0 ]]; then
-        print_message $RED "Shadowsocks 下载失败"
+    cd /tmp
+    
+    # 尝试下载
+    print_message $BLUE "正在从 GitHub 下载..."
+    if curl -L --connect-timeout 30 --max-time 300 -o shadowsocks.tar.xz "$download_url" >/dev/null 2>&1; then
+        download_success=true
+    else
+        print_message $YELLOW "GitHub 下载失败，尝试镜像源..."
+        # 尝试使用镜像源
+        local mirror_url="https://ghproxy.com/${download_url}"
+        if curl -L --connect-timeout 30 --max-time 300 -o shadowsocks.tar.xz "$mirror_url" >/dev/null 2>&1; then
+            download_success=true
+        fi
+    fi
+    
+    if ! $download_success; then
+        print_message $RED "Shadowsocks 下载失败，请检查网络连接"
         return 1
     fi
     
-    tar -xf shadowsocks.tar.xz
+    # 验证下载的文件
+    if [[ ! -f shadowsocks.tar.xz ]] || [[ ! -s shadowsocks.tar.xz ]]; then
+        print_message $RED "下载的文件无效"
+        rm -f shadowsocks.tar.xz
+        return 1
+    fi
+    
+    # 解压文件
+    print_message $BLUE "正在解压文件..."
+    if ! tar -xf shadowsocks.tar.xz 2>/dev/null; then
+        print_message $RED "文件解压失败"
+        rm -f shadowsocks.tar.xz
+        return 1
+    fi
+    
+    # 检查解压后的文件
+    if [[ ! -f ssserver ]]; then
+        print_message $RED "未找到 ssserver 可执行文件"
+        rm -f shadowsocks.tar.xz
+        return 1
+    fi
+    
+    # 安装文件
     mv ssserver /usr/local/bin/
     chmod +x /usr/local/bin/ssserver
     rm -f shadowsocks.tar.xz
     
+    # 验证安装
+    if ! /usr/local/bin/ssserver --version >/dev/null 2>&1; then
+        print_message $RED "Shadowsocks 安装验证失败"
+        return 1
+    fi
+    
     # 创建配置目录
     mkdir -p /etc/shadowsocks-rust
     
-    # 创建配置文件 (仅IPv6)
+    # 创建配置文件 (支持IPv4和IPv6)
     cat > "$SHADOWSOCKS_CONFIG_FILE" << EOF
 {
-    "server": "[::]",
+    "server": "::",
     "server_port": $port,
     "password": "$password",
     "timeout": 300,
     "method": "$method",
-    "mode": "tcp_and_udp"
+    "mode": "tcp_and_udp",
+    "fast_open": false,
+    "no_delay": true
 }
 EOF
     
@@ -443,32 +513,42 @@ EOF
     cat > /etc/systemd/system/shadowsocks-rust.service << EOF
 [Unit]
 Description=Shadowsocks-Rust Server
-After=network.target
+After=network.target nss-lookup.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/ssserver -c /etc/shadowsocks-rust/config.json
-Restart=always
-RestartSec=3
+Restart=on-failure
+RestartSec=5
 User=root
+Group=root
+LimitNOFILE=32768
 
 [Install]
 WantedBy=multi-user.target
 EOF
     
-    # 启动服务
+    # 重载systemd并启动服务
     systemctl daemon-reload
     systemctl enable shadowsocks-rust >/dev/null 2>&1
+    
+    print_message $BLUE "正在启动 Shadowsocks 服务..."
     systemctl start shadowsocks-rust
+    
+    # 等待服务启动
+    sleep 3
     
     # 配置防火墙
     configure_firewall "$port" "Shadowsocks"
     
+    # 检查服务状态
     if systemctl is-active --quiet shadowsocks-rust; then
         print_message $GREEN "Shadowsocks 安装成功！"
         show_shadowsocks_config "$port" "$password" "$method"
     else
         print_message $RED "Shadowsocks 启动失败"
+        print_message $YELLOW "正在查看错误日志..."
+        journalctl -u shadowsocks-rust --no-pager -n 10
         return 1
     fi
 }
