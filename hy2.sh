@@ -61,24 +61,82 @@ check_root() {
 
 # 检测系统信息
 detect_system() {
+    print_message $BLUE "正在检测系统信息..."
+    
+    # 检测操作系统
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         OS=$ID
         OS_VERSION=$VERSION_ID
+        OS_NAME=$NAME
+    elif [[ -f /etc/redhat-release ]]; then
+        OS="centos"
+        OS_VERSION=$(grep -oE '[0-9]+\.[0-9]+' /etc/redhat-release | head -1)
+        OS_NAME="CentOS"
+    elif [[ -f /etc/debian_version ]]; then
+        OS="debian"
+        OS_VERSION=$(cat /etc/debian_version)
+        OS_NAME="Debian"
     else
         print_message $RED "无法检测操作系统"
         exit 1
     fi
     
+    # 标准化操作系统名称
+    case $OS in
+        ubuntu|Ubuntu) OS="ubuntu" ;;
+        debian|Debian) OS="debian" ;;
+        centos|CentOS|"rhel"|"Red Hat"*) OS="centos" ;;
+        fedora|Fedora) OS="fedora" ;;
+        *) 
+            # 尝试从 NAME 字段识别
+            case $OS_NAME in
+                *Ubuntu*|*ubuntu*) OS="ubuntu" ;;
+                *Debian*|*debian*) OS="debian" ;;
+                *CentOS*|*centos*|*"Red Hat"*) OS="centos" ;;
+                *Fedora*|*fedora*) OS="fedora" ;;
+            esac
+            ;;
+    esac
+    
+    # 检测架构
     ARCH=$(uname -m)
     case $ARCH in
         x86_64) ARCH="amd64" ;;
         aarch64) ARCH="arm64" ;;
         armv7l) ARCH="armv7" ;;
         *) 
-            print_message $RED "不支持的架构: $ARCH"
-            exit 1
+            print_message $YELLOW "检测到架构: $ARCH，将尝试使用 amd64 版本"
+            ARCH="amd64"
             ;;
+    esac
+    
+    print_message $GREEN "系统检测完成: $OS_NAME ($OS) $OS_VERSION, 架构: $ARCH"
+}
+
+# 版本比较函数
+version_compare() {
+    local version1=$1
+    local operator=$2
+    local version2=$3
+    
+    # 简单的版本比较，支持 x.y 格式
+    local v1_major=$(echo $version1 | cut -d. -f1)
+    local v1_minor=$(echo $version1 | cut -d. -f2 2>/dev/null || echo 0)
+    local v2_major=$(echo $version2 | cut -d. -f1)
+    local v2_minor=$(echo $version2 | cut -d. -f2 2>/dev/null || echo 0)
+    
+    # 转换为数字进行比较
+    local v1_num=$((v1_major * 100 + v1_minor))
+    local v2_num=$((v2_major * 100 + v2_minor))
+    
+    case $operator in
+        "<") [[ $v1_num -lt $v2_num ]] ;;
+        "<=") [[ $v1_num -le $v2_num ]] ;;
+        ">") [[ $v1_num -gt $v2_num ]] ;;
+        ">=") [[ $v1_num -ge $v2_num ]] ;;
+        "="|"==") [[ $v1_num -eq $v2_num ]] ;;
+        *) return 1 ;;
     esac
 }
 
@@ -87,30 +145,57 @@ check_system_compatibility() {
     print_message $BLUE "正在检查系统兼容性..."
     
     case $OS in
-        ubuntu|debian)
-            if [[ "$OS" == "ubuntu" && $(echo "$OS_VERSION < 18.04" | bc -l 2>/dev/null || echo 1) -eq 1 ]]; then
-                print_message $RED "Ubuntu 版本过低，建议使用 18.04 或更高版本"
-                exit 1
-            elif [[ "$OS" == "debian" && $(echo "$OS_VERSION < 9" | bc -l 2>/dev/null || echo 1) -eq 1 ]]; then
-                print_message $RED "Debian 版本过低，建议使用 9 或更高版本"
-                exit 1
+        ubuntu)
+            if version_compare "$OS_VERSION" "<" "18.04"; then
+                print_message $YELLOW "Ubuntu 版本较低 ($OS_VERSION)，建议使用 18.04 或更高版本"
+                print_message $YELLOW "将尝试继续安装，但可能遇到兼容性问题"
             fi
             PACKAGE_MANAGER="apt"
             ;;
-        centos|rhel|fedora)
+        debian)
+            # Debian 版本号可能是 9.x 或 bookworm 等格式
+            local debian_major=$(echo $OS_VERSION | grep -oE '^[0-9]+' || echo "0")
+            if [[ $debian_major -lt 9 ]] && [[ "$OS_VERSION" != *"bookworm"* ]] && [[ "$OS_VERSION" != *"bullseye"* ]]; then
+                print_message $YELLOW "Debian 版本较低 ($OS_VERSION)，建议使用 9 或更高版本"
+                print_message $YELLOW "将尝试继续安装，但可能遇到兼容性问题"
+            fi
+            PACKAGE_MANAGER="apt"
+            ;;
+        centos|rhel)
             PACKAGE_MANAGER="yum"
             if command -v dnf >/dev/null 2>&1; then
                 PACKAGE_MANAGER="dnf"
             fi
             ;;
+        fedora)
+            PACKAGE_MANAGER="dnf"
+            ;;
         *)
-            print_message $RED "不支持的操作系统: $OS"
-            print_message $YELLOW "支持的系统: Ubuntu 18.04+, Debian 9+, CentOS 7+, RHEL 7+, Fedora"
-            exit 1
+            print_message $YELLOW "检测到未明确支持的操作系统: $OS ($OS_NAME)"
+            print_message $YELLOW "将尝试使用通用配置继续安装"
+            
+            # 尝试确定包管理器
+            if command -v apt >/dev/null 2>&1; then
+                PACKAGE_MANAGER="apt"
+                print_message $BLUE "检测到 APT 包管理器，将使用 Debian/Ubuntu 配置"
+            elif command -v dnf >/dev/null 2>&1; then
+                PACKAGE_MANAGER="dnf"
+                print_message $BLUE "检测到 DNF 包管理器，将使用 Fedora 配置"
+            elif command -v yum >/dev/null 2>&1; then
+                PACKAGE_MANAGER="yum"
+                print_message $BLUE "检测到 YUM 包管理器，将使用 CentOS/RHEL 配置"
+            else
+                print_message $RED "无法确定包管理器，安装可能失败"
+                read -p "是否继续安装? (y/N): " continue_install
+                if [[ ! $continue_install =~ ^[Yy]$ ]]; then
+                    exit 1
+                fi
+            fi
             ;;
     esac
     
-    print_message $GREEN "系统兼容性检查通过: $OS $OS_VERSION ($ARCH)"
+    print_message $GREEN "系统兼容性检查完成: $OS_NAME $OS_VERSION ($ARCH)"
+    print_message $BLUE "使用包管理器: $PACKAGE_MANAGER"
 }
 
 # 检查内存并创建swap
