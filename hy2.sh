@@ -909,10 +909,539 @@ Shadowsocks 配置信息
     echo -e "${WHITE}• 优先使用 IPv4 配置，兼容性更好${NC}"
     echo -e "${WHITE}• IPv6 配置适用于纯IPv6环境${NC}"
     echo -e "${WHITE}• 如遇超时问题，请检查防火墙和端口开放情况${NC}"
-Shadowsocks 配置信息
-================================================"
+    echo -e "${WHITE}• 建议客户端启用 UDP 转发以获得更好性能${NC}"
+    echo
+}
+
+# 服务管理菜单
+service_management() {
+    while true; do
+        clear
+        print_message $CYAN "
+=== 服务管理 ==="
+        echo -e " 1. 管理 Hysteria2"
+        echo -e " 2. 管理 Shadowsocks"
+        echo -e " 0. 返回主菜单"
+        echo
+        
+        read -p "请选择操作 [0-2]: " choice
+        
+        case $choice in
+            1) manage_hysteria2 ;;
+            2) manage_shadowsocks ;;
+            0) break ;;
+            *) print_message $RED "无效选择，请重新输入" ;;
+        esac
+    done
+}
+
+# 管理Hysteria2
+manage_hysteria2() {
+    while true; do
+        clear
+        print_message $CYAN "
+=== Hysteria2 管理 ==="
+        echo -e " 1. 启动服务"
+        echo -e " 2. 停止服务"
+        echo -e " 3. 重启服务"
+        echo -e " 4. 查看状态"
+        echo -e " 5. 查看配置"
+        echo -e " 6. 查看日志"
+        echo -e " 0. 返回上级菜单"
+        echo
+        
+        read -p "请选择操作 [0-6]: " choice
+        
+        case $choice in
+            1)
+                systemctl start hysteria2
+                print_message $GREEN "Hysteria2 服务已启动"
+                ;;
+            2)
+                systemctl stop hysteria2
+                print_message $YELLOW "Hysteria2 服务已停止"
+                ;;
+            3)
+                systemctl restart hysteria2
+                print_message $GREEN "Hysteria2 服务已重启"
+                ;;
+            4)
+                systemctl status hysteria2
+                ;;
+            5)
+                if [[ -f "$HYSTERIA2_CONFIG_FILE" ]]; then
+                    cat "$HYSTERIA2_CONFIG_FILE"
+                else
+                    print_message $RED "配置文件不存在"
+                fi
+                ;;
+            6)
+                journalctl -u hysteria2 -f
+                ;;
+            0) break ;;
+            *) print_message $RED "无效选择，请重新输入" ;;
+        esac
+        
+        if [[ $choice != 6 ]]; then
+            read -p "按回车键继续..."
+        fi
+    done
+}
+
+# 管理Shadowsocks
+manage_shadowsocks() {
+    while true; do
+        clear
+        print_message $CYAN "
+=== Shadowsocks 管理 ==="
+        echo -e " 1. 启动服务"
+        echo -e " 2. 停止服务"
+        echo -e " 3. 重启服务"
+        echo -e " 4. 查看状态"
+        echo -e " 5. 查看配置"
+        echo -e " 6. 查看日志"
+        echo -e " 7. 诊断连接问题"
+        echo -e " 8. 显示配置信息"
+        echo -e " 0. 返回上级菜单"
+        echo
+        
+        read -p "请选择操作 [0-8]: " choice
+        
+        case $choice in
+            1)
+                systemctl start shadowsocks-rust
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    systemctl start shadowsocks-rust-ipv4-backup
+                fi
+                print_message $GREEN "Shadowsocks 服务已启动"
+                ;;
+            2)
+                systemctl stop shadowsocks-rust
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    systemctl stop shadowsocks-rust-ipv4-backup
+                fi
+                print_message $YELLOW "Shadowsocks 服务已停止"
+                ;;
+            3)
+                systemctl restart shadowsocks-rust
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    systemctl restart shadowsocks-rust-ipv4-backup
+                fi
+                print_message $GREEN "Shadowsocks 服务已重启"
+                ;;
+            4)
+                systemctl status shadowsocks-rust
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    echo
+                    systemctl status shadowsocks-rust-ipv4-backup
+                fi
+                ;;
+            5)
+                if [[ -f "$SHADOWSOCKS_CONFIG_FILE" ]]; then
+                    echo -e "${YELLOW}IPv6 主配置:${NC}"
+                    cat "$SHADOWSOCKS_CONFIG_FILE"
+                    if [[ -f "/etc/shadowsocks-rust/config-ipv4-backup.json" ]]; then
+                        echo -e "\n${YELLOW}IPv4 备用配置:${NC}"
+                        cat "/etc/shadowsocks-rust/config-ipv4-backup.json"
+                    fi
+                else
+                    print_message $RED "配置文件不存在"
+                fi
+                ;;
+            6)
+                echo -e "${YELLOW}IPv6 主服务日志:${NC}"
+                journalctl -u shadowsocks-rust -n 20 --no-pager
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    echo -e "\n${YELLOW}IPv4 备用服务日志:${NC}"
+                    journalctl -u shadowsocks-rust-ipv4-backup -n 20 --no-pager
+                fi
+                ;;
+            7)
+                diagnose_shadowsocks
+                ;;
+            8)
+                if [[ -f "$SHADOWSOCKS_CONFIG_FILE" ]]; then
+                    local port=$(grep server_port "$SHADOWSOCKS_CONFIG_FILE" | cut -d':' -f2 | tr -d ' ,')
+                    local password=$(grep password "$SHADOWSOCKS_CONFIG_FILE" | cut -d'"' -f4)
+                    local method=$(grep method "$SHADOWSOCKS_CONFIG_FILE" | cut -d'"' -f4)
+                    show_shadowsocks_config "$port" "$password" "$method"
+                else
+                    print_message $RED "配置文件不存在"
+                fi
+                ;;
+            0) break ;;
+            *) print_message $RED "无效选择，请重新输入" ;;
+        esac
+        
+        if [[ $choice != 6 ]]; then
+            read -p "按回车键继续..."
+        fi
+    done
+}
+
+# 卸载服务菜单
+uninstall_services() {
+    while true; do
+        clear
+        print_message $CYAN "
+=== 卸载服务 ==="
+        echo -e " 1. 卸载 Hysteria2"
+        echo -e " 2. 卸载 Shadowsocks"
+        echo -e " 3. 卸载所有服务"
+        echo -e " 0. 返回主菜单"
+        echo
+        
+        read -p "请选择操作 [0-3]: " choice
+        
+        case $choice in
+            1) uninstall_hysteria2 ;;
+            2) uninstall_shadowsocks ;;
+            3) uninstall_all_services ;;
+            0) break ;;
+            *) print_message $RED "无效选择，请重新输入" ;;
+        esac
+        
+        read -p "按回车键继续..."
+    done
+}
+
+# 卸载Hysteria2
+uninstall_hysteria2() {
+    print_message $YELLOW "正在卸载 Hysteria2..."
     
-    # IPv4 配置
+    systemctl stop hysteria2 >/dev/null 2>&1
+    systemctl disable hysteria2 >/dev/null 2>&1
+    rm -f /etc/systemd/system/hysteria2.service
+    rm -f /usr/local/bin/hysteria2
+    rm -rf /etc/hysteria2
+    systemctl daemon-reload
+    
+    print_message $GREEN "Hysteria2 卸载完成"
+}
+
+# 卸载Shadowsocks
+uninstall_shadowsocks() {
+    print_message $YELLOW "正在卸载 Shadowsocks..."
+    
+    # 停止并禁用IPv6主服务
+    systemctl stop shadowsocks-rust >/dev/null 2>&1
+    systemctl disable shadowsocks-rust >/dev/null 2>&1
+    rm -f /etc/systemd/system/shadowsocks-rust.service
+    
+    # 停止并禁用IPv4备用服务
+    systemctl stop shadowsocks-rust-ipv4-backup >/dev/null 2>&1
+    systemctl disable shadowsocks-rust-ipv4-backup >/dev/null 2>&1
+    rm -f /etc/systemd/system/shadowsocks-rust-ipv4-backup.service
+    
+    # 删除文件和配置
+    rm -f /usr/local/bin/ssserver
+    rm -rf /etc/shadowsocks-rust
+    systemctl daemon-reload
+    
+    print_message $GREEN "Shadowsocks 卸载完成"
+}
+
+# 卸载所有服务
+uninstall_all_services() {
+    print_message $YELLOW "正在卸载所有服务..."
+    uninstall_hysteria2
+    uninstall_shadowsocks
+    print_message $GREEN "所有服务卸载完成"
+}
+
+# 更新服务菜单
+update_services() {
+    while true; do
+        clear
+        print_message $CYAN "
+=== 更新服务 ==="
+        echo -e " 1. 更新 Hysteria2"
+        echo -e " 2. 更新 Shadowsocks"
+        echo -e " 3. 更新系统内核"
+        echo -e " 0. 返回主菜单"
+        echo
+        
+        read -p "请选择操作 [0-3]: " choice
+        
+        case $choice in
+            1) update_hysteria2 ;;
+            2) update_shadowsocks ;;
+            3) update_kernel ;;
+            0) break ;;
+            *) print_message $RED "无效选择，请重新输入" ;;
+        esac
+        
+        read -p "按回车键继续..."
+    done
+}
+
+# 更新Hysteria2
+update_hysteria2() {
+    print_message $BLUE "正在更新 Hysteria2..."
+    
+    if [[ ! -f "$HYSTERIA2_CONFIG_FILE" ]]; then
+        print_message $RED "Hysteria2 未安装"
+        return
+    fi
+    
+    systemctl stop hysteria2
+    
+    local download_url="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${ARCH}"
+    curl -L -o /usr/local/bin/hysteria2 "$download_url" >/dev/null 2>&1
+    
+    if [[ $? -eq 0 ]]; then
+        chmod +x /usr/local/bin/hysteria2
+        systemctl start hysteria2
+        print_message $GREEN "Hysteria2 更新完成"
+    else
+        print_message $RED "Hysteria2 更新失败"
+    fi
+}
+
+# 更新Shadowsocks
+update_shadowsocks() {
+    print_message $BLUE "正在更新 Shadowsocks..."
+    
+    if [[ ! -f "$SHADOWSOCKS_CONFIG_FILE" ]]; then
+        print_message $RED "Shadowsocks 未安装"
+        return
+    fi
+    
+    systemctl stop shadowsocks-rust
+    
+    local ss_version=$(curl -s https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest | jq -r .tag_name)
+    local download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${ss_version}/shadowsocks-${ss_version}.x86_64-unknown-linux-gnu.tar.xz"
+    
+    if [[ "$ARCH" == "arm64" ]]; then
+        download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${ss_version}/shadowsocks-${ss_version}.aarch64-unknown-linux-gnu.tar.xz"
+    fi
+    
+    cd /tmp
+    curl -L -o shadowsocks.tar.xz "$download_url" >/dev/null 2>&1
+    
+    if [[ $? -eq 0 ]]; then
+        tar -xf shadowsocks.tar.xz
+        mv ssserver /usr/local/bin/
+        chmod +x /usr/local/bin/ssserver
+        rm -f shadowsocks.tar.xz
+        systemctl start shadowsocks-rust
+        print_message $GREEN "Shadowsocks 更新完成"
+    else
+        print_message $RED "Shadowsocks 更新失败"
+    fi
+}
+
+# 更新系统内核
+update_kernel() {
+    print_message $BLUE "正在更新系统内核..."
+    
+    case $PACKAGE_MANAGER in
+        apt)
+            apt update && apt upgrade -y
+            ;;
+        yum|dnf)
+            $PACKAGE_MANAGER update -y
+            ;;
+    esac
+    
+    print_message $GREEN "系统内核更新完成，建议重启系统"
+}
+
+# 系统优化菜单
+system_optimization() {
+    while true; do
+        clear
+        print_message $CYAN "
+=== 系统优化 ==="
+        echo -e " 1. 创建/管理 Swap"
+        echo -e " 2. 优化网络参数"
+        echo -e " 3. 优化系统限制"
+        echo -e " 4. 清理系统垃圾"
+        echo -e " 0. 返回主菜单"
+        echo
+        
+        read -p "请选择操作 [0-4]: " choice
+        
+        case $choice in
+            1) manage_swap ;;
+            2) optimize_network ;;
+            3) optimize_limits ;;
+            4) clean_system ;;
+            0) break ;;
+            *) print_message $RED "无效选择，请重新输入" ;;
+        esac
+        
+        read -p "按回车键继续..."
+    done
+}
+
+# 管理Swap
+manage_swap() {
+    print_message $BLUE "当前Swap状态:"
+    free -h | grep -i swap
+    echo
+    
+    if [[ -f /swapfile ]]; then
+        echo -e " 1. 删除现有Swap"
+        echo -e " 2. 重新创建Swap"
+        echo -e " 3. 返回"
+        read -p "请选择操作 [1-3]: " swap_choice
+        
+        case $swap_choice in
+            1)
+                swapoff /swapfile
+                rm -f /swapfile
+                sed -i '/\/swapfile/d' /etc/fstab
+                print_message $GREEN "Swap已删除"
+                ;;
+            2)
+                swapoff /swapfile
+                rm -f /swapfile
+                sed -i '/\/swapfile/d' /etc/fstab
+                create_swap_file
+                ;;
+            3) return ;;
+        esac
+    else
+        read -p "是否创建1GB Swap? (y/n): " create_swap
+        if [[ $create_swap =~ ^[Yy]$ ]]; then
+            create_swap_file
+        fi
+    fi
+}
+
+# 优化网络参数
+optimize_network() {
+    print_message $BLUE "正在优化网络参数..."
+    
+    cat >> /etc/sysctl.conf << EOF
+
+# Network Optimization
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
+net.ipv4.tcp_rmem = 4096 65536 134217728
+net.ipv4.tcp_wmem = 4096 65536 134217728
+net.core.netdev_max_backlog = 5000
+net.ipv4.tcp_window_scaling = 1
+EOF
+    
+    sysctl -p >/dev/null 2>&1
+    print_message $GREEN "网络参数优化完成"
+}
+
+# 优化系统限制
+optimize_limits() {
+    print_message $BLUE "正在优化系统限制..."
+    
+    cat >> /etc/security/limits.conf << EOF
+
+# System Limits Optimization
+* soft nofile 65536
+* hard nofile 65536
+* soft nproc 65536
+* hard nproc 65536
+EOF
+    
+    print_message $GREEN "系统限制优化完成"
+}
+
+# 清理系统垃圾
+clean_system() {
+    print_message $BLUE "正在清理系统垃圾..."
+    
+    case $PACKAGE_MANAGER in
+        apt)
+            apt autoremove -y >/dev/null 2>&1
+            apt autoclean >/dev/null 2>&1
+            ;;
+        yum|dnf)
+            $PACKAGE_MANAGER autoremove -y >/dev/null 2>&1
+            $PACKAGE_MANAGER clean all >/dev/null 2>&1
+            ;;
+    esac
+    
+    # 清理日志
+    journalctl --vacuum-time=7d >/dev/null 2>&1
+    
+    # 清理临时文件
+    rm -rf /tmp/* >/dev/null 2>&1
+    
+    print_message $GREEN "系统垃圾清理完成"
+}
+
+# 显示主菜单
+show_main_menu() {
+    clear
+    print_message $CYAN "
+Hysteria2 & Shadowsocks (IPv6) Management Script ($SCRIPT_VERSION)
+项目地址：https://github.com/everett7623/hy2ipv6
+博客地址：https://seedloc.com
+论坛地址：https://nodeloc.com
+
+服务器 IPv4: $SERVER_IPV4
+服务器 IPv6: ${SERVER_IPV6:-N/A}
+Hysteria2 状态: $(check_hysteria2_status)
+Shadowsocks 状态: $(check_shadowsocks_status)
+
+================================================"
+    echo -e " 1. 安装 Hysteria2(自签名证书模式，无需域名解析)"
+    echo -e " 2. 安装 Shadowsocks (IPv6 only/双栈IPv6优先)"
+    echo -e " 3. 服务管理"
+    echo -e " 4. 卸载服务"
+    echo -e " 5. 更新服务"
+    echo -e " 6. 系统优化"
+    echo -e " 0. 退出脚本"
+    echo -e "================================================"
+}
+
+# 主函数
+main() {
+    # 检查root权限
+    check_root
+    
+    # 创建日志文件
+    touch "$LOG_FILE"
+    
+    # 系统初始化检查
+    detect_system
+    check_system_compatibility
+    install_dependencies
+    check_memory
+    check_ipv4
+    check_ipv6
+    check_firewall
+    
+    # 主循环
+    while true; do
+        show_main_menu
+        read -p "请选择操作 [0-6]: " choice
+        
+        case $choice in
+            1) install_hysteria2 ;;
+            2) install_shadowsocks ;;
+            3) service_management ;;
+            4) uninstall_services ;;
+            5) update_services ;;
+            6) system_optimization ;;
+            0) 
+                print_message $GREEN "感谢使用！"
+                exit 0
+                ;;
+            *) 
+                print_message $RED "无效选择，请重新输入"
+                ;;
+        esac
+        
+        if [[ $choice != 3 && $choice != 4 && $choice != 5 && $choice != 6 ]]; then
+            read -p "按回车键继续..."
+        fi
+    done
+}
+
+# 运行主函数
+main "$@"
     if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
         echo -e "${YELLOW}🚀 V2rayN / NekoBox / Shadowrocket 分享链接 (IPv4):${NC}"
         local ss_link_ipv4=$(echo -n "${method}:${password}@${SERVER_IPV4}:${port}" | base64 -w 0)
@@ -1033,11 +1562,39 @@ Shadowsocks 配置信息
     echo -e "${CYAN}💡 使用说明:${NC}"
     echo -e "${WHITE}• Shadowsocks 专为 IPv6 环境优化，抗封锁能力更强${NC}"
     echo -e "${WHITE}• 优先使用 IPv6 配置，性能更佳${NC}"
+Shadowsocks 配置信息
+================================================"
+    
+    # IPv4 配置
+    if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+        echo -e "${YELLOW}🚀 V2rayN / NekoBox / Shadowrocket 分享链接 (IPv4):${NC}"
+        local ss_link_ipv4=$(echo -n "${method}:${password}@${SERVER_IPV4}:${port}" | base64 -w 0)
+        echo -e "${WHITE}ss://${ss_link_ipv4}#🌟SS-IPv4-$(date +%m%d)${NC}"
+        echo
+        
+        echo -e "${YELLOW}⚔️ Clash Meta 配置 (IPv4):${NC}"
+        echo -e "${WHITE}- { name: '🌟SS-IPv4-$(date +%m%d)', type: ss, server: ${SERVER_IPV4}, port: ${port}, cipher: ${method}, password: ${password}, udp: true }${NC}"
+        echo
+        
+        echo -e "${YELLOW}🌊 Surge 配置 (IPv4):${NC}"
+        echo -e "${WHITE}🌟SS-IPv4-$(date +%m%d) = ss, ${SERVER_IPV4}, ${port}, encrypt-method=${method}, password=${password}, udp-relay=true${NC}"
+        echo
+    else
+        echo -e "${RED}IPv4 地址不可用${NC}"
+        echo
+    fi
+    
+    # IPv6 配置
+    if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV6" ]]; then
+=======
     echo -e "${WHITE}• 双栈环境提供 IPv4 备用配置${NC}"
     echo -e "${WHITE}• 如遇连接问题，请检查客户端 IPv6 支持${NC}"
     echo -e "${WHITE}• 建议客户端启用 UDP 转发以获得更好性能${NC}"
     echo
 }
+
+# 服务管理菜单
+service_management() {
 ================================================
 Shadowsocks 配置信息
 ================================================"
