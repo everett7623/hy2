@@ -469,12 +469,17 @@ get_github_latest_version() {
     
     for api_url in "${API_MIRRORS[@]}"; do
         local url="${api_url}/repos/${repo}/releases/latest"
+        info_echo "尝试从 $api_url 获取 $repo 最新版本..."
         
-        if version=$(timeout 10 curl -s "$url" 2>/dev/null | grep '"tag_name"' | cut -d '"' -f 4); then
+        local curl_output
+        if retry_command $MAX_RETRIES 5 "curl_output=\$(timeout $TIMEOUT_DURATION curl -s '$url' 2>/dev/null)"; then
+            version=$(echo "$curl_output" | grep '"tag_name"' | cut -d '"' -f 4)
             if [[ -n "$version" ]]; then
                 echo "$version"
                 return 0
             fi
+        else
+            warning_echo "从 $api_url 获取 $repo 最新版本失败 (尝试 $MAX_RETRIES 次)"
         fi
     done
     
@@ -489,21 +494,36 @@ update_package_list() {
     case "$OS_TYPE" in
         ubuntu|debian)
             info_echo "更新 apt 包列表..."
-            if ! apt-get update -qq >"$log_file" 2>&1; then
-                warning_echo "apt 更新失败，尝试修复源配置..."
+            if ! retry_command $MAX_RETRIES 5 "apt-get update -qq >'$log_file' 2>&1"; then
+                warning_echo "apt 更新失败 (尝试 $MAX_RETRIES 次)，尝试修复源配置并重试..."
                 fix_debian_sources
-                retry_command 2 5 "apt-get update -qq >'$log_file' 2>&1"
+                # 修复后，再进行一次更新尝试
+                if ! apt-get update -qq >"$log_file" 2>&1; then
+                    error_echo "apt 更新在修复源后仍然失败，请检查: $log_file"
+                    return 1
+                fi
             fi
             ;;
         centos|rocky|almalinux)
             info_echo "更新 yum 缓存..."
-            retry_command 2 5 "yum makecache fast >'$log_file' 2>&1"
+            if ! retry_command $MAX_RETRIES 5 "yum makecache fast >'$log_file' 2>&1"; then
+                error_echo "yum 缓存更新失败，请检查日志: $log_file"
+                return 1
+            fi
             ;;
         fedora)
             info_echo "更新 dnf 缓存..."
-            retry_command 2 5 "dnf makecache >'$log_file' 2>&1"
+            if ! retry_command $MAX_RETRIES 5 "dnf makecache >'$log_file' 2>&1"; then
+                error_echo "dnf 缓存更新失败，请检查日志: $log_file"
+                return 1
+            fi
+            ;;
+        *)
+            error_echo "不支持的操作系统: $OS_TYPE"
+            return 1
             ;;
     esac
+    return 0
 }
 
 install_packages() {
@@ -514,7 +534,8 @@ install_packages() {
     
     case "$OS_TYPE" in
         ubuntu|debian)
-            if ! apt-get install -y "${packages[@]}" >"$log_file" 2>&1; then
+            # 添加 --no-install-recommends 减少不必要的软件包安装，并使用 retry_command
+            if ! retry_command $MAX_RETRIES 5 "apt-get install -y --no-install-recommends ${packages[@]} >'$log_file' 2>&1"; then
                 error_echo "软件包安装失败，请检查日志: $log_file"
                 return 1
             fi
@@ -522,15 +543,18 @@ install_packages() {
         centos|rocky|almalinux)
             # 先确保 EPEL 源可用
             if ! rpm -q epel-release >/dev/null 2>&1; then
-                yum install -y epel-release >"$log_file" 2>&1 || true
+                info_echo "安装 EPEL 源..."
+                if ! retry_command $MAX_RETRIES 5 "yum install -y epel-release >'$log_file' 2>&1"; then
+                    warning_echo "EPEL 源安装失败，尝试继续安装主要软件包..."
+                fi
             fi
-            if ! yum install -y "${packages[@]}" >"$log_file" 2>&1; then
+            if ! retry_command $MAX_RETRIES 5 "yum install -y "${packages[@]}" >'$log_file' 2>&1"; then
                 error_echo "软件包安装失败，请检查日志: $log_file"
                 return 1
             fi
             ;;
         fedora)
-            if ! dnf install -y "${packages[@]}" >"$log_file" 2>&1; then
+            if ! retry_command $MAX_RETRIES 5 "dnf install -y "${packages[@]}" >'$log_file' 2>&1"; then
                 error_echo "软件包安装失败，请检查日志: $log_file"
                 return 1
             fi
@@ -542,6 +566,7 @@ install_packages() {
     esac
     
     success_echo "软件包安装完成"
+    return 0
 }
 
 # 修复 Debian/Ubuntu 源
@@ -726,7 +751,7 @@ hy2_generate_cert() {
     mkdir -p "$cert_dir"
     
     # 生成私钥和证书
-    if ! openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+    if ! openssl req -x509 -nodes -days 3650 -newkey rsa:2044 \
         -keyout "$cert_dir/server.key" \
         -out "$cert_dir/server.crt" \
         -subj "/C=US/ST=State/L=City/O=Organization/CN=$HY_DOMAIN" \
@@ -981,7 +1006,7 @@ hy2_install() {
     fi
     
     # 安装基础依赖
-    update_package_list
+    update_package_list && \
     install_packages curl wget openssl ca-certificates || return 1
     
     # 执行安装步骤
@@ -1316,7 +1341,7 @@ ss_display_result() {
     echo -e "${PURPLE}========================${ENDCOLOR}"
     echo
 
-    # 检查服务状态
+    # 检查服务监听状态
     info_echo "检查服务监听状态..."
     if command_exists ss; then
         local listen_info
@@ -1397,13 +1422,22 @@ ss_update() {
     
     case "$OS_TYPE" in
         ubuntu|debian)
-            apt-get install -y --only-upgrade shadowsocks-libev
+            if ! retry_command $MAX_RETRIES 5 "apt-get install -y --only-upgrade shadowsocks-libev >/dev/null 2>&1"; then
+                error_echo "Shadowsocks 更新失败"
+                return 1
+            fi
             ;;
         centos|rocky|almalinux)
-            yum update -y shadowsocks-libev
+            if ! retry_command $MAX_RETRIES 5 "yum update -y shadowsocks-libev >/dev/null 2>&1"; then
+                error_echo "Shadowsocks 更新失败"
+                return 1
+            fi
             ;;
         fedora)
-            dnf update -y shadowsocks-libev
+            if ! retry_command $MAX_RETRIES 5 "dnf update -y shadowsocks-libev >/dev/null 2>&1"; then
+                error_echo "Shadowsocks 更新失败"
+                return 1
+            fi
             ;;
         *)
             error_echo "不支持的操作系统"
@@ -1423,6 +1457,7 @@ ss_update() {
     else
         success_echo "Shadowsocks 更新完成"
     fi
+    return 0
 }
 
 ################################################################################
@@ -1598,12 +1633,29 @@ show_hysteria_config() {
     password=$(grep "password:" /etc/hysteria2/server.yaml | awk '{print $2}')
     domain=$(openssl x509 -in /etc/hysteria2/certs/server.crt -noout -subject 2>/dev/null | grep -o "CN=[^,]*" | cut -d= -f2)
 
-    # 更新全局变量
+    # 更新全局变量，以便 hy2_generate_client_configs 使用最新信息
     HY_PASSWORD="$password"
     HY_DOMAIN="$domain"
     
+    # 从配置文件或系统信息中获取 HY_SERVER_IP_CHOICE
+    if [[ "$IPV6_ADDR" != "N/A" ]] && [[ -f "/etc/hysteria2/server.yaml" ]] && grep -q "listen: ::443" "/etc/hysteria2/server.yaml"; then
+        HY_SERVER_IP_CHOICE="ipv6"
+    elif [[ "$IPV4_ADDR" != "N/A" ]]; then
+        HY_SERVER_IP_CHOICE="ipv4"
+    else
+        HY_SERVER_IP_CHOICE="unknown" # Fallback
+    fi
+
     echo -e "${PURPLE}=== 基本信息 ===${ENDCOLOR}"
-    echo -e "服务器地址: ${GREEN}$([[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]] && echo "[$IPV6_ADDR]" || echo "$IPV4_ADDR")${ENDCOLOR}"
+    local display_ip=""
+    if [[ "$HY_SERVER_IP_CHOICE" == "ipv6" ]]; then
+        display_ip="[$IPV6_ADDR]"
+    elif [[ "$HY_SERVER_IP_CHOICE" == "ipv4" ]]; then
+        display_ip="$IPV4_ADDR"
+    else
+        display_ip="未确定"
+    fi
+    echo -e "服务器地址: ${GREEN}$display_ip${ENDCOLOR}"
     echo -e "端口: ${GREEN}443${ENDCOLOR}"
     echo -e "密码: ${GREEN}$password${ENDCOLOR}"
     echo -e "SNI: ${GREEN}$domain${ENDCOLOR}"
@@ -1625,7 +1677,7 @@ show_shadowsocks_config() {
     password=$(grep "password" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
     method=$(grep "method" /etc/shadowsocks-libev/config.json | cut -d'"' -f4)
 
-    # 更新全局变量
+    # 更新全局变量，以便 ss_generate_client_configs 使用最新信息
     SS_PASSWORD="$password"
     SS_PORT="$server_port"
     SS_METHOD="$method"
@@ -1788,12 +1840,13 @@ manage_swap_interactive() {
     else
         info_echo "Swap 已存在"
         local confirm
-        safe_read "是否要重新创建 Swap？" confirm "n"
+        safe_read "是否要重新创建 Swap？(这将删除现有Swap)" confirm "n"
         if [[ "$confirm" =~ ^[yY]$ ]]; then
             # 禁用现有 Swap
-            swapoff -a
-            rm -f /swapfile
-            sed -i '/swapfile/d' /etc/fstab
+            info_echo "禁用现有 Swap 并删除文件..."
+            swapoff -a >/dev/null 2>&1 || true
+            rm -f /swapfile >/dev/null 2>&1 || true
+            sed -i '/swapfile/d' /etc/fstab >/dev/null 2>&1 || true
             create_swap_file
         fi
     fi
@@ -1811,20 +1864,21 @@ optimize_network() {
         cp /etc/sysctl.conf /etc/sysctl.conf.bak
     fi
     
-    cat >> /etc/sysctl.conf <<EOF
-
-# Network optimizations for proxy services
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-net.core.rmem_max = 134217728
-net.core.wmem_max = 134217728
-net.ipv4.tcp_rmem = 4096 65536 134217728
-net.ipv4.tcp_wmem = 4096 65536 134217728
-net.ipv4.tcp_fastopen = 3
-net.ipv4.tcp_mtu_probing = 1
-net.core.netdev_max_backlog = 16384
-net.ipv4.tcp_slow_start_after_idle = 0
-EOF
+    # 使用 tee 追加并防止重复添加
+    {
+        echo ""
+        echo "# Network optimizations for proxy services"
+        echo "net.core.default_qdisc = fq"
+        echo "net.ipv4.tcp_congestion_control = bbr"
+        echo "net.core.rmem_max = 134217728"
+        echo "net.core.wmem_max = 134217728"
+        echo "net.ipv4.tcp_rmem = 4096 65536 134217728"
+        echo "net.ipv4.tcp_wmem = 4096 65536 134217728"
+        echo "net.ipv4.tcp_fastopen = 3"
+        echo "net.ipv4.tcp_mtu_probing = 1"
+        echo "net.core.netdev_max_backlog = 16384"
+        echo "net.ipv4.tcp_slow_start_after_idle = 0"
+    } | tee -a /etc/sysctl.conf >/dev/null
 
     sysctl -p
     success_echo "网络参数优化完成"
@@ -1842,14 +1896,15 @@ optimize_limits() {
         cp /etc/security/limits.conf /etc/security/limits.conf.bak
     fi
     
-    cat >> /etc/security/limits.conf <<EOF
-
-# Optimizations for proxy services
-* soft nofile 1000000
-* hard nofile 1000000
-* soft nproc 1000000
-* hard nproc 1000000
-EOF
+    # 使用 tee 追加并防止重复添加
+    {
+        echo ""
+        echo "# Optimizations for proxy services"
+        echo "* soft nofile 1000000"
+        echo "* hard nofile 1000000"
+        echo "* soft nproc 1000000"
+        echo "* hard nproc 1000000"
+    } | tee -a /etc/security/limits.conf >/dev/null
 
     success_echo "系统限制优化完成"
     
@@ -1903,12 +1958,16 @@ update_system_kernel() {
     case "$OS_TYPE" in
         ubuntu|debian)
             info_echo "更新 Debian/Ubuntu 系统..."
-            if ! apt-get update -qq >"$update_log" 2>&1; then
+            if ! retry_command $MAX_RETRIES 5 "apt-get update -qq >'$update_log' 2>&1"; then
+                warning_echo "apt 更新失败，尝试修复源配置并重试..."
                 fix_debian_sources
-                apt-get update -qq >"$update_log" 2>&1
+                if ! apt-get update -qq >"$update_log" 2>&1; then
+                    error_echo "apt 更新在修复源后仍然失败，请检查: $update_log"
+                    return 1
+                fi
             fi
             
-            if apt-get upgrade -y >>"$update_log" 2>&1; then
+            if retry_command $MAX_RETRIES 5 "apt-get upgrade -y >>'$update_log' 2>&1"; then
                 success_echo "系统更新完成"
                 if apt list --upgradable 2>/dev/null | grep -q "linux-"; then
                     reboot_required=true
@@ -1920,7 +1979,7 @@ update_system_kernel() {
             ;;
         centos|rocky|almalinux)
             info_echo "更新 CentOS/Rocky/AlmaLinux 系统..."
-            if yum update -y >"$update_log" 2>&1; then
+            if retry_command $MAX_RETRIES 5 "yum update -y >'$update_log' 2>&1"; then
                 success_echo "系统更新完成"
                 if rpm -q kernel | grep -v "$(uname -r)" >/dev/null 2>&1; then
                     reboot_required=true
@@ -1932,7 +1991,7 @@ update_system_kernel() {
             ;;
         fedora)
             info_echo "更新 Fedora 系统..."
-            if dnf update -y >"$update_log" 2>&1; then
+            if retry_command $MAX_RETRIES 5 "dnf update -y >'$update_log' 2>&1"; then
                 success_echo "系统更新完成"
                 if rpm -q kernel | grep -v "$(uname -r)" >/dev/null 2>&1; then
                     reboot_required=true
