@@ -1265,7 +1265,7 @@ main_menu() {
         echo " 5. 更新服务"
         echo " 6. 系统优化"
         echo " 7. 查看日志"
-        echo " 8. 退出脚本"
+        echo " 0. 退出脚本"
         echo -e "${CYAN}================================================${NC}"
         
         read -p "请选择操作 [1-8]: " choice
@@ -1278,7 +1278,7 @@ main_menu() {
             5) update_services ;;
             6) system_optimization ;;
             7) view_logs ;;
-            8) 
+            0) 
                 echo -e "${GREEN}感谢使用 Hysteria2 & Shadowsocks 管理脚本！${NC}"
                 exit 0
                 ;;
