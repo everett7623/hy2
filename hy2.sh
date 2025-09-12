@@ -271,11 +271,11 @@ install_dependencies() {
     case $PACKAGE_MANAGER in
         apt)
             apt update >/dev/null 2>&1
-            apt install -y curl wget unzip tar jq bc iproute2 lsof >/dev/null 2>&1
+            apt install -y curl wget unzip tar xz-utils jq bc iproute2 lsof file >/dev/null 2>&1
             ;;
         yum|dnf)
             $PACKAGE_MANAGER update -y >/dev/null 2>&1
-            $PACKAGE_MANAGER install -y curl wget unzip tar jq bc iproute lsof >/dev/null 2>&1
+            $PACKAGE_MANAGER install -y curl wget unzip tar xz jq bc iproute lsof file >/dev/null 2>&1
             ;;
     esac
     
@@ -551,25 +551,61 @@ install_shadowsocks() {
         return 1
     fi
     
+    # 检查文件类型
+    local file_type=$(file shadowsocks.tar.xz 2>/dev/null || echo "unknown")
+    print_message $BLUE "下载文件类型: $file_type"
+    
     # 解压文件
     print_message $BLUE "正在解压文件..."
-    if ! tar -xf shadowsocks.tar.xz 2>/dev/null; then
-        print_message $RED "文件解压失败"
-        rm -f shadowsocks.tar.xz
+    
+    # 清理可能存在的旧文件
+    rm -f ssserver sslocal ssmanager ssurl
+    
+    # 尝试不同的解压方法
+    local extract_success=false
+    
+    # 方法1: 使用 tar 解压
+    if tar -tf shadowsocks.tar.xz >/dev/null 2>&1; then
+        if tar -xf shadowsocks.tar.xz 2>/dev/null; then
+            extract_success=true
+            print_message $GREEN "使用 tar 解压成功"
+        fi
+    fi
+    
+    # 方法2: 如果 tar 失败，尝试 xz + tar
+    if ! $extract_success; then
+        print_message $YELLOW "tar 解压失败，尝试 xz 解压..."
+        if command -v xz >/dev/null 2>&1; then
+            if xz -d shadowsocks.tar.xz 2>/dev/null && tar -xf shadowsocks.tar 2>/dev/null; then
+                extract_success=true
+                print_message $GREEN "使用 xz + tar 解压成功"
+            fi
+        fi
+    fi
+    
+    if ! $extract_success; then
+        print_message $RED "文件解压失败，可能是下载文件损坏"
+        print_message $YELLOW "尝试查看文件内容..."
+        ls -la shadowsocks.tar.* 2>/dev/null || true
+        rm -f shadowsocks.tar.xz shadowsocks.tar
         return 1
     fi
     
     # 检查解压后的文件
     if [[ ! -f ssserver ]]; then
         print_message $RED "未找到 ssserver 可执行文件"
-        rm -f shadowsocks.tar.xz
+        print_message $YELLOW "查看解压后的文件:"
+        ls -la 2>/dev/null || true
+        rm -f shadowsocks.tar.xz shadowsocks.tar
         return 1
     fi
     
     # 安装文件
     mv ssserver /usr/local/bin/
     chmod +x /usr/local/bin/ssserver
-    rm -f shadowsocks.tar.xz
+    
+    # 清理临时文件
+    rm -f shadowsocks.tar.xz shadowsocks.tar sslocal ssmanager ssurl
     
     # 验证安装
     if ! /usr/local/bin/ssserver --version >/dev/null 2>&1; then
@@ -988,7 +1024,7 @@ manage_swap() {
     if [[ -f /swapfile ]]; then
         echo -e " 1. 删除现有Swap"
         echo -e " 2. 重新创建Swap"
-        echo -e " 0. 返回"
+        echo -e " 3. 返回"
         read -p "请选择操作 [1-3]: " swap_choice
         
         case $swap_choice in
@@ -1004,7 +1040,7 @@ manage_swap() {
                 sed -i '/\/swapfile/d' /etc/fstab
                 create_swap_file
                 ;;
-            0) return ;;
+            3) return ;;
         esac
     else
         read -p "是否创建1GB Swap? (y/n): " create_swap
