@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 #====================================================================================
 # 项目：Hysteria2 & Shadowsocks (IPv6) Management Script
@@ -513,9 +513,35 @@ EOF
         show_hysteria2_config "$port" "$password" "$sni_domain"
     else
         print_message $RED "Hysteria2 启动失败"
+Shadowsocks 配置信息
+================================================"
+=======
         return 1
     fi
 }
+
+# 显示Shadowsocks配置信息 - 参考Hysteria2的三种导出格式
+show_shadowsocks_config() {
+    local port=$1
+    local password=$2
+    local method=$3
+    
+Shadowsocks 配置信息
+================================================"
+    
+    # IPv4 配置
+    if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+=======
+    print_message $CYAN "
+================================================
+Shadowsocks 配置信息 (IPv6 优先)
+================================================"
+    
+    # IPv6 配置 (优先显示)
+    if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV6" ]]; then
+================================================
+Shadowsocks 配置信息
+================================================"
 
 # 显示Hysteria2配置信息
 show_hysteria2_config() {
@@ -546,9 +572,11 @@ Hysteria2 配置信息
 install_shadowsocks() {
     print_message $BLUE "开始安装 Shadowsocks..."
     
-    # 检查IPv6可用性
+    # 检查IPv6可用性 - 只支持IPv6 only/双栈IPv6的VPS
     if ! $IPV6_AVAILABLE; then
-        print_message $RED "Shadowsocks 需要 IPv6 支持，当前服务器不支持 IPv6"
+        print_message $RED "Shadowsocks 只支持 IPv6 only 或双栈 IPv6 的 VPS"
+        print_message $RED "当前服务器不支持 IPv6，无法安装 Shadowsocks"
+        print_message $YELLOW "建议使用 Hysteria2，支持 IPv4 环境"
         return 1
     fi
     
@@ -692,10 +720,10 @@ install_shadowsocks() {
     # 创建配置目录
     mkdir -p /etc/shadowsocks-rust
     
-    # 创建配置文件 (优化网络配置)
+    # 创建IPv6优先配置文件 (优化网络配置)
     cat > "$SHADOWSOCKS_CONFIG_FILE" << EOF
 {
-    "server": "0.0.0.0",
+    "server": "::",
     "server_port": $port,
     "password": "$password",
     "timeout": 60,
@@ -709,12 +737,12 @@ install_shadowsocks() {
 }
 EOF
     
-    # 如果系统支持IPv6，创建IPv6专用配置
-    if $IPV6_AVAILABLE; then
-        cat > "/etc/shadowsocks-rust/config-ipv6.json" << EOF
+    # 如果是双栈环境，创建IPv4备用配置
+    if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+        cat > "/etc/shadowsocks-rust/config-ipv4-backup.json" << EOF
 {
-    "server": "::",
-    "server_port": $((port + 1)),
+    "server": "0.0.0.0",
+    "server_port": $((port + 1000)),
     "password": "$password",
     "timeout": 60,
     "method": "$method",
@@ -726,18 +754,18 @@ EOF
     "tcp_user_timeout": 30000
 }
 EOF
-        print_message $BLUE "已创建IPv6专用配置，端口: $((port + 1))"
+        print_message $BLUE "已创建IPv4备用配置，端口: $((port + 1000))"
         
-        # 创建IPv6服务
-        cat > /etc/systemd/system/shadowsocks-rust-ipv6.service << EOF
+        # 创建IPv4备用服务
+        cat > /etc/systemd/system/shadowsocks-rust-ipv4-backup.service << EOF
 [Unit]
-Description=Shadowsocks-Rust Server IPv6
+Description=Shadowsocks-Rust Server IPv4 Backup
 After=network.target nss-lookup.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ssserver -c /etc/shadowsocks-rust/config-ipv6.json
+ExecStart=/usr/local/bin/ssserver -c /etc/shadowsocks-rust/config-ipv4-backup.json
 Restart=on-failure
 RestartSec=5
 User=root
@@ -751,8 +779,8 @@ WantedBy=multi-user.target
 EOF
         
         systemctl daemon-reload
-        systemctl enable shadowsocks-rust-ipv6 >/dev/null 2>&1
-        systemctl start shadowsocks-rust-ipv6
+        systemctl enable shadowsocks-rust-ipv4-backup >/dev/null 2>&1
+        systemctl start shadowsocks-rust-ipv4-backup
     fi
     
     # 创建systemd服务
@@ -841,6 +869,76 @@ EOF
         return 1
     fi
 }
+=======
+Shadowsocks 配置信息
+================================================"
+    
+    # IPv4 配置
+    if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+        echo -e "${YELLOW}🚀 V2rayN / NekoBox / Shadowrocket 分享链接 (IPv6 推荐):${NC}"
+        local ss_link_ipv6=$(echo -n "${method}:${password}@[${SERVER_IPV6}]:${port}" | base64 -w 0)
+        echo -e "${WHITE}ss://${ss_link_ipv6}#🌟SS-IPv6-$(date +%m%d)${NC}"
+        echo
+        
+        echo -e "${YELLOW}⚔️ Clash Meta 配置 (IPv6):${NC}"
+        echo -e "${WHITE}- { name: '🌟SS-IPv6-$(date +%m%d)', type: ss, server: ${SERVER_IPV6}, port: ${port}, cipher: ${method}, password: ${password}, udp: true }${NC}"
+        echo
+        
+        echo -e "${YELLOW}🌊 Surge 配置 (IPv6):${NC}"
+        echo -e "${WHITE}🌟SS-IPv6-$(date +%m%d) = ss, ${SERVER_IPV6}, ${port}, encrypt-method=${method}, password=${password}, udp-relay=true${NC}"
+        echo
+    fi
+    
+    # IPv4 配置 (如果是双栈环境，作为备用显示)
+    if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]] && $IPV6_AVAILABLE; then
+        echo -e "${YELLOW}📱 备用 IPv4 配置 (双栈环境):${NC}"
+        local ipv4_port=$((port + 1000))  # IPv4使用不同端口避免冲突
+        echo -e "${WHITE}服务器地址: ${SERVER_IPV4}${NC}"
+        echo -e "${WHITE}端口: ${ipv4_port}${NC}"
+        echo -e "${WHITE}密码: ${password}${NC}"
+        echo -e "${WHITE}加密方式: ${method}${NC}"
+        echo
+        
+        local ss_link_ipv4=$(echo -n "${method}:${password}@${SERVER_IPV4}:${ipv4_port}" | base64 -w 0)
+        echo -e "${YELLOW}🔗 IPv4 分享链接 (备用):${NC}"
+        echo -e "${WHITE}ss://${ss_link_ipv4}#🌟SS-IPv4-Backup-$(date +%m%d)${NC}"
+        echo
+    fi
+    
+    echo -e "${CYAN}💡 连接建议:${NC}"
+    echo -e "${WHITE}• 优先使用 IPv4 配置，兼容性更好${NC}"
+    echo -e "${WHITE}• IPv6 配置适用于纯IPv6环境${NC}"
+    echo -e "${WHITE}• 如遇超时问题，请检查防火墙和端口开放情况${NC}"
+Shadowsocks 配置信息
+================================================"
+    
+    # IPv4 配置
+    if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+        echo -e "${YELLOW}🚀 V2rayN / NekoBox / Shadowrocket 分享链接 (IPv4):${NC}"
+        local ss_link_ipv4=$(echo -n "${method}:${password}@${SERVER_IPV4}:${port}" | base64 -w 0)
+        echo -e "${WHITE}ss://${ss_link_ipv4}#🌟SS-IPv4-$(date +%m%d)${NC}"
+        echo
+        
+        echo -e "${YELLOW}⚔️ Clash Meta 配置 (IPv4):${NC}"
+        echo -e "${WHITE}- { name: '🌟SS-IPv4-$(date +%m%d)', type: ss, server: ${SERVER_IPV4}, port: ${port}, cipher: ${method}, password: ${password}, udp: true }${NC}"
+        echo
+        
+        echo -e "${YELLOW}🌊 Surge 配置 (IPv4):${NC}"
+        echo -e "${WHITE}🌟SS-IPv4-$(date +%m%d) = ss, ${SERVER_IPV4}, ${port}, encrypt-method=${method}, password=${password}, udp-relay=true${NC}"
+        echo
+    else
+        echo -e "${RED}IPv4 地址不可用${NC}"
+        echo
+    fi
+    
+    # IPv6 配置
+    if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV6" ]]; then
+        local ipv6_port=$((port + 1))
+        echo -e "${YELLOW}🚀 V2rayN / NekoBox / Shadowrocket 分享链接 (IPv6):${NC}"
+=======
+    echo -e "${WHITE}• 建议客户端启用 UDP 转发以获得更好性能${NC}"
+    echo
+}
 
 Shadowsocks 配置信息
 ================================================"
@@ -892,6 +990,54 @@ show_shadowsocks_config() {
     local method=$3
     
     print_message $CYAN "
+================================================
+Shadowsocks 配置信息
+================================================"
+    
+    # IPv4 配置
+    if [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+        echo -e "${YELLOW}🚀 V2rayN / NekoBox / Shadowrocket 分享链接 (IPv4):${NC}"
+        local ss_link_ipv4=$(echo -n "${method}:${password}@${SERVER_IPV4}:${port}" | base64 -w 0)
+        echo -e "${WHITE}ss://${ss_link_ipv4}#🌟SS-IPv4-$(date +%m%d)${NC}"
+        echo
+        
+        echo -e "${YELLOW}⚔️ Clash Meta 配置 (IPv4):${NC}"
+        echo -e "${WHITE}- { name: '🌟SS-IPv4-$(date +%m%d)', type: ss, server: ${SERVER_IPV4}, port: ${port}, cipher: ${method}, password: ${password}, udp: true }${NC}"
+        echo
+        
+        echo -e "${YELLOW}🌊 Surge 配置 (IPv4):${NC}"
+        echo -e "${WHITE}🌟SS-IPv4-$(date +%m%d) = ss, ${SERVER_IPV4}, ${port}, encrypt-method=${method}, password=${password}, udp-relay=true${NC}"
+        echo
+    else
+        echo -e "${RED}IPv4 地址不可用${NC}"
+        echo
+    fi
+    
+    # IPv6 配置
+    if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV6" ]]; then
+        local ipv6_port=$((port + 1))
+        echo -e "${YELLOW}🚀 V2rayN / NekoBox / Shadowrocket 分享链接 (IPv6):${NC}"
+        local ss_link_ipv6=$(echo -n "${method}:${password}@[${SERVER_IPV6}]:${ipv6_port}" | base64 -w 0)
+        echo -e "${WHITE}ss://${ss_link_ipv6}#🌟SS-IPv6-$(date +%m%d)${NC}"
+        echo
+        
+        echo -e "${YELLOW}⚔️ Clash Meta 配置 (IPv6):${NC}"
+        echo -e "${WHITE}- { name: '🌟SS-IPv6-$(date +%m%d)', type: ss, server: ${SERVER_IPV6}, port: ${ipv6_port}, cipher: ${method}, password: ${password}, udp: true }${NC}"
+        echo
+        
+        echo -e "${YELLOW}🌊 Surge 配置 (IPv6):${NC}"
+        echo -e "${WHITE}🌟SS-IPv6-$(date +%m%d) = ss, ${SERVER_IPV6}, ${ipv6_port}, encrypt-method=${method}, password=${password}, udp-relay=true${NC}"
+        echo
+    fi
+    
+    echo -e "${CYAN}💡 使用说明:${NC}"
+    echo -e "${WHITE}• Shadowsocks 专为 IPv6 环境优化，抗封锁能力更强${NC}"
+    echo -e "${WHITE}• 优先使用 IPv6 配置，性能更佳${NC}"
+    echo -e "${WHITE}• 双栈环境提供 IPv4 备用配置${NC}"
+    echo -e "${WHITE}• 如遇连接问题，请检查客户端 IPv6 支持${NC}"
+    echo -e "${WHITE}• 建议客户端启用 UDP 转发以获得更好性能${NC}"
+    echo
+}
 ================================================
 Shadowsocks 配置信息
 ================================================"
@@ -1080,39 +1226,39 @@ manage_shadowsocks() {
         case $choice in
             1)
                 systemctl start shadowsocks-rust
-                if $IPV6_AVAILABLE; then
-                    systemctl start shadowsocks-rust-ipv6
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    systemctl start shadowsocks-rust-ipv4-backup
                 fi
                 print_message $GREEN "Shadowsocks 服务已启动"
                 ;;
             2)
                 systemctl stop shadowsocks-rust
-                if $IPV6_AVAILABLE; then
-                    systemctl stop shadowsocks-rust-ipv6
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    systemctl stop shadowsocks-rust-ipv4-backup
                 fi
                 print_message $YELLOW "Shadowsocks 服务已停止"
                 ;;
             3)
                 systemctl restart shadowsocks-rust
-                if $IPV6_AVAILABLE; then
-                    systemctl restart shadowsocks-rust-ipv6
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    systemctl restart shadowsocks-rust-ipv4-backup
                 fi
                 print_message $GREEN "Shadowsocks 服务已重启"
                 ;;
             4)
                 systemctl status shadowsocks-rust
-                if $IPV6_AVAILABLE; then
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
                     echo
-                    systemctl status shadowsocks-rust-ipv6
+                    systemctl status shadowsocks-rust-ipv4-backup
                 fi
                 ;;
             5)
                 if [[ -f "$SHADOWSOCKS_CONFIG_FILE" ]]; then
                     echo -e "${YELLOW}IPv4 配置:${NC}"
                     cat "$SHADOWSOCKS_CONFIG_FILE"
-                    if [[ -f "/etc/shadowsocks-rust/config-ipv6.json" ]]; then
-                        echo -e "\n${YELLOW}IPv6 配置:${NC}"
-                        cat "/etc/shadowsocks-rust/config-ipv6.json"
+                    if [[ -f "/etc/shadowsocks-rust/config-ipv4-backup.json" ]]; then
+                        echo -e "\n${YELLOW}IPv4 备用配置:${NC}"
+                        cat "/etc/shadowsocks-rust/config-ipv4-backup.json"
                     fi
                 else
                     print_message $RED "配置文件不存在"
@@ -1121,9 +1267,9 @@ manage_shadowsocks() {
             6)
                 echo -e "${YELLOW}IPv4 服务日志:${NC}"
                 journalctl -u shadowsocks-rust -n 20 --no-pager
-                if $IPV6_AVAILABLE; then
-                    echo -e "\n${YELLOW}IPv6 服务日志:${NC}"
-                    journalctl -u shadowsocks-rust-ipv6 -n 20 --no-pager
+                if $IPV6_AVAILABLE && [[ -n "$SERVER_IPV4" && "$SERVER_IPV4" != "N/A" ]]; then
+                    echo -e "\n${YELLOW}IPv4 备用服务日志:${NC}"
+                    journalctl -u shadowsocks-rust-ipv4-backup -n 20 --no-pager
                 fi
                 ;;
             7)
@@ -1198,10 +1344,10 @@ uninstall_shadowsocks() {
     systemctl disable shadowsocks-rust >/dev/null 2>&1
     rm -f /etc/systemd/system/shadowsocks-rust.service
     
-    # 停止并禁用IPv6服务
-    systemctl stop shadowsocks-rust-ipv6 >/dev/null 2>&1
-    systemctl disable shadowsocks-rust-ipv6 >/dev/null 2>&1
-    rm -f /etc/systemd/system/shadowsocks-rust-ipv6.service
+    # 停止并禁用IPv4备用服务
+    systemctl stop shadowsocks-rust-ipv4-backup >/dev/null 2>&1
+    systemctl disable shadowsocks-rust-ipv4-backup >/dev/null 2>&1
+    rm -f /etc/systemd/system/shadowsocks-rust-ipv4-backup.service
     
     # 删除文件和配置
     rm -f /usr/local/bin/ssserver
@@ -1457,7 +1603,7 @@ Shadowsocks 状态: $(check_shadowsocks_status)
 
 ================================================"
     echo -e " 1. 安装 Hysteria2(自签名证书模式，无需域名解析)"
-    echo -e " 2. 安装 Shadowsocks (仅 IPv6)"
+    echo -e " 2. 安装 Shadowsocks (IPv6 only/双栈IPv6优先)"
     echo -e " 3. 服务管理"
     echo -e " 4. 卸载服务"
     echo -e " 5. 更新服务"
