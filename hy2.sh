@@ -3,7 +3,7 @@
 #====================================================================================
 # 项目：Hysteria2 & Shadowsocks (IPv6) Management Script
 # 作者：Jensfrank
-# 版本：v1.0
+# 版本：v1.1 (Fixed by Gemini)
 # GitHub: https://github.com/everett7623/hy2ipv6
 # 博客: https://seedloc.com
 # 论坛: https://nodeloc.com
@@ -22,7 +22,7 @@ WHITE='\033[1;37m'
 NC='\033[0m' # No Color
 
 # 脚本信息
-SCRIPT_VERSION="1.0"
+SCRIPT_VERSION="1.1"
 GITHUB_REPO="https://github.com/everett7623/hy2ipv6"
 BLOG_URL="https://seedloc.com"
 FORUM_URL="https://nodeloc.com"
@@ -183,7 +183,8 @@ install_dependencies() {
     case $OS in
         ubuntu|debian)
             apt-get update -qq
-            packages=(curl wget jq openssl ca-certificates gnupg lsb-release)
+            # [FIXED] 添加 xz-utils 用于解压 .tar.xz 文件
+            packages=(curl wget jq openssl ca-certificates gnupg lsb-release xz-utils)
             for pkg in "${packages[@]}"; do
                 if ! dpkg -l | grep -q "^ii.*$pkg"; then
                     log_info "安装 $pkg..."
@@ -194,10 +195,11 @@ install_dependencies() {
         centos|rhel|fedora|rocky|alma)
             if command -v dnf >/dev/null 2>&1; then
                 dnf update -y -q
-                packages=(curl wget jq openssl ca-certificates)
+                # [FIXED] 添加 xz 用于解压 .tar.xz 文件
+                packages=(curl wget jq openssl ca-certificates xz)
             else
                 yum update -y -q
-                packages=(curl wget jq openssl ca-certificates)
+                packages=(curl wget jq openssl ca-certificates xz)
             fi
             for pkg in "${packages[@]}"; do
                 if ! rpm -q "$pkg" >/dev/null 2>&1; then
@@ -261,7 +263,8 @@ install_hysteria2() {
     
     # 获取最新版本
     local latest_version
-    latest_version=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name' | sed 's/v//')
+    # [FIXED] 更新为官方新仓库 hysteria-project/hysteria
+    latest_version=$(curl -s https://api.github.com/repos/hysteria-project/hysteria/releases/latest | jq -r '.tag_name' | sed 's/v//')
     if [[ -z "$latest_version" ]]; then
         log_error "无法获取 Hysteria2 最新版本"
         return 1
@@ -270,7 +273,8 @@ install_hysteria2() {
     log_info "最新版本: $latest_version"
     
     # 下载二进制文件
-    local download_url="https://github.com/apernet/hysteria/releases/download/app/v${latest_version}/hysteria-linux-${ARCH}"
+    # [FIXED] 更新为正确的下载链接格式
+    local download_url="https://github.com/hysteria-project/hysteria/releases/download/v${latest_version}/hysteria-linux-${ARCH}"
     log_info "下载 Hysteria2..."
     
     if ! wget -q --show-progress "$download_url" -O /tmp/hysteria2; then
@@ -864,7 +868,8 @@ update_hysteria2() {
     
     # 获取最新版本
     local latest_version
-    latest_version=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name' | sed 's/v//')
+    # [FIXED] 更新为官方新仓库 hysteria-project/hysteria
+    latest_version=$(curl -s https://api.github.com/repos/hysteria-project/hysteria/releases/latest | jq -r '.tag_name' | sed 's/v//')
     
     if [[ "$current_version" == "$latest_version" ]]; then
         log_info "Hysteria2 已是最新版本: $current_version"
@@ -882,7 +887,8 @@ update_hysteria2() {
     fi
     
     # 下载新版本
-    local download_url="https://github.com/apernet/hysteria/releases/download/app/v${latest_version}/hysteria-linux-${ARCH}"
+    # [FIXED] 更新为正确的下载链接格式
+    local download_url="https://github.com/hysteria-project/hysteria/releases/download/v${latest_version}/hysteria-linux-${ARCH}"
     log_info "下载新版本..."
     
     if wget -q --show-progress "$download_url" -O /tmp/hysteria2_new; then
