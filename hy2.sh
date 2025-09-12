@@ -2,7 +2,7 @@
 
 #====================================================================================
 # 项目：Hysteria2 & Shadowsocks (IPv6) Management Script
-# 作者：编程大师 (AI)
+# 作者：Jensfrank
 # 版本：v1.0
 # GitHub: https://github.com/everett7623/hy2ipv6
 # 博客: https://seedloc.com
