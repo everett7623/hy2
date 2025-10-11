@@ -158,221 +158,587 @@ configure_firewall() {
     fi
 }
 
-# --- Hysteria2 功能 ---
+# --- Hysteria2 安装功能（完全重写）---
 
 install_hy2() {
     msg "info" "开始安装 Hysteria2..."
     
-    # 提示输入信息
-    read -rp "请输入 Hysteria2 监听端口 (默认 443): " hy2_port
-    [[ -z "$hy2_port" ]] && hy2_port=443
-    
-    read -rp "请输入 Hysteria2 连接密码 (默认随机生成): " hy2_password
-    [[ -z "$hy2_password" ]] && hy2_password=$(openssl rand -base64 16)
-
-    read -rp "请输入用于 SNI 伪装的域名 (回车默认 amd.com): " hy2_sni
-    [[ -z "$hy2_sni" ]] && hy2_sni="amd.com"
-
-    # 下载并安装
-    msg "info" "正在从 GitHub 获取最新版本的 Hysteria2..."
-    local latest_version
-    latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-    if [ -z "$latest_version" ]; then
-        msg "error" "无法获取 Hysteria2 最新版本号，请检查网络或 GitHub API 限制。"
+    # 检测现有安装
+    if [ -f "$HY2_SERVICE_PATH" ]; then
+        msg "warning" "检测到 Hysteria2 已安装。"
+        read -rp "是否覆盖安装？(y/N): " overwrite
+        [[ ! "$overwrite" =~ ^[yY]$ ]] && return
+        sudo systemctl stop hysteria 2>/dev/null
     fi
+    
+    # 交互式配置收集
+    echo -e "\n${BLUE}=== 配置参数 ===${NC}"
+    
+    # 端口配置
+    while true; do
+        read -rp "请输入监听端口 [1-65535] (默认 443): " hy2_port
+        hy2_port=${hy2_port:-443}
+        if [[ "$hy2_port" =~ ^[0-9]+$ ]] && [ "$hy2_port" -ge 1 ] && [ "$hy2_port" -le 65535 ]; then
+            break
+        else
+            msg "warning" "无效端口，请输入 1-65535 之间的数字。"
+        fi
+    done
+    
+    # 密码配置
+    read -rp "请输入连接密码 (留空自动生成): " hy2_password
+    if [ -z "$hy2_password" ]; then
+        hy2_password=$(openssl rand -base64 16 | tr -d '/+=' | head -c 16)
+        msg "info" "已自动生成密码: ${hy2_password}"
+    fi
+    
+    # SNI 伪装配置
+    read -rp "请输入 SNI 伪装域名 (默认 www.bing.com): " hy2_sni
+    hy2_sni=${hy2_sni:-www.bing.com}
+    
+    # 混淆密码（可选）
+    read -rp "是否启用混淆 (obfs)？(y/N): " enable_obfs
+    local obfs_password=""
+    if [[ "$enable_obfs" =~ ^[yY]$ ]]; then
+        read -rp "请输入混淆密码 (留空自动生成): " obfs_password
+        if [ -z "$obfs_password" ]; then
+            obfs_password=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)
+            msg "info" "已自动生成混淆密码: ${obfs_password}"
+        fi
+    fi
+    
+    # 速率限制配置
+    read -rp "是否限制每用户带宽？(y/N): " enable_bandwidth_limit
+    local bandwidth_up="0"
+    local bandwidth_down="0"
+    if [[ "$enable_bandwidth_limit" =~ ^[yY]$ ]]; then
+        read -rp "请输入上传限制 (Mbps，0 为不限制): " bandwidth_up
+        bandwidth_up=${bandwidth_up:-0}
+        read -rp "请输入下载限制 (Mbps，0 为不限制): " bandwidth_down
+        bandwidth_down=${bandwidth_down:-0}
+    fi
+    
+    # 开始安装
+    echo -e "\n${BLUE}=== 开始安装 ===${NC}"
+    
+    # 获取最新版本
+    msg "info" "获取 Hysteria2 最新版本..."
+    local latest_version
+    latest_version=$(curl -s --connect-timeout 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+    
+    if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
+        msg "warning" "无法从 GitHub 获取版本信息，尝试使用镜像源..."
+        latest_version=$(curl -s --connect-timeout 10 "https://api.github.com/repos/apernet/hysteria/releases" | jq -r '.[0].tag_name' | sed 's/v//')
+    fi
+    
+    if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
+        msg "error" "无法获取 Hysteria2 版本信息，请检查网络连接。"
+    fi
+    
+    msg "info" "最新版本: v${latest_version}"
+    
+    # 确定系统架构
     local arch
     arch=$(uname -m)
     case "$arch" in
-        x86_64) arch="amd64" ;;
-        aarch64) arch="arm64" ;;
+        x86_64|amd64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        armv7l) arch="armv7" ;;
+        *) msg "error" "不支持的系统架构: ${arch}" ;;
     esac
+    
+    # 下载二进制文件
     local download_url="https://github.com/apernet/hysteria/releases/download/v${latest_version}/hysteria-linux-${arch}"
+    msg "info" "下载 Hysteria2 二进制文件..."
+    
+    if ! wget -q --show-progress --timeout=30 -O "/tmp/hysteria" "$download_url"; then
+        msg "error" "下载失败，请检查网络连接或稍后重试。"
+    fi
+    
+    sudo install -m 755 /tmp/hysteria "$HY2_BINARY_PATH"
+    rm -f /tmp/hysteria
+    msg "success" "二进制文件安装完成。"
+    
+    # 创建目录结构
+    sudo mkdir -p "$HY2_INSTALL_PATH" "$HY2_CERT_PATH"
+    
+    # 生成自签证书
+    msg "info" "生成自签证书..."
+    local cert_domain=${hy2_sni}
+    
+    sudo openssl ecparam -genkey -name prime256v1 -out "$HY2_CERT_PATH/private.key" 2>/dev/null
+    sudo openssl req -new -x509 -days 36500 \
+        -key "$HY2_CERT_PATH/private.key" \
+        -out "$HY2_CERT_PATH/cert.crt" \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=${cert_domain}" 2>/dev/null
+    
+    sudo chmod 600 "$HY2_CERT_PATH/private.key"
+    sudo chmod 644 "$HY2_CERT_PATH/cert.crt"
+    
+    # 生成配置文件
+    msg "info" "生成配置文件..."
+    
+    cat > /tmp/hy2_config.yaml << EOF
+# Hysteria2 服务器配置
+# 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 
-    (sudo wget -q -O "$HY2_BINARY_PATH" "$download_url" && sudo chmod +x "$HY2_BINARY_PATH") &> /dev/null &
-    show_progress $!
-    
-    # 创建目录和证书
-    sudo mkdir -p "$HY2_INSTALL_PATH"
-    sudo openssl ecparam -genkey -name prime256v1 -out "$HY2_CERT_PATH/private.key" &> /dev/null
-    sudo openssl req -new -x509 -days 36500 -key "$HY2_CERT_PATH/private.key" -out "$HY2_CERT_PATH/public.crt" -subj "/CN=bing.com" &> /dev/null
-    
-    # 创建配置文件
-    sudo tee "$HY2_CONFIG_PATH" > /dev/null << EOF
 listen: :${hy2_port}
+
 tls:
-  cert: ${HY2_CERT_PATH}/public.crt
+  cert: ${HY2_CERT_PATH}/cert.crt
   key: ${HY2_CERT_PATH}/private.key
+
 auth:
   type: password
   password: ${hy2_password}
+
 EOF
 
+    # 添加混淆配置
+    if [ -n "$obfs_password" ]; then
+        cat >> /tmp/hy2_config.yaml << EOF
+obfs:
+  type: salamander
+  salamander:
+    password: ${obfs_password}
+
+EOF
+    fi
+
+    # 添加带宽限制
+    if [[ "$bandwidth_up" != "0" || "$bandwidth_down" != "0" ]]; then
+        cat >> /tmp/hy2_config.yaml << EOF
+bandwidth:
+  up: ${bandwidth_up} mbps
+  down: ${bandwidth_down} mbps
+
+EOF
+    fi
+
+    # 添加其他配置
+    cat >> /tmp/hy2_config.yaml << EOF
+masquerade:
+  type: proxy
+  proxy:
+    url: https://${hy2_sni}
+    rewriteHost: true
+
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+  maxIdleTimeout: 30s
+  maxIncomingStreams: 1024
+  disablePathMTUDiscovery: false
+
+acl:
+  inline:
+    - reject(all, udp/443)
+    - reject(geoip:cn)
+EOF
+
+    sudo mv /tmp/hy2_config.yaml "$HY2_CONFIG_PATH"
+    sudo chmod 644 "$HY2_CONFIG_PATH"
+    
     # 创建 systemd 服务
+    msg "info" "创建系统服务..."
+    
     sudo tee "$HY2_SERVICE_PATH" > /dev/null << EOF
 [Unit]
-Description=Hysteria 2 Service (Server Mode)
-After=network.target
+Description=Hysteria2 Proxy Server
+Documentation=https://hysteria.network
+After=network.target nss-lookup.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=root
+Group=root
 ExecStart=${HY2_BINARY_PATH} server --config ${HY2_CONFIG_PATH}
 WorkingDirectory=${HY2_INSTALL_PATH}
+Environment="HYSTERIA_LOG_LEVEL=info"
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
 LimitNPROC=10000
 LimitNOFILE=1000000
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${HY2_INSTALL_PATH}
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # 启动服务
+    # 重载并启动服务
     sudo systemctl daemon-reload
-    sudo systemctl enable --now hysteria
+    sudo systemctl enable hysteria 2>/dev/null
+    
+    msg "info" "启动 Hysteria2 服务..."
+    if sudo systemctl start hysteria; then
+        sleep 2
+        if systemctl is-active --quiet hysteria; then
+            msg "success" "Hysteria2 安装成功并已启动！"
+        else
+            msg "error" "服务启动后异常退出，查看日志："
+            sudo journalctl -u hysteria -n 30 --no-pager
+            return 1
+        fi
+    else
+        msg "error" "服务启动失败，查看日志："
+        sudo journalctl -u hysteria -n 30 --no-pager
+        return 1
+    fi
     
     # 配置防火墙
     configure_firewall "$hy2_port"
-
-    if systemctl is-active --quiet hysteria; then
-        msg "success" "Hysteria2 安装并启动成功！"
-        display_hy2_config
-    else
-        msg "error" "Hysteria2 服务启动失败，请检查日志。"
-        sudo journalctl -u hysteria -n 20 --no-pager
-    fi
+    
+    # 保存配置信息用于显示
+    echo "${hy2_port}|${hy2_password}|${hy2_sni}|${obfs_password}" > "${HY2_INSTALL_PATH}/.config_info"
+    
+    # 显示配置信息
+    echo
+    display_hy2_config
 }
 
 display_hy2_config() {
-    local port
-    port=$(grep -oP '(?<=listen: :)\d+' "$HY2_CONFIG_PATH")
-    local password
-    password=$(grep -oP '(?<=password: ).*' "$HY2_CONFIG_PATH")
-    local sni="amd.com" # SNI 是客户端配置，这里保持默认用于显示
-    local server_ip=$ipv4
-    local server_name
-
-    server_name=$(hostname)
-
-    if [[ "$server_ip" == "N/A" && "$ipv6" != "N/A" ]]; then
-        server_ip="[${ipv6}]"
-    elif [[ "$server_ip" == "N/A" && "$ipv6" == "N/A" ]]; then
-        msg "error" "无法获取任何公网 IP 地址！"
+    if [ ! -f "$HY2_CONFIG_PATH" ]; then
+        msg "warning" "配置文件不存在。"
         return
     fi
-
-    local share_link="hysteria2://${password}@${server_ip}:${port}/?insecure=1&sni=${sni}#🌟Hysteria2-${server_name}"
     
-    echo -e "\n--- ${GREEN}Hysteria2 配置信息${NC} ---"
+    # 读取配置
+    local port password sni obfs_password
+    if [ -f "${HY2_INSTALL_PATH}/.config_info" ]; then
+        IFS='|' read -r port password sni obfs_password < "${HY2_INSTALL_PATH}/.config_info"
+    else
+        port=$(grep -oP '(?<=listen: :)\d+' "$HY2_CONFIG_PATH")
+        password=$(grep -oP '(?<=password: ).*' "$HY2_CONFIG_PATH" | head -1)
+        sni=$(grep -oP '(?<=CN=).*' "$HY2_CERT_PATH/cert.crt" 2>/dev/null || echo "www.bing.com")
+        obfs_password=$(grep -oP '(?<=password: ).*' "$HY2_CONFIG_PATH" | tail -1)
+        [ "$obfs_password" = "$password" ] && obfs_password=""
+    fi
+    
+    local server_ip=$ipv4
+    local server_name
+    server_name=$(hostname -s 2>/dev/null || echo "Server")
+    
+    # IP 地址处理
+    if [[ "$server_ip" == "N/A" ]] && [[ "$ipv6" != "N/A" ]]; then
+        server_ip="[${ipv6}]"
+    elif [[ "$server_ip" == "N/A" ]]; then
+        msg "error" "无法获取服务器公网 IP 地址！"
+        return
+    fi
+    
+    # 构建分享链接
+    local share_link="hysteria2://${password}@${server_ip}:${port}/?insecure=true&sni=${sni}"
+    [ -n "$obfs_password" ] && share_link="${share_link}&obfs=salamander&obfs-password=${obfs_password}"
+    share_link="${share_link}#🌟Hysteria2-${server_name}"
+    
+    # 显示配置信息
+    echo -e "\n${GREEN}### Hysteria2配置信息：${NC}"
     echo -e "🚀 ${YELLOW}V2rayN / NekoBox / Shadowrocket 分享链接:${NC}"
     echo -e "${share_link}"
     echo
     echo -e "⚔️ ${YELLOW}Clash Meta 配置:${NC}"
-    echo -e "- { name: '🌟Hysteria2-${server_name}', type: hysteria2, server: ${server_ip}, port: ${port}, password: ${password}, sni: ${sni}, skip-cert-verify: true, up: 50, down: 100 }"
+    local clash_config="- { name: '🌟Hysteria2-${server_name}', type: hysteria2, server: ${server_ip}, port: ${port}, password: ${password}, sni: ${sni}, skip-cert-verify: true"
+    if [ -n "$obfs_password" ]; then
+        clash_config="${clash_config}, obfs: salamander, obfs-password: ${obfs_password}"
+    fi
+    clash_config="${clash_config}, up: 50, down: 100 }"
+    echo "${clash_config}"
     echo
     echo -e "🌊 ${YELLOW}Surge 配置:${NC}"
-    echo -e "🌟Hysteria2-${server_name} = hysteria2, ${server_ip}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
+    local surge_config="🌟Hysteria2-${server_name} = hysteria2, ${server_ip}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
+    [ -n "$obfs_password" ] && surge_config="${surge_config}, obfs=salamander, obfs-password=${obfs_password}"
+    echo -e "${surge_config}"
     echo -e "-----------------------------------\n"
 }
 
-# --- Shadowsocks 功能 ---
+# --- Shadowsocks 安装功能（完全重写）---
 
 install_ss() {
+    msg "info" "开始安装 Shadowsocks-rust (IPv6 Only)..."
+    
+    # IPv6 检查
     if [[ "$ipv6" == "N/A" ]]; then
-        msg "error" "未检测到 IPv6 地址，Shadowsocks (仅IPv6) 无法安装。"
-        return
+        msg "error" "未检测到 IPv6 地址！"
+        echo "Shadowsocks 仅支持 IPv6 模式需要服务器具有 IPv6 地址。"
+        read -rp "是否继续安装（将配置为监听所有 IPv6 地址）？(y/N): " continue_install
+        [[ ! "$continue_install" =~ ^[yY]$ ]] && return
     fi
-    msg "info" "开始安装 Shadowsocks (仅 IPv6)..."
-
-    read -rp "请输入 Shadowsocks 监听端口 (默认随机): " ss_port
-    [[ -z "$ss_port" ]] && ss_port=$(shuf -i 10000-65535 -n 1)
-
-    read -rp "请输入 Shadowsocks 密码 (默认随机): " ss_password
-    [[ -z "$ss_password" ]] && ss_password=$(openssl rand -base64 12)
-
-    local ciphers=("chacha20-ietf-poly1305" "aes-256-gcm" "aes-128-gcm")
-    echo "请选择加密方式 (默认 chacha20-ietf-poly1305):"
-    select ss_cipher in "${ciphers[@]}"; do
-        [[ -n "$ss_cipher" ]] && break || { ss_cipher="chacha20-ietf-poly1305"; break; }
+    
+    # 检测现有安装
+    if [ -f "$SS_SERVICE_PATH" ]; then
+        msg "warning" "检测到 Shadowsocks 已安装。"
+        read -rp "是否覆盖安装？(y/N): " overwrite
+        [[ ! "$overwrite" =~ ^[yY]$ ]] && return
+        sudo systemctl stop shadowsocks 2>/dev/null
+    fi
+    
+    # 交互式配置收集
+    echo -e "\n${BLUE}=== 配置参数 ===${NC}"
+    
+    # 端口配置
+    while true; do
+        read -rp "请输入监听端口 [1024-65535] (留空随机): " ss_port
+        if [ -z "$ss_port" ]; then
+            ss_port=$(shuf -i 10000-65000 -n 1)
+            msg "info" "已随机生成端口: ${ss_port}"
+            break
+        elif [[ "$ss_port" =~ ^[0-9]+$ ]] && [ "$ss_port" -ge 1024 ] && [ "$ss_port" -le 65535 ]; then
+            break
+        else
+            msg "warning" "无效端口，请输入 1024-65535 之间的数字。"
+        fi
     done
-    msg "info" "已选择加密方式: ${ss_cipher}"
-
-    msg "info" "正在从 GitHub 获取最新版本的 shadowsocks-rust..."
-    local latest_version
-    latest_version=$(curl -s "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | jq -r '.tag_name' | sed 's/v//')
-    if [ -z "$latest_version" ]; then
-        msg "error" "无法获取 shadowsocks-rust 最新版本号，请检查网络或 GitHub API 限制。"
+    
+    # 密码配置
+    read -rp "请输入连接密码 (留空自动生成): " ss_password
+    if [ -z "$ss_password" ]; then
+        ss_password=$(openssl rand -base64 16)
+        msg "info" "已自动生成密码: ${ss_password}"
     fi
-
+    
+    # 加密方式选择
+    echo "请选择加密方式："
+    local ciphers=("2022-blake3-aes-128-gcm" "2022-blake3-aes-256-gcm" "chacha20-ietf-poly1305" "aes-256-gcm" "aes-128-gcm")
+    local cipher_descriptions=(
+        "2022版 AES-128 (推荐，性能好)"
+        "2022版 AES-256 (最安全)"
+        "ChaCha20 (兼容性好)"
+        "AES-256-GCM (传统)"
+        "AES-128-GCM (传统，快速)"
+    )
+    
+    for i in "${!ciphers[@]}"; do
+        echo "  $((i+1)). ${ciphers[$i]} - ${cipher_descriptions[$i]}"
+    done
+    
+    read -rp "请选择 [1-${#ciphers[@]}] (默认 1): " cipher_choice
+    cipher_choice=${cipher_choice:-1}
+    
+    if [[ "$cipher_choice" =~ ^[0-9]+$ ]] && [ "$cipher_choice" -ge 1 ] && [ "$cipher_choice" -le ${#ciphers[@]} ]; then
+        local ss_cipher="${ciphers[$((cipher_choice-1))]}"
+    else
+        local ss_cipher="${ciphers[0]}"
+    fi
+    msg "info" "已选择加密方式: ${ss_cipher}"
+    
+    # 2022 版本需要特殊密码格式
+    if [[ "$ss_cipher" =~ ^2022 ]]; then
+        msg "info" "检测到 2022 版加密，生成符合规范的密码..."
+        if [[ "$ss_cipher" =~ 128 ]]; then
+            ss_password=$(openssl rand -base64 16)
+        else
+            ss_password=$(openssl rand -base64 32)
+        fi
+        msg "info" "已生成符合 SS2022 规范的密码"
+    fi
+    
+    # 传输模式选择
+    echo "请选择传输模式："
+    echo "  1. TCP + UDP (推荐)"
+    echo "  2. 仅 TCP"
+    echo "  3. 仅 UDP"
+    read -rp "请选择 [1-3] (默认 1): " mode_choice
+    mode_choice=${mode_choice:-1}
+    
+    case "$mode_choice" in
+        2) local ss_mode="tcp_only" ;;
+        3) local ss_mode="udp_only" ;;
+        *) local ss_mode="tcp_and_udp" ;;
+    esac
+    
+    # 插件配置
+    read -rp "是否启用 v2ray-plugin 或 obfs 插件？(y/N): " enable_plugin
+    local plugin_opts=""
+    if [[ "$enable_plugin" =~ ^[yY]$ ]]; then
+        echo "请选择插件类型："
+        echo "  1. v2ray-plugin (WebSocket)"
+        echo "  2. obfs (http/tls 混淆)"
+        read -rp "请选择 [1-2]: " plugin_choice
+        
+        case "$plugin_choice" in
+            1)
+                read -rp "请输入 WebSocket 路径 (默认 /): " ws_path
+                ws_path=${ws_path:-/}
+                plugin_opts='"plugin":"v2ray-plugin","plugin_opts":"server;path='${ws_path}'",'
+                msg "info" "将安装 v2ray-plugin..."
+                ;;
+            2)
+                echo "选择混淆模式: 1) http  2) tls"
+                read -rp "请选择 [1-2] (默认 1): " obfs_mode
+                obfs_mode=${obfs_mode:-1}
+                [ "$obfs_mode" = "2" ] && obfs_type="tls" || obfs_type="http"
+                plugin_opts='"plugin":"obfs-server","plugin_opts":"obfs='${obfs_type}'",'
+                msg "info" "将安装 obfs-server..."
+                ;;
+        esac
+    fi
+    
+    # 开始安装
+    echo -e "\n${BLUE}=== 开始安装 ===${NC}"
+    
+    # 获取最新版本
+    msg "info" "获取 shadowsocks-rust 最新版本..."
+    local latest_version
+    latest_version=$(curl -s --connect-timeout 10 "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | jq -r '.tag_name' | sed 's/v//')
+    
+    if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
+        msg "error" "无法获取 shadowsocks-rust 版本信息，请检查网络连接。"
+    fi
+    
+    msg "info" "最新版本: v${latest_version}"
+    
+    # 确定系统架构
     local arch
     arch=$(uname -m)
     local download_url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/v${latest_version}/shadowsocks-v${latest_version}.${arch}-unknown-linux-gnu.tar.xz"
-
-    (wget -q -O /tmp/ss.tar.xz "$download_url" && tar -xf /tmp/ss.tar.xz -C /tmp && sudo mv /tmp/ssserver "$SS_BINARY_PATH" && rm -rf /tmp/ss* ) &> /dev/null &
-    show_progress $!
-
-    # 创建目录和配置文件
+    
+    # 下载并解压
+    msg "info" "下载 shadowsocks-rust..."
+    if ! wget -q --show-progress --timeout=30 -O /tmp/ss.tar.xz "$download_url"; then
+        msg "error" "下载失败，请检查网络连接或稍后重试。"
+    fi
+    
+    msg "info" "解压文件..."
+    tar -xf /tmp/ss.tar.xz -C /tmp
+    sudo install -m 755 /tmp/ssserver "$SS_BINARY_PATH"
+    rm -rf /tmp/ss*
+    msg "success" "二进制文件安装完成。"
+    
+    # 创建目录
     sudo mkdir -p "$SS_INSTALL_PATH"
-    sudo tee "$SS_CONFIG_PATH" > /dev/null << EOF
+    
+    # 生成配置文件
+    msg "info" "生成配置文件..."
+    
+    cat > /tmp/ss_config.json << EOF
 {
     "server": "::",
     "server_port": ${ss_port},
     "password": "${ss_password}",
     "method": "${ss_cipher}",
-    "mode": "tcp_and_udp"
+    "mode": "${ss_mode}",
+    ${plugin_opts}
+    "timeout": 300,
+    "fast_open": true,
+    "no_delay": true,
+    "nameserver": "1.1.1.1",
+    "ipv6_first": true
 }
 EOF
 
+    sudo mv /tmp/ss_config.json "$SS_CONFIG_PATH"
+    sudo chmod 644 "$SS_CONFIG_PATH"
+    
     # 创建 systemd 服务
+    msg "info" "创建系统服务..."
+    
     sudo tee "$SS_SERVICE_PATH" > /dev/null << EOF
 [Unit]
-Description=Shadowsocks-rust server service
-After=network.target
+Description=Shadowsocks-rust Server
+Documentation=https://github.com/shadowsocks/shadowsocks-rust
+After=network-online.target
+Wants=network-online.target
 
 [Service]
+Type=simple
 User=root
+Group=root
 ExecStart=${SS_BINARY_PATH} -c ${SS_CONFIG_PATH}
+WorkingDirectory=${SS_INSTALL_PATH}
+Environment="RUST_LOG=info"
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
+LimitNOFILE=1000000
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${SS_INSTALL_PATH}
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # 启动服务
+    # 重载并启动服务
     sudo systemctl daemon-reload
-    sudo systemctl enable --now shadowsocks
-
+    sudo systemctl enable shadowsocks 2>/dev/null
+    
+    msg "info" "启动 Shadowsocks 服务..."
+    if sudo systemctl start shadowsocks; then
+        sleep 2
+        if systemctl is-active --quiet shadowsocks; then
+            msg "success" "Shadowsocks 安装成功并已启动！"
+        else
+            msg "error" "服务启动后异常退出，查看日志："
+            sudo journalctl -u shadowsocks -n 30 --no-pager
+            return 1
+        fi
+    else
+        msg "error" "服务启动失败，查看日志："
+        sudo journalctl -u shadowsocks -n 30 --no-pager
+        return 1
+    fi
+    
     # 配置防火墙
     configure_firewall "$ss_port"
-
-    if systemctl is-active --quiet shadowsocks; then
-        msg "success" "Shadowsocks 安装并启动成功！"
-        display_ss_config
-    else
-        msg "error" "Shadowsocks 服务启动失败，请检查日志。"
-        sudo journalctl -u shadowsocks -n 20 --no-pager
-    fi
+    
+    # 保存配置信息
+    echo "${ss_port}|${ss_password}|${ss_cipher}|${ss_mode}" > "${SS_INSTALL_PATH}/.config_info"
+    
+    # 显示配置信息
+    echo
+    display_ss_config
 }
 
 display_ss_config() {
-    local port
-    port=$(jq -r '.server_port' "$SS_CONFIG_PATH")
-    local password
-    password=$(jq -r '.password' "$SS_CONFIG_PATH")
-    local cipher
-    cipher=$(jq -r '.method' "$SS_CONFIG_PATH")
-    local encoded_part
-    encoded_part=$(echo -n "${cipher}:${password}" | base64 | tr -d '\n')
+    if [ ! -f "$SS_CONFIG_PATH" ]; then
+        msg "warning" "配置文件不存在。"
+        return
+    fi
+    
+    # 读取配置
+    local port password cipher mode
+    if [ -f "${SS_INSTALL_PATH}/.config_info" ]; then
+        IFS='|' read -r port password cipher mode < "${SS_INSTALL_PATH}/.config_info"
+    else
+        port=$(jq -r '.server_port' "$SS_CONFIG_PATH")
+        password=$(jq -r '.password' "$SS_CONFIG_PATH")
+        cipher=$(jq -r '.method' "$SS_CONFIG_PATH")
+        mode=$(jq -r '.mode' "$SS_CONFIG_PATH")
+    fi
+    
+    local server_ip=$ipv6
     local server_name
-    server_name=$(hostname)
-    local share_link="ss://${encoded_part}@[${ipv6}]:${port}#🌟SS-IPv6-${server_name}"
-
-    echo -e "\n--- ${GREEN}Shadowsocks 配置信息${NC} ---"
+    server_name=$(hostname -s 2>/dev/null || echo "Server")
+    
+    if [[ "$server_ip" == "N/A" ]]; then
+        msg "error" "无法获取 IPv6 地址！"
+        return
+    fi
+    
+    # 构建分享链接
+    local userinfo
+    userinfo=$(echo -n "${cipher}:${password}" | base64 -w 0)
+    local share_link="ss://${userinfo}@[${server_ip}]:${port}#🌟SS-IPv6-${server_name}"
+    
+    # 显示配置信息
+    echo -e "\n${GREEN}### Shadowsocks配置信息：${NC}"
     echo -e "🚀 ${YELLOW}V2rayN / NekoBox / Shadowrocket 分享链接:${NC}"
     echo -e "${share_link}"
     echo
     echo -e "⚔️ ${YELLOW}Clash Meta 配置:${NC}"
-    echo -e "- { name: '🌟SS-IPv6-${server_name}', type: ss, server: '${ipv6}', port: ${port}, cipher: '${cipher}', password: '${password}', udp: true}"
+    echo "- { name: '🌟SS-IPv6-${server_name}', type: ss, server: '${server_ip}', port: ${port}, cipher: '${cipher}', password: '${password}', udp: true }"
     echo -e "-----------------------------------\n"
 }
 
