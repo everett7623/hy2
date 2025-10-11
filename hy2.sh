@@ -159,7 +159,7 @@ configure_firewall() {
     fi
 }
 
-# --- Hysteria2 安装功能（完全重写）---
+# --- Hysteria2 安装功能（修复版）---
 
 install_hy2() {
     msg "info" "开始安装 Hysteria2..."
@@ -194,8 +194,8 @@ install_hy2() {
     fi
     
     # SNI 伪装配置
-    read -rp "请输入 SNI 伪装域名 (默认 www.bing.com): " hy2_sni
-    hy2_sni=${hy2_sni:-www.bing.com}
+    read -rp "请输入 SNI 伪装域名 (默认 amd.com): " hy2_sni
+    hy2_sni=${hy2_sni:-amd.com}
     
     # 混淆密码（可选）
     read -rp "是否启用混淆 (obfs)？(y/N): " enable_obfs
@@ -263,7 +263,7 @@ install_hy2() {
     # 创建目录结构
     sudo mkdir -p "$HY2_INSTALL_PATH" "$HY2_CERT_PATH"
     
-    # 生成自签证书
+    # 生成自签证书（修复：统一使用 cert.crt 和 private.key）
     msg "info" "生成自签证书..."
     local cert_domain=${hy2_sni}
     
@@ -332,11 +332,6 @@ quic:
   maxIdleTimeout: 30s
   maxIncomingStreams: 1024
   disablePathMTUDiscovery: false
-
-acl:
-  inline:
-    - reject(all, udp/443)
-    - reject(geoip:cn)
 EOF
 
     sudo mv /tmp/hy2_config.yaml "$HY2_CONFIG_PATH"
@@ -419,7 +414,7 @@ display_hy2_config() {
     else
         port=$(grep -oP '(?<=listen: :)\d+' "$HY2_CONFIG_PATH")
         password=$(grep -oP '(?<=password: ).*' "$HY2_CONFIG_PATH" | head -1)
-        sni=$(grep -oP '(?<=CN=).*' "$HY2_CERT_PATH/cert.crt" 2>/dev/null || echo "www.bing.com")
+        sni=$(grep -oP '(?<=CN=).*' "$HY2_CERT_PATH/cert.crt" 2>/dev/null || echo "amd.com")
         obfs_password=$(grep -oP '(?<=password: ).*' "$HY2_CONFIG_PATH" | tail -1)
         [ "$obfs_password" = "$password" ] && obfs_password=""
     fi
@@ -461,7 +456,7 @@ display_hy2_config() {
     echo -e "-----------------------------------\n"
 }
 
-# --- Shadowsocks 安装功能（完全重写）---
+# --- Shadowsocks 安装功能（修复版）---
 
 install_ss() {
     msg "info" "开始安装 Shadowsocks-rust (IPv6 Only)..."
@@ -508,13 +503,13 @@ install_ss() {
     
     # 加密方式选择
     echo "请选择加密方式："
-    local ciphers=("2022-blake3-aes-128-gcm" "2022-blake3-aes-256-gcm" "chacha20-ietf-poly1305" "aes-256-gcm" "aes-128-gcm")
+    local ciphers=("chacha20-ietf-poly1305" "aes-256-gcm" "aes-128-gcm" "2022-blake3-aes-128-gcm" "2022-blake3-aes-256-gcm")
     local cipher_descriptions=(
-        "2022版 AES-128 (推荐，性能好)"
+        "ChaCha20 (推荐，兼容性好)"
+        "AES-256-GCM (安全)"
+        "AES-128-GCM (快速)"
+        "2022版 AES-128 (新标准)"
         "2022版 AES-256 (最安全)"
-        "ChaCha20 (兼容性好)"
-        "AES-256-GCM (传统)"
-        "AES-128-GCM (传统，快速)"
     )
     
     for i in "${!ciphers[@]}"; do
@@ -556,33 +551,6 @@ install_ss() {
         *) local ss_mode="tcp_and_udp" ;;
     esac
     
-    # 插件配置
-    read -rp "是否启用 v2ray-plugin 或 obfs 插件？(y/N): " enable_plugin
-    local plugin_opts=""
-    if [[ "$enable_plugin" =~ ^[yY]$ ]]; then
-        echo "请选择插件类型："
-        echo "  1. v2ray-plugin (WebSocket)"
-        echo "  2. obfs (http/tls 混淆)"
-        read -rp "请选择 [1-2]: " plugin_choice
-        
-        case "$plugin_choice" in
-            1)
-                read -rp "请输入 WebSocket 路径 (默认 /): " ws_path
-                ws_path=${ws_path:-/}
-                plugin_opts='"plugin":"v2ray-plugin","plugin_opts":"server;path='${ws_path}'",'
-                msg "info" "将安装 v2ray-plugin..."
-                ;;
-            2)
-                echo "选择混淆模式: 1) http  2) tls"
-                read -rp "请选择 [1-2] (默认 1): " obfs_mode
-                obfs_mode=${obfs_mode:-1}
-                [ "$obfs_mode" = "2" ] && obfs_type="tls" || obfs_type="http"
-                plugin_opts='"plugin":"obfs-server","plugin_opts":"obfs='${obfs_type}'",'
-                msg "info" "将安装 obfs-server..."
-                ;;
-        esac
-    fi
-    
     # 开始安装
     echo -e "\n${BLUE}=== 开始安装 ===${NC}"
     
@@ -617,7 +585,7 @@ install_ss() {
     # 创建目录
     sudo mkdir -p "$SS_INSTALL_PATH"
     
-    # 生成配置文件
+    # 生成配置文件（修复：移除 JSON 逗号问题）
     msg "info" "生成配置文件..."
     
     cat > /tmp/ss_config.json << EOF
@@ -627,7 +595,6 @@ install_ss() {
     "password": "${ss_password}",
     "method": "${ss_cipher}",
     "mode": "${ss_mode}",
-    ${plugin_opts}
     "timeout": 300,
     "fast_open": true,
     "no_delay": true,
