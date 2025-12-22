@@ -2,13 +2,22 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.2 (性能优化：IP仅获取一次，消除菜单刷新卡顿)
+# 版本：v1.0.3 (终极稳定版：修复换行符+IP缓存+防闪屏)
 # GitHub: https://github.com/everett7623/hy2
 # Seeloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
 # 更新日期: 2025-12-22
 #====================================================================================
+
+# --- 【关键修复】自动去除 Windows 换行符 (\r) ---
+# 防止因文件格式问题导致的"无效输入"死循环
+if grep -q $'\r' "$0"; then
+    echo "检测到 Windows 格式，正在自动修复..."
+    sed -i 's/\r$//' "$0"
+    echo "修复完成，正在重启脚本..."
+    exec "$0" "$@"
+fi
 
 # --- 颜色定义 ---
 RED='\033[0;31m'
@@ -23,7 +32,7 @@ HY_CONFIG="/etc/hysteria/config.yaml"
 HY_CERT_DIR="/etc/hysteria/cert"
 SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
 
-# 全局 IP 变量 (初始化为 获取中...)
+# 初始化 IP 变量
 IPV4="检测中..."
 IPV6="检测中..."
 
@@ -59,18 +68,16 @@ install_dependencies() {
     fi
 }
 
-# --- 获取 IP (只运行一次) ---
+# --- 获取 IP (启动时只运行一次) ---
 get_ip() {
     echo -e "${YELLOW}正在获取服务器 IP 信息...${PLAIN}"
     
-    # IPv4
     IPV4=$(curl -s4m5 --user-agent "Mozilla/5.0" https://ip.sb)
     if [[ "$IPV4" == *"html"* ]] || [[ -z "$IPV4" ]]; then
         IPV4=$(curl -s4m5 https://api.ipify.org)
     fi
     [[ -z "$IPV4" ]] && IPV4="N/A"
 
-    # IPv6
     IPV6=$(curl -s6m5 --user-agent "Mozilla/5.0" https://ip.sb)
     if [[ "$IPV6" == *"html"* ]] || [[ -z "$IPV6" ]]; then
         IPV6=$(curl -s6m5 https://api64.ipify.org)
@@ -86,7 +93,7 @@ install_hy2() {
     echo -e "${YELLOW}正在下载 Hysteria2 核心...${PLAIN}"
     LAST_VERSION=$(curl -Ls "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [[ -z "$LAST_VERSION" ]]; then
-        echo -e "${RED}无法获取 Hysteria2 版本，请检查网络。${PLAIN}"
+        echo -e "${RED}无法获取版本，请检查网络。${PLAIN}"
         exit 1
     fi
     
@@ -109,10 +116,10 @@ install_hy2() {
         -subj "/C=US/ST=California/L=San Francisco/O=Hysteria/OU=IT/CN=bing.com" >/dev/null 2>&1
     
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
-    read -p "请输入监听端口 [默认 443]: " PORT
+    read -r -p "请输入监听端口 [默认 443]: " PORT
     [[ -z "$PORT" ]] && PORT="443"
     
-    read -p "请设置连接密码 [留空自动生成]: " PASSWORD
+    read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
     if [[ -z "$PASSWORD" ]]; then
         PASSWORD=$(openssl rand -base64 12)
     fi
@@ -156,7 +163,7 @@ EOF
     systemctl start hysteria-server
     
     echo -e "${GREEN}安装完成！${PLAIN}"
-    read -p "按回车键查看配置..."
+    read -r -p "按回车键查看配置..." temp
     show_config
 }
 
@@ -164,7 +171,7 @@ EOF
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
-        read -p "按回车返回..."
+        read -r -p "按回车返回..." temp
         return
     fi
 
@@ -172,7 +179,6 @@ show_config() {
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
     SNI="amd.com"
     
-    # 使用全局缓存的 IP，不再重新请求
     HOST_IP="$IPV4"
     if [[ "$HOST_IP" == "N/A" ]]; then HOST_IP="[$IPV6]"; fi
     
@@ -185,7 +191,7 @@ show_config() {
     echo -e "${GREEN}🌊 Surge:${PLAIN} ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}===========================================${PLAIN}"
     echo ""
-    read -p "按回车键返回主菜单..."
+    read -r -p "按回车键返回主菜单..." temp
 }
 
 # --- 管理功能 ---
@@ -197,12 +203,12 @@ manage_hy2() {
     echo -e "3. 停止服务"
     echo -e "4. 查看日志"
     echo -e "0. 返回"
-    read -p "请选择: " opt
+    read -r -p "请选择: " opt
     case $opt in
         1) show_config ;;
         2) systemctl restart hysteria-server && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
         3) systemctl stop hysteria-server && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
-        4) journalctl -u hysteria-server -n 20 --no-pager; read -p "按回车继续..." ;;
+        4) journalctl -u hysteria-server -n 20 --no-pager; read -r -p "按回车继续..." temp ;;
         0) return ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
@@ -210,7 +216,7 @@ manage_hy2() {
 
 # --- 卸载 ---
 uninstall_hy2() {
-    read -p "确定卸载? [y/N]: " confirm
+    read -r -p "确定卸载? [y/N]: " confirm
     if [[ "$confirm" =~ ^[yY]$ ]]; then
         systemctl stop hysteria-server
         systemctl disable hysteria-server
@@ -236,10 +242,14 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "Hysteria2 Management Script (v1.0.2)"
+        echo -e "Hysteria2 Management Script (v1.0.3)"
         echo -e "项目地址：https://github.com/everett7623/hy2"
+        echo -e "作者：Jensfrank"
+        echo -e "Seeloc博客: https://seedloc.com"
+        echo -e "VPSknow网站：https://vpsknow.com"
+        echo -e "Nodeloc论坛: https://nodeloc.com"
+        echo -e "更新日期: 2025-12-22"
         echo -e "------------------------------------------------"
-        # 直接显示缓存的 IP，不卡顿
         echo -e "IPv4: ${SKYBLUE}$IPV4${PLAIN} | IPv6: ${SKYBLUE}$IPV6${PLAIN}"
         echo -e "状态: $STATUS"
         echo -e "------------------------------------------------"
@@ -248,7 +258,12 @@ main_menu() {
         echo -e " 3. 卸载 Hysteria2"
         echo -e " 0. 退出"
         echo -e "------------------------------------------------"
-        read -p "请输入选项: " choice
+        
+        # 使用 -r 参数防止转义字符干扰
+        read -r -p "请输入选项: " choice
+
+        # 【防误触】输入为空直接跳过，防止闪屏
+        [[ -z "$choice" ]] && continue
 
         case $choice in
             1) install_hy2 ;;
@@ -263,5 +278,5 @@ main_menu() {
 # --- 脚本入口 ---
 check_root
 check_sys
-get_ip
-main_menu
+get_ip    # 启动时获取一次 IP
+main_menu # 进入菜单
