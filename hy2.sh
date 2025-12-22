@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0
+# 版本：v1.0.1 (修复IP获取问题)
 # GitHub: https://github.com/everett7623/hy2
 # Seeloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -53,32 +53,41 @@ check_sys() {
 }
 
 install_dependencies() {
-    echo -e "${YELLOW}正在检查并安装依赖...${PLAIN}"
+    # 静默安装，减少干扰
     if [ "${RELEASE}" == "centos" ]; then
-        yum update -y
-        yum install -y curl wget openssl jq
+        yum update -y >/dev/null 2>&1
+        yum install -y curl wget openssl jq >/dev/null 2>&1
     else
-        apt update -y
-        apt install -y curl wget openssl jq
+        apt update -y >/dev/null 2>&1
+        apt install -y curl wget openssl jq >/dev/null 2>&1
     fi
-    echo -e "${GREEN}依赖安装完成。${PLAIN}"
 }
 
-# --- 获取 IP ---
+# --- 获取 IP (修复版) ---
 get_ip() {
-    IPV4=$(curl -s4m8 https://ip.sb)
-    IPV6=$(curl -s6m8 https://ip.sb)
+    # 尝试源 1: ip.sb (添加 User-Agent 避免 403)
+    IPV4=$(curl -s4m8 --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" https://ip.sb)
+    # 如果返回结果包含 html 标签或为空，说明被拦截，切换备用源
+    if [[ "$IPV4" == *"html"* ]] || [[ -z "$IPV4" ]]; then
+        IPV4=$(curl -s4m8 https://api.ipify.org)
+    fi
+
+    IPV6=$(curl -s6m8 --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" https://ip.sb)
+    if [[ "$IPV6" == *"html"* ]] || [[ -z "$IPV6" ]]; then
+        IPV6=$(curl -s6m8 https://api64.ipify.org)
+    fi
+    
     [[ -z "$IPV4" ]] && IPV4="N/A"
     [[ -z "$IPV6" ]] && IPV6="N/A"
 }
 
 # --- 安装 Hysteria 2 ---
 install_hy2() {
+    echo -e "${YELLOW}正在安装依赖...${PLAIN}"
     install_dependencies
     
     # 1. 下载核心
     echo -e "${YELLOW}正在下载 Hysteria2 核心...${PLAIN}"
-    # 获取最新版本号
     LAST_VERSION=$(curl -Ls "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [[ -z "$LAST_VERSION" ]]; then
         echo -e "${RED}无法获取 Hysteria2 最新版本，请检查网络连接。${PLAIN}"
@@ -108,7 +117,7 @@ install_hy2() {
     echo -e "${YELLOW}正在生成自签名证书 (有效期 10 年)...${PLAIN}"
     openssl req -x509 -newkey rsa:4096 -days 3650 -nodes -sha256 \
         -keyout "$HY_CERT_DIR/server.key" -out "$HY_CERT_DIR/server.crt" \
-        -subj "/C=US/ST=California/L=San Francisco/O=Hysteria/OU=IT/CN=bing.com"
+        -subj "/C=US/ST=California/L=San Francisco/O=Hysteria/OU=IT/CN=bing.com" >/dev/null 2>&1
     
     # 4. 配置参数交互
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
@@ -122,7 +131,6 @@ install_hy2() {
         echo -e "已生成随机密码: ${GREEN}$PASSWORD${PLAIN}"
     fi
     
-    # 默认伪装 SNI
     SNI="amd.com"
 
     # 5. 写入配置文件 (YAML)
@@ -171,7 +179,6 @@ EOF
     systemctl enable hysteria-server
     systemctl start hysteria-server
 
-    # 检查状态
     sleep 2
     if systemctl is-active --quiet hysteria-server; then
         echo -e "${GREEN}Hysteria2 安装并启动成功！${PLAIN}"
@@ -188,23 +195,16 @@ show_config() {
         return
     fi
 
-    # 读取配置
     PORT=$(grep "listen:" "$HY_CONFIG" | awk -F: '{print $NF}' | tr -d ' ')
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
-    # SNI 默认写死在显示逻辑里，或者从配置文件解析（这里简化处理，与安装时一致）
     SNI="amd.com"
     
-    # 优先使用 IPv4，如果没有则 IPv6
     HOST_IP="$IPV4"
     if [[ "$HOST_IP" == "N/A" ]]; then
         HOST_IP="[$IPV6]"
     fi
     
-    # 节点名称
-    NODE_NAME="🌟Hysteria2-DE-$(date +%m%d)"
-
-    # 构造分享链接
-    # hysteria2://user:pass@host:port?insecure=1&sni=xxx#name
+    NODE_NAME="🌟Hysteria2-$(date +%m%d)"
     SHARE_LINK="hysteria2://${PASSWORD}@${HOST_IP}:${PORT}/?insecure=1&sni=${SNI}#${NODE_NAME}"
 
     echo -e "\n${SKYBLUE}================ 配置信息 =================${PLAIN}"
@@ -221,7 +221,6 @@ show_config() {
     
     echo -e "${SKYBLUE}===========================================${PLAIN}"
     echo -e "提示：由于使用自签证书，客户端必须开启 ${RED}允许不安全连接(insecure/skip-cert-verify)${PLAIN}"
-    echo -e "      SNI (Server Name Indication) 已设置为: ${YELLOW}$SNI${PLAIN}"
     echo ""
     read -p "按回车键返回主菜单..."
 }
@@ -269,10 +268,7 @@ main_menu() {
     check_sys
     get_ip
     
-    # 检查安装状态
     if [ -f "$HY_BIN" ]; then
-        STATUS="${GREEN}已安装${PLAIN}"
-        # 检查运行状态
         if systemctl is-active --quiet hysteria-server; then
              STATUS="${GREEN}已安装 (运行中)${PLAIN}"
         else
@@ -282,7 +278,7 @@ main_menu() {
         STATUS="${RED}未安装${PLAIN}"
     fi
 
-    echo -e "Hysteria2 Management Script (v1.0)"
+    echo -e "Hysteria2 Management Script (v1.0.1)"
     echo -e "项目地址：https://github.com/everett7623/hy2"
     echo -e "作者：Jensfrank"
     echo -e "GitHub: https://github.com/everett7623/hy2"
@@ -311,9 +307,7 @@ main_menu() {
         *) echo -e "${RED}无效输入，请重试${PLAIN}"; sleep 1; main_menu ;;
     esac
     
-    # 循环返回主菜单
     main_menu
 }
 
-# --- 脚本入口 ---
 main_menu
