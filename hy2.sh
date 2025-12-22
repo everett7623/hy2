@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 & Shadowsocks Management Script
 # 作者：Jensfrank
-# 版本：v1.1
+# 版本：v1.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -537,8 +537,8 @@ service_management() {
         echo ""
         echo -e " ${RED}0.${NC} 返回主菜单"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
-        echo -n "请选择操作 [0-10]: "
-        read -r choice
+        read -p "请选择操作 [0-10]: " choice
+        echo ""
         
         case $choice in
             1) 
@@ -599,8 +599,8 @@ uninstall_menu() {
         echo ""
         echo -e " ${RED}0.${NC} 返回主菜单"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
-        echo -n "请选择操作 [0-3]: "
-        read -r choice
+        read -p "请选择操作 [0-3]: " choice
+        echo ""
         
         case $choice in
             1) 
@@ -669,8 +669,8 @@ update_menu() {
         echo ""
         echo -e " ${RED}0.${NC} 返回主菜单"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
-        echo -n "请选择操作 [0-4]: "
-        read -r choice
+        read -p "请选择操作 [0-4]: " choice
+        echo ""
         
         case $choice in
             1) 
@@ -870,8 +870,8 @@ main_menu() {
         echo ""
         echo -e " ${RED}0.${NC} 退出脚本"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
-        echo -n "请选择操作 [0-6]: "
-        read -r choice
+        read -p "请选择操作 [0-6]: " choice
+        echo ""
         
         case $choice in
             1) 
@@ -899,7 +899,7 @@ main_menu() {
                 ;;
             *)
                 log_error "无效选项，请重新选择"
-                sleep 1
+                sleep 2
                 ;;
         esac
     done
