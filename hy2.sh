@@ -518,13 +518,8 @@ uninstall_hysteria() {
 }
 
 # 主菜单
-main_menu() {
+show_menu() {
     clear
-    
-    # 获取系统信息
-    detect_network
-    check_hy2_status
-    
     echo -e "${BLUE}======================================${NC}"
     echo -e "${CYAN}Hysteria2 Management Script (v1.0)${NC}"
     echo -e "${BLUE}======================================${NC}"
@@ -546,52 +541,68 @@ main_menu() {
     echo " 0. 退出脚本"
     echo ""
     echo -e "${BLUE}======================================${NC}"
-    echo ""
-    read -p "请选择操作 [0-3]: " choice
-    
-    case $choice in
-        1) 
-            install_hysteria
-            ;;
-        2) 
-            if [[ -f $HY2_BIN ]]; then
-                manage_hysteria
-            else
-                echo -e "${RED}请先安装 Hysteria2${NC}"
-                sleep 2
-            fi
-            ;;
-        3) 
-            if [[ -f $HY2_BIN ]]; then
-                uninstall_hysteria
-            else
-                echo -e "${RED}未安装 Hysteria2${NC}"
-                sleep 2
-            fi
-            ;;
-        0) 
-            echo -e "${GREEN}感谢使用！再见！${NC}"
-            exit 0
-            ;;
-        *) 
-            echo -e "${RED}无效选择，请重新输入${NC}"
-            sleep 1
-            ;;
-    esac
 }
 
-# 检查 root 权限
-if [[ $EUID -ne 0 ]]; then
-    echo -e "${RED}错误: 此脚本需要 root 权限运行${NC}"
-    echo -e "${YELLOW}请使用 sudo 或 root 用户执行${NC}"
-    exit 1
-fi
+# 主程序
+main() {
+    # 检查 root 权限
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}错误: 此脚本需要 root 权限运行${NC}"
+        echo -e "${YELLOW}请使用 sudo 或 root 用户执行${NC}"
+        exit 1
+    fi
+
+    # 系统检测（只执行一次）
+    detect_system
+    check_compatibility
+    
+    # 主循环
+    while true; do
+        # 刷新网络和状态信息
+        detect_network
+        check_hy2_status
+        
+        # 显示菜单
+        show_menu
+        
+        # 读取用户输入
+        read -p "请选择操作 [0-3]: " choice
+        
+        case $choice in
+            1) 
+                install_hysteria
+                ;;
+            2) 
+                if [[ -f $HY2_BIN ]]; then
+                    manage_hysteria
+                else
+                    echo ""
+                    echo -e "${RED}请先安装 Hysteria2${NC}"
+                    sleep 2
+                fi
+                ;;
+            3) 
+                if [[ -f $HY2_BIN ]]; then
+                    uninstall_hysteria
+                else
+                    echo ""
+                    echo -e "${RED}未安装 Hysteria2${NC}"
+                    sleep 2
+                fi
+                ;;
+            0) 
+                clear
+                echo -e "${GREEN}感谢使用！再见！${NC}"
+                exit 0
+                ;;
+            *) 
+                echo ""
+                echo -e "${RED}无效选择，请重新输入${NC}"
+                sleep 1
+                ;;
+        esac
+    done
+}
 
 # 脚本入口
-detect_system
-check_compatibility
-
-# 主循环
-while true; do
-    main_menu
-done
+main
