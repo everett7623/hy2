@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.3 (终极稳定版：修复换行符+IP缓存+防闪屏)
+# 版本：v1.0.4 (纯净版：移除IP自动检测，彻底解决刷屏问题)
 # GitHub: https://github.com/everett7623/hy2
 # Seeloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -10,12 +10,9 @@
 # 更新日期: 2025-12-22
 #====================================================================================
 
-# --- 【关键修复】自动去除 Windows 换行符 (\r) ---
-# 防止因文件格式问题导致的"无效输入"死循环
+# --- 自动修复 Windows 换行符 ---
 if grep -q $'\r' "$0"; then
-    echo "检测到 Windows 格式，正在自动修复..."
     sed -i 's/\r$//' "$0"
-    echo "修复完成，正在重启脚本..."
     exec "$0" "$@"
 fi
 
@@ -31,10 +28,6 @@ HY_BIN="/usr/local/bin/hysteria"
 HY_CONFIG="/etc/hysteria/config.yaml"
 HY_CERT_DIR="/etc/hysteria/cert"
 SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
-
-# 初始化 IP 变量
-IPV4="检测中..."
-IPV6="检测中..."
 
 # --- 基础检查 ---
 check_root() {
@@ -66,23 +59,6 @@ install_dependencies() {
         apt update -y >/dev/null 2>&1
         apt install -y curl wget openssl jq >/dev/null 2>&1
     fi
-}
-
-# --- 获取 IP (启动时只运行一次) ---
-get_ip() {
-    echo -e "${YELLOW}正在获取服务器 IP 信息...${PLAIN}"
-    
-    IPV4=$(curl -s4m5 --user-agent "Mozilla/5.0" https://ip.sb)
-    if [[ "$IPV4" == *"html"* ]] || [[ -z "$IPV4" ]]; then
-        IPV4=$(curl -s4m5 https://api.ipify.org)
-    fi
-    [[ -z "$IPV4" ]] && IPV4="N/A"
-
-    IPV6=$(curl -s6m5 --user-agent "Mozilla/5.0" https://ip.sb)
-    if [[ "$IPV6" == *"html"* ]] || [[ -z "$IPV6" ]]; then
-        IPV6=$(curl -s6m5 https://api64.ipify.org)
-    fi
-    [[ -z "$IPV6" ]] && IPV6="N/A"
 }
 
 # --- 安装 Hysteria 2 ---
@@ -179,8 +155,10 @@ show_config() {
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
     SNI="amd.com"
     
-    HOST_IP="$IPV4"
-    if [[ "$HOST_IP" == "N/A" ]]; then HOST_IP="[$IPV6]"; fi
+    # 既然去除了自动获取IP，这里尝试用简单命令获取本地IP，或者提示用户手动填写
+    # 尝试获取本机 IP (仅作为显示参考)
+    HOST_IP=$(hostname -I | awk '{print $1}')
+    if [[ -z "$HOST_IP" ]]; then HOST_IP="请手动填入服务器IP"; fi
     
     NODE_NAME="🌟Hysteria2-$(date +%m%d)"
     SHARE_LINK="hysteria2://${PASSWORD}@${HOST_IP}:${PORT}/?insecure=1&sni=${SNI}#${NODE_NAME}"
@@ -190,6 +168,7 @@ show_config() {
     echo -e "${GREEN}⚔️ Clash Meta:${PLAIN} { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${GREEN}🌊 Surge:${PLAIN} ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}===========================================${PLAIN}"
+    echo -e "注意：如果IP显示为内网IP，请在客户端中替换为您的公网IP。"
     echo ""
     read -r -p "按回车键返回主菜单..." temp
 }
@@ -242,7 +221,7 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "Hysteria2 Management Script (v1.0.3)"
+        echo -e "Hysteria2 Management Script (v1.0.4)"
         echo -e "项目地址：https://github.com/everett7623/hy2"
         echo -e "作者：Jensfrank"
         echo -e "Seeloc博客: https://seedloc.com"
@@ -250,7 +229,6 @@ main_menu() {
         echo -e "Nodeloc论坛: https://nodeloc.com"
         echo -e "更新日期: 2025-12-22"
         echo -e "------------------------------------------------"
-        echo -e "IPv4: ${SKYBLUE}$IPV4${PLAIN} | IPv6: ${SKYBLUE}$IPV6${PLAIN}"
         echo -e "状态: $STATUS"
         echo -e "------------------------------------------------"
         echo -e " 1. 安装 Hysteria2"
@@ -259,10 +237,9 @@ main_menu() {
         echo -e " 0. 退出"
         echo -e "------------------------------------------------"
         
-        # 使用 -r 参数防止转义字符干扰
-        read -r -p "请输入选项: " choice
+        # 关键修改：如果读取失败（比如因为脚本传输错误导致的EOF），直接退出脚本，防止死循环
+        read -r -p "请输入选项: " choice || exit 0
 
-        # 【防误触】输入为空直接跳过，防止闪屏
         [[ -z "$choice" ]] && continue
 
         case $choice in
@@ -270,7 +247,7 @@ main_menu() {
             2) manage_hy2 ;;
             3) uninstall_hy2 ;;
             0) exit 0 ;;
-            *) echo -e "${RED}无效输入，请重试...${PLAIN}"; sleep 1 ;;
+            *) echo -e "${RED}输入错误...${PLAIN}"; sleep 1 ;;
         esac
     done
 }
@@ -278,5 +255,4 @@ main_menu() {
 # --- 脚本入口 ---
 check_root
 check_sys
-get_ip    # 启动时获取一次 IP
-main_menu # 进入菜单
+main_menu
