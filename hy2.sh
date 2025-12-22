@@ -7,528 +7,414 @@
 # Seeloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
+#
 # 更新日期: 2025-12-22
+# 描述: 打造一款「功能闭环、兼容广泛、交互友好、稳定可靠」的 Hysteria2 自动化管理脚本
 #====================================================================================
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# --- 颜色定义 ---
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BLUE='\033[34m'
+CYAN='\033[36m'
+PLAIN='\033[0m'
 
-# 配置路径
-HY2_DIR="/etc/hysteria2"
-HY2_BIN="/usr/local/bin/hysteria"
-HY2_CONFIG="${HY2_DIR}/config.yaml"
-HY2_CERT_DIR="${HY2_DIR}/certs"
-HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
-HY2_INFO="${HY2_DIR}/client_info.txt"
+# --- 基础路径与变量 ---
+HY_BIN_PATH="/usr/local/bin/hysteria"
+HY_CONF_DIR="/etc/hysteria2"
+HY_CONF_PATH="${HY_CONF_DIR}/config.yaml"
+HY_CERT_DIR="${HY_CONF_DIR}/certs"
+SYSTEMD_FILE="/etc/systemd/system/hysteria-server.service"
 
-# 检测系统信息
-detect_system() {
-    if [[ -f /etc/os-release ]]; then
-        source /etc/os-release
-        OS=$ID
-        OS_VERSION=$VERSION_ID
-    else
-        echo -e "${RED}无法检测操作系统${NC}"
+# --- 核心检测函数 ---
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[错误] 请使用 root 权限运行此脚本！${PLAIN}"
         exit 1
     fi
-
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64) ARCH="amd64" ;;
-        aarch64|arm64) ARCH="arm64" ;;
-        armv7l) ARCH="arm" ;;
-        *) echo -e "${RED}不支持的架构: $ARCH${NC}"; exit 1 ;;
-    esac
 }
 
-# 检查系统兼容性
-check_compatibility() {
-    case $OS in
-        ubuntu)
-            if [[ $(echo "$OS_VERSION < 18.04" | bc) -eq 1 ]]; then
-                echo -e "${RED}Ubuntu 版本过低，需要 18.04 或更高版本${NC}"
-                exit 1
-            fi
-            ;;
-        debian)
-            if [[ $OS_VERSION -lt 9 ]]; then
-                echo -e "${RED}Debian 版本过低，需要 9 或更高版本${NC}"
-                exit 1
-            fi
-            ;;
-        centos|rhel)
-            if [[ $OS_VERSION -lt 7 ]]; then
-                echo -e "${RED}CentOS/RHEL 版本过低，需要 7 或更高版本${NC}"
-                exit 1
-            fi
-            ;;
-        *)
-            echo -e "${RED}不支持的操作系统: $OS${NC}"
-            exit 1
-            ;;
-    esac
-}
-
-# 检查内存
-check_memory() {
-    total_mem=$(free -m | awk 'NR==2 {print $2}')
-    if [[ $total_mem -lt 256 ]]; then
-        echo -e "${RED}内存不足 256MB，无法安装${NC}"
+check_sys() {
+    if [[ -f /etc/redhat-release ]]; then
+        release="centos"
+    elif cat /etc/issue | grep -q -E -i "debian"; then
+        release="debian"
+    elif cat /etc/issue | grep -q -E -i "ubuntu"; then
+        release="ubuntu"
+    elif cat /etc/issue | grep -q -E -i "centos|red hat|redhat"; then
+        release="centos"
+    elif cat /proc/version | grep -q -E -i "debian"; then
+        release="debian"
+    elif cat /proc/version | grep -q -E -i "ubuntu"; then
+        release="ubuntu"
+    elif cat /proc/version | grep -q -E -i "centos|red hat|redhat"; then
+        release="centos"
+    else
+        echo -e "${RED}[错误] 不支持的操作系统！脚本仅支持 Ubuntu 18.04+, Debian 9+, CentOS 7+${PLAIN}"
         exit 1
-    elif [[ $total_mem -lt 512 ]]; then
-        echo -e "${YELLOW}检测到小内存 VPS (${total_mem}MB)，建议优化配置${NC}"
+    fi
+    
+    # 架构检测
+    arch=$(uname -m)
+    case $arch in
+        x86_64) hy_arch="amd64" ;;
+        aarch64) hy_arch="arm64" ;;
+        armv7l) hy_arch="arm" ;;
+        *) echo -e "${RED}[错误] 不支持的 CPU 架构: ${arch}${PLAIN}"; exit 1 ;;
+    esac
+}
+
+check_mem() {
+    mem_total=$(free -m | awk '/Mem:/ { print $2 }')
+    if [[ $mem_total -lt 256 ]]; then
+        echo -e "${RED}[错误] 系统内存低于 256MB，无法稳定运行 Hysteria2，安装中止。${PLAIN}"
+        exit 1
+    elif [[ $mem_total -lt 512 ]]; then
+        echo -e "${YELLOW}[警告] 系统内存 (${mem_total}MB) 较小，建议仅供个人轻量使用。${PLAIN}"
         sleep 2
     fi
 }
 
-# 安装依赖
-install_dependencies() {
-    echo -e "${BLUE}正在安装必要依赖...${NC}"
-    case $OS in
-        ubuntu|debian)
-            apt-get update -qq
-            apt-get install -y curl wget openssl ca-certificates >/dev/null 2>&1
-            ;;
-        centos|rhel)
-            yum install -y curl wget openssl ca-certificates >/dev/null 2>&1
-            ;;
-    esac
-}
-
-# 检测网络
-detect_network() {
-    IPV4=$(curl -s4m8 ip.sb)
-    IPV6=$(curl -s6m8 ip.sb)
-    [[ -z $IPV4 ]] && IPV4="N/A"
-    [[ -z $IPV6 ]] && IPV6="N/A"
-}
-
-# 检测 Hysteria2 状态
-check_hy2_status() {
-    if [[ -f $HY2_BIN ]]; then
-        if systemctl is-active --quiet hysteria-server; then
-            HY2_STATUS="${GREEN}已安装 - 运行中${NC}"
-        else
-            HY2_STATUS="${YELLOW}已安装 - 已停止${NC}"
-        fi
+install_base() {
+    echo -e "${BLUE}[进度] 正在更新系统源并安装依赖...${PLAIN}"
+    if [[ "${release}" == "centos" ]]; then
+        yum install -y wget curl tar openssl jq net-tools
+        systemctl stop firewalld 2>/dev/null
+        systemctl disable firewalld 2>/dev/null
     else
-        HY2_STATUS="${RED}未安装${NC}"
+        apt-get update
+        apt-get install -y wget curl tar openssl jq net-tools
     fi
-}
-
-# 生成随机端口
-generate_port() {
-    while true; do
-        PORT=$((RANDOM % 55536 + 10000))
-        if ! ss -tulpn | grep -q ":$PORT "; then
-            echo $PORT
-            return
-        fi
-    done
-}
-
-# 生成随机密码
-generate_password() {
-    openssl rand -base64 16 | tr -d '/+=' | cut -c1-16
-}
-
-# 配置防火墙
-configure_firewall() {
-    local port=$1
-    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-        ufw allow $port/tcp >/dev/null 2>&1
-        ufw allow $port/udp >/dev/null 2>&1
-        echo -e "${GREEN}UFW 防火墙已开放端口 $port${NC}"
-    elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
-        firewall-cmd --permanent --add-port=$port/tcp >/dev/null 2>&1
-        firewall-cmd --permanent --add-port=$port/udp >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-        echo -e "${GREEN}FirewallD 已开放端口 $port${NC}"
-    fi
-}
-
-# 启用 BBR
-enable_bbr() {
-    if [[ $(sysctl -n net.ipv4.tcp_congestion_control) != "bbr" ]]; then
-        echo -e "${BLUE}正在启用 BBR 加速...${NC}"
-        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-        sysctl -p >/dev/null 2>&1
-        echo -e "${GREEN}BBR 加速已启用${NC}"
-    fi
-}
-
-# 下载 Hysteria2
-download_hysteria() {
-    echo -e "${BLUE}正在下载 Hysteria2 最新版本...${NC}"
-    local latest_version=$(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    local download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${ARCH}"
     
-    if curl -L -o $HY2_BIN $download_url; then
-        chmod +x $HY2_BIN
-        echo -e "${GREEN}Hysteria2 下载成功${NC}"
-    else
-        echo -e "${RED}下载失败，请检查网络连接${NC}"
+    if ! command -v openssl &> /dev/null; then
+        echo -e "${RED}[错误] OpenSSL 安装失败，请手动检查源！${PLAIN}"
         exit 1
     fi
 }
 
-# 生成自签证书
-generate_cert() {
-    echo -e "${BLUE}正在生成自签名证书...${NC}"
-    mkdir -p $HY2_CERT_DIR
-    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-        -keyout ${HY2_CERT_DIR}/server.key \
-        -out ${HY2_CERT_DIR}/server.crt \
-        -subj "/CN=amd.com" \
-        -days 36500 >/dev/null 2>&1
-    chmod 600 ${HY2_CERT_DIR}/server.key ${HY2_CERT_DIR}/server.crt
-    echo -e "${GREEN}证书生成成功${NC}"
+get_ip() {
+    local_ipv4=$(curl -s4m8 https://ip.sb)
+    local_ipv6=$(curl -s6m8 https://ip.sb)
+    
+    [[ -z "${local_ipv4}" ]] && local_ipv4="N/A"
+    [[ -z "${local_ipv6}" ]] && local_ipv6="N/A"
 }
 
-# 安装 Hysteria2
-install_hysteria() {
-    clear
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}    Hysteria2 安装程序${NC}"
-    echo -e "${BLUE}================================${NC}"
-    echo ""
+get_status() {
+    if [[ ! -f ${HY_BIN_PATH} ]]; then
+        status="${RED}未安装${PLAIN}"
+        status_code=0
+    else
+        if systemctl is-active hysteria-server &>/dev/null; then
+            status="${GREEN}运行中${PLAIN}"
+            status_code=1
+        else
+            status="${YELLOW}已安装-已停止${PLAIN}"
+            status_code=2
+        fi
+    fi
+}
+
+# --- BBR 优化 ---
+check_and_enable_bbr() {
+    echo -e "${BLUE}[进度] 检查系统 BBR 状态...${PLAIN}"
+    if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
+        echo -e "${GREEN}[信息] BBR 已开启，无需重复配置。${PLAIN}"
+    else
+        echo -e "${YELLOW}[信息] BBR 未开启，正在尝试开启...${PLAIN}"
+        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+        sysctl -p &>/dev/null
+        echo -e "${GREEN}[成功] BBR 加速已启用。${PLAIN}"
+    fi
+}
+
+# --- 防火墙配置 ---
+open_ports() {
+    local port=$1
+    echo -e "${BLUE}[进度] 配置防火墙开放端口: ${port}...${PLAIN}"
     
-    if [[ -f $HY2_BIN ]]; then
-        echo -e "${YELLOW}检测到已安装 Hysteria2，是否重新安装？(y/n)${NC}"
-        read -p "请选择: " reinstall
-        [[ $reinstall != "y" ]] && return
-        uninstall_hysteria
+    if command -v ufw &>/dev/null && systemctl is-active ufw &>/dev/null; then
+        ufw allow "${port}"/tcp
+        ufw allow "${port}"/udp
+        ufw reload
+    elif command -v firewall-cmd &>/dev/null && systemctl is-active firewalld &>/dev/null; then
+        firewall-cmd --zone=public --add-port="${port}"/tcp --permanent
+        firewall-cmd --zone=public --add-port="${port}"/udp --permanent
+        firewall-cmd --reload
+    else
+        # iptables fallback provided mainly for CentOS 7 basic envs
+        if command -v iptables &>/dev/null; then
+            iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT
+            iptables -I INPUT -p udp --dport "${port}" -j ACCEPT
+        fi
+    fi
+}
+
+# --- 安装核心逻辑 ---
+install_hy2() {
+    check_mem
+    install_base
+    check_and_enable_bbr
+    
+    mkdir -p ${HY_CONF_DIR} ${HY_CERT_DIR}
+
+    # 下载 Hysteria2
+    echo -e "${BLUE}[进度] 正在查询 Hysteria2 最新版本...${PLAIN}"
+    # 获取 GitHub 最新 Release
+    local latest_version=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | jq -r .tag_name)
+    if [[ -z "${latest_version}" || "${latest_version}" == "null" ]]; then
+        echo -e "${RED}[错误] 无法获取最新版本信息，请检查网络连接。${PLAIN}"
+        exit 1
     fi
     
-    check_memory
-    install_dependencies
-    enable_bbr
+    echo -e "${BLUE}[进度] 正在下载版本: ${latest_version} (架构: ${hy_arch})...${PLAIN}"
+    wget -O ${HY_BIN_PATH} "https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-${hy_arch}"
     
-    # 下载程序
-    download_hysteria
+    if [[ ! -f ${HY_BIN_PATH} ]]; then
+         echo -e "${RED}[错误] 下载失败！请检查 GitHub 连接。${PLAIN}"
+         exit 1
+    fi
+    chmod +x ${HY_BIN_PATH}
+
+    # 生成自签证书
+    echo -e "${BLUE}[进度] 生成自签名证书 (有效期 10 年)...${PLAIN}"
+    openssl req -x509 -newkey rsa:4096 -nodes -sha256 -keyout ${HY_CERT_DIR}/server.key -out ${HY_CERT_DIR}/server.crt -days 3650 -subj "/CN=www.bing.com" &>/dev/null
     
-    # 生成配置
-    PORT=$(generate_port)
-    PASSWORD=$(generate_password)
+    # 配置参数
+    read -p "请输入 SNI 伪装域名 (默认: amd.com): " input_sni
+    local sni=${input_sni:-"amd.com"}
     
-    echo ""
-    echo -e "${YELLOW}请输入 SNI 伪装域名 (默认: amd.com):${NC}"
-    read -p "SNI: " SNI
-    SNI=${SNI:-amd.com}
+    # 随机端口 (排除常用端口)
+    while true; do
+        local port=$(shuf -i 10000-65535 -n 1)
+        if ! netstat -tuln | grep -q ":$port "; then
+            break
+        fi
+    done
     
-    # 创建配置目录
-    mkdir -p $HY2_DIR
-    
-    # 生成证书
-    generate_cert
-    
-    # 生成配置文件
-    cat > $HY2_CONFIG <<EOF
-listen: :$PORT
+    # 生成随机密码
+    local password=$(tr -dc 'A-Za-z0-9!@#%^&*' < /dev/urandom | head -c 16)
+
+    # 写入配置文件
+    cat > ${HY_CONF_PATH} <<EOF
+server: :${port}
 
 tls:
-  cert: ${HY2_CERT_DIR}/server.crt
-  key: ${HY2_CERT_DIR}/server.key
+  cert: ${HY_CERT_DIR}/server.crt
+  key: ${HY_CERT_DIR}/server.key
 
 auth:
   type: password
-  password: $PASSWORD
+  password: ${password}
 
 masquerade:
   type: proxy
   proxy:
-    url: https://www.bing.com
+    url: https://${sni}/
     rewriteHost: true
+
+ignoreClientBandwidth: false
 EOF
-    chmod 600 $HY2_CONFIG
-    
-    # 创建 systemd 服务
-    cat > $HY2_SERVICE <<EOF
+    chmod 600 ${HY_CONF_PATH}
+
+    # 写入 Systemd 服务
+    cat > ${SYSTEMD_FILE} <<EOF
 [Unit]
-Description=Hysteria2 Server
+Description=Hysteria 2 Server
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$HY2_BIN server -c $HY2_CONFIG
-Restart=on-failure
-RestartSec=10
-LimitNOFILE=1000000
+ExecStart=${HY_BIN_PATH} server -c ${HY_CONF_PATH}
+WorkingDirectory=${HY_BIN_PATH%/*}
+User=root
+Group=root
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    
-    # 配置防火墙
-    configure_firewall $PORT
-    
+
     # 启动服务
     systemctl daemon-reload
-    systemctl enable hysteria-server >/dev/null 2>&1
-    systemctl start hysteria-server
+    systemctl enable hysteria-server
+    systemctl restart hysteria-server
     
-    if systemctl is-active --quiet hysteria-server; then
-        echo ""
-        echo -e "${GREEN}================================${NC}"
-        echo -e "${GREEN}  Hysteria2 安装成功！${NC}"
-        echo -e "${GREEN}================================${NC}"
-        echo ""
-        
-        # 生成客户端配置
-        generate_client_config
+    open_ports ${port}
+    
+    if systemctl is-active hysteria-server &>/dev/null; then
+        echo -e "${GREEN}[成功] Hysteria2 安装并启动成功！${PLAIN}"
+        show_config
     else
-        echo -e "${RED}服务启动失败，请检查日志: journalctl -u hysteria-server -n 50${NC}"
+        echo -e "${RED}[错误] 服务启动失败，请查看日志: journalctl -u hysteria-server -n 20${PLAIN}"
     fi
-    
-    echo ""
-    read -p "按回车键返回主菜单..."
 }
 
-# 生成客户端配置
-generate_client_config() {
-    local server_ip=${IPV4}
-    [[ $server_ip == "N/A" ]] && server_ip=${IPV6}
-    
-    local region=$(curl -s https://ipapi.co/${server_ip}/country_name/ | head -1)
-    [[ -z $region ]] && region="Unknown"
-    local random_suffix=$(openssl rand -hex 2)
-    local node_name="🌟Hysteria2-${region}-${random_suffix}"
-    
-    # V2rayN / NekoBox / Shadowrocket
-    local share_link="hysteria2://${PASSWORD}@${server_ip}:${PORT}/?insecure=1&sni=${SNI}#${node_name}"
-    
-    # Clash Meta
-    local clash_config="{ name: '${node_name}', type: hysteria2, server: ${server_ip}, port: ${PORT}, password: '${PASSWORD}', sni: '${SNI}', skip-cert-verify: true, up: 50, down: 100 }"
-    
-    # Surge
-    local surge_config="${node_name} = hysteria2, ${server_ip}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
-    
-    # 保存配置
-    cat > $HY2_INFO <<EOF
-服务器地址: ${server_ip}
-服务器端口: ${PORT}
-密码: ${PASSWORD}
-SNI: ${SNI}
-
-==================================================
-V2rayN / NekoBox / Shadowrocket 分享链接：
-==================================================
-${share_link}
-
-==================================================
-Clash Meta 配置：
-==================================================
-${clash_config}
-
-==================================================
-Surge 配置：
-==================================================
-${surge_config}
-==================================================
-EOF
-    
-    # 显示配置
-    cat $HY2_INFO
-}
-
-# 管理菜单
-manage_hysteria() {
-    while true; do
-        clear
-        echo -e "${BLUE}================================${NC}"
-        echo -e "${BLUE}    Hysteria2 管理菜单${NC}"
-        echo -e "${BLUE}================================${NC}"
-        echo ""
-        echo "1. 启动服务"
-        echo "2. 停止服务"
-        echo "3. 重启服务"
-        echo "4. 查看运行状态"
-        echo "5. 查看客户端配置"
-        echo "6. 修改 SNI"
-        echo "7. 修改端口"
-        echo "8. 重置密码"
-        echo "9. 查看日志"
-        echo "0. 返回主菜单"
-        echo ""
-        read -p "请选择操作 [0-9]: " choice
-        
-        case $choice in
-            1) systemctl start hysteria-server && echo -e "${GREEN}服务已启动${NC}" || echo -e "${RED}启动失败${NC}"; sleep 2 ;;
-            2) systemctl stop hysteria-server && echo -e "${GREEN}服务已停止${NC}" || echo -e "${RED}停止失败${NC}"; sleep 2 ;;
-            3) systemctl restart hysteria-server && echo -e "${GREEN}服务已重启${NC}" || echo -e "${RED}重启失败${NC}"; sleep 2 ;;
-            4) show_status ;;
-            5) show_config ;;
-            6) modify_sni ;;
-            7) modify_port ;;
-            8) reset_password ;;
-            9) journalctl -u hysteria-server -n 50 --no-pager; read -p "按回车键继续..." ;;
-            0) break ;;
-            *) echo -e "${RED}无效选择${NC}"; sleep 1 ;;
-        esac
-    done
-}
-
-# 显示状态
-show_status() {
-    clear
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}    Hysteria2 运行状态${NC}"
-    echo -e "${BLUE}================================${NC}"
-    echo ""
-    systemctl status hysteria-server --no-pager
-    echo ""
-    read -p "按回车键返回..."
-}
-
-# 显示配置
+# --- 显示配置 ---
 show_config() {
-    clear
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}    Hysteria2 客户端配置${NC}"
-    echo -e "${BLUE}================================${NC}"
-    echo ""
-    if [[ -f $HY2_INFO ]]; then
-        cat $HY2_INFO
-    else
-        echo -e "${RED}配置文件不存在${NC}"
-    fi
-    echo ""
-    read -p "按回车键返回..."
-}
-
-# 修改 SNI
-modify_sni() {
-    echo ""
-    read -p "请输入新的 SNI: " new_sni
-    if [[ -z $new_sni ]]; then
-        echo -e "${RED}SNI 不能为空${NC}"
-        sleep 2
+    if [[ ! -f ${HY_CONF_PATH} ]]; then
+        echo -e "${RED}[错误] 配置文件不存在！${PLAIN}"
         return
     fi
     
-    sed -i "s/sni: .*/sni: ${new_sni}/" $HY2_INFO
-    systemctl restart hysteria-server
-    echo -e "${GREEN}SNI 已修改为: ${new_sni}${NC}"
-    sleep 2
+    local port=$(grep "server:" ${HY_CONF_PATH} | awk '{print $2}' | tr -d ':')
+    local password=$(grep "password:" ${HY_CONF_PATH} | awk '{print $2}')
+    local sni=$(grep "url:" ${HY_CONF_PATH} | awk -F'[/:]' '{print $4}')
+    local ip=${local_ipv4}
+    if [[ "${ip}" == "N/A" ]]; then ip=${local_ipv6}; fi
+    
+    local name="Hysteria2-VPS-${port}"
+    
+    echo ""
+    echo -e "${BLUE}================== 客户端配置信息 ==================${PLAIN}"
+    echo -e "${YELLOW}服务器 IP  :${PLAIN} ${ip}"
+    echo -e "${YELLOW}端口 (Port):${PLAIN} ${port}"
+    echo -e "${YELLOW}密码 (Pass):${PLAIN} ${password}"
+    echo -e "${YELLOW}SNI 伪装   :${PLAIN} ${sni}"
+    echo -e "${BLUE}----------------------------------------------------${PLAIN}"
+    
+    # URL Encoding for V2RayN/Neko
+    local share_link="hysteria2://${password}@${ip}:${port}/?insecure=1&sni=${sni}#${name}"
+    
+    echo -e "${GREEN}🚀 V2rayN / NekoBox / Shadowrocket 分享链接:${PLAIN}"
+    echo -e "${CYAN}${share_link}${PLAIN}"
+    echo ""
+    
+    echo -e "${GREEN}🐱 Clash Meta (Mihomo) 配置:${PLAIN}"
+    echo -e "${CYAN}{ name: '${name}', type: hysteria2, server: ${ip}, port: ${port}, password: '${password}', sni: '${sni}', skip-cert-verify: true, up: 50, down: 100 }${PLAIN}"
+    echo ""
+    
+    echo -e "${GREEN}⚡ Surge 配置:${PLAIN}"
+    echo -e "${CYAN}${name} = hysteria2, ${ip}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true${PLAIN}"
+    echo -e "${BLUE}====================================================${PLAIN}"
+    echo -e "提示: 已默认允许自签证书 (skip-cert-verify: true)，请确保客户端已开启此选项。"
+    echo ""
 }
 
-# 修改端口
-modify_port() {
-    echo ""
-    new_port=$(generate_port)
-    echo -e "${YELLOW}新端口: ${new_port}${NC}"
-    read -p "确认修改？(y/n): " confirm
-    [[ $confirm != "y" ]] && return
-    
-    sed -i "s/listen: .*/listen: :${new_port}/" $HY2_CONFIG
-    configure_firewall $new_port
-    systemctl restart hysteria-server
-    
-    # 更新配置信息
-    sed -i "s/服务器端口: .*/服务器端口: ${new_port}/" $HY2_INFO
-    sed -i "s/:.*\?/:${new_port}\//g" $HY2_INFO
-    
-    echo -e "${GREEN}端口已修改为: ${new_port}${NC}"
-    sleep 2
+# --- 管理功能 ---
+manage_hy2() {
+    echo -e "
+    ${GREEN}1.${PLAIN} 启动服务
+    ${GREEN}2.${PLAIN} 停止服务
+    ${GREEN}3.${PLAIN} 重启服务
+    ${GREEN}4.${PLAIN} 查看运行状态
+    ${GREEN}5.${PLAIN} 查看/复制 客户端配置
+    ${GREEN}6.${PLAIN} 修改 SNI 伪装域名
+    ${GREEN}7.${PLAIN} 修改 端口 (Port)
+    ${GREEN}8.${PLAIN} 查看实时日志 (Ctrl+C 退出)
+    ${GREEN}0.${PLAIN} 返回主菜单
+    "
+    read -p "请选择操作 [0-8]: " sub_opt
+    case $sub_opt in
+        1) systemctl start hysteria-server && echo -e "${GREEN}服务已启动${PLAIN}" ;;
+        2) systemctl stop hysteria-server && echo -e "${GREEN}服务已停止${PLAIN}" ;;
+        3) systemctl restart hysteria-server && echo -e "${GREEN}服务已重启${PLAIN}" ;;
+        4) systemctl status hysteria-server ;;
+        5) get_ip; show_config ;;
+        6) 
+            read -p "请输入新的 SNI 域名: " new_sni
+            sed -i "s|url: https://.*/|url: https://${new_sni}/|" ${HY_CONF_PATH}
+            systemctl restart hysteria-server
+            echo -e "${GREEN}SNI 修改成功并重启服务。${PLAIN}"
+            get_ip; show_config
+            ;;
+        7) 
+            read -p "请输入新的端口 (10000-65535): " new_port
+            # 获取旧端口用于防火墙清理（简单处理，建议保留旧规则或复杂清理）
+            old_port=$(grep "server:" ${HY_CONF_PATH} | awk '{print $2}' | tr -d ':')
+            sed -i "s|server: :${old_port}|server: :${new_port}|" ${HY_CONF_PATH}
+            systemctl restart hysteria-server
+            open_ports ${new_port}
+            echo -e "${GREEN}端口修改成功并重启服务 (记得放行新端口)。${PLAIN}"
+            get_ip; show_config
+            ;;
+        8) journalctl -u hysteria-server -f ;;
+        0) return ;;
+        *) echo -e "${RED}输入错误${PLAIN}" ;;
+    esac
 }
 
-# 重置密码
-reset_password() {
-    echo ""
-    new_password=$(generate_password)
-    echo -e "${YELLOW}新密码: ${new_password}${NC}"
-    read -p "确认重置？(y/n): " confirm
-    [[ $confirm != "y" ]] && return
+# --- 卸载功能 ---
+uninstall_hy2() {
+    echo -e "${RED}⚠️  警告：该操作将彻底卸载 Hysteria2 并清理所有配置文件！${PLAIN}"
+    read -p "确认卸载？(输入 y 确认): " confirm
+    if [[ "$confirm" != "y" ]]; then return; fi
     
-    sed -i "s/password: .*/password: ${new_password}/" $HY2_CONFIG
-    systemctl restart hysteria-server
+    echo -e "${BLUE}[进度] 停止服务...${PLAIN}"
+    systemctl stop hysteria-server
+    systemctl disable hysteria-server
     
-    # 更新配置信息
-    sed -i "s/密码: .*/密码: ${new_password}/" $HY2_INFO
-    sed -i "s/hysteria2:\/\/.*@/hysteria2:\/\/${new_password}@/g" $HY2_INFO
-    sed -i "s/password: '.*'/password: '${new_password}'/g" $HY2_INFO
-    sed -i "s/password=.*, /password=${new_password}, /g" $HY2_INFO
-    
-    echo -e "${GREEN}密码已重置为: ${new_password}${NC}"
-    sleep 2
-}
-
-# 卸载 Hysteria2
-uninstall_hysteria() {
-    clear
-    echo -e "${RED}================================${NC}"
-    echo -e "${RED}    卸载 Hysteria2${NC}"
-    echo -e "${RED}================================${NC}"
-    echo ""
-    echo -e "${YELLOW}警告：此操作将完全删除 Hysteria2 及其所有配置${NC}"
-    echo ""
-    read -p "确认卸载？(yes/no): " confirm
-    [[ $confirm != "yes" ]] && return
-    
-    echo ""
-    echo -e "${BLUE}正在卸载...${NC}"
-    
-    # 停止服务
-    systemctl stop hysteria-server >/dev/null 2>&1
-    systemctl disable hysteria-server >/dev/null 2>&1
-    
-    # 删除文件
-    rm -f $HY2_SERVICE
-    rm -f $HY2_BIN
-    rm -rf $HY2_DIR
+    echo -e "${BLUE}[进度] 删除文件...${PLAIN}"
+    rm -f ${SYSTEMD_FILE}
+    rm -f ${HY_BIN_PATH}
+    rm -rf ${HY_CONF_DIR}
     
     systemctl daemon-reload
+    echo -e "${GREEN}[成功] Hysteria2 已彻底卸载。${PLAIN}"
+    status_code=0
+}
+
+# --- 主菜单 ---
+menu() {
+    clear
+    check_root
+    check_sys
+    get_ip
+    get_status
     
-    echo -e "${GREEN}Hysteria2 已完全卸载${NC}"
-    sleep 2
+    echo -e "
+    ====================================================================================
+    ${GREEN}Hysteria2 Management Script${PLAIN} ${YELLOW}[${version}]${PLAIN}
+    ${GREEN}作者${PLAIN}: Jensfrank
+    ${GREEN}项目${PLAIN}: https://github.com/everett7623/hy2
+    ${GREEN}社区${PLAIN}: Seeloc博客 | VPSknow网站 | Nodeloc论坛
+    ${GREEN}更新${PLAIN}: 2025-12-22
+    ====================================================================================
+    系统信息:
+    IPv4: ${CYAN}${local_ipv4}${PLAIN}
+    IPv6: ${CYAN}${local_ipv6}${PLAIN}
+    状态: ${status}
+    ====================================================================================
+    
+    ${GREEN}1.${PLAIN} 安装 Hysteria2 (自签证书模式)
+    ${GREEN}2.${PLAIN} 管理 Hysteria2 (启动/停止/配置/日志)
+    ${GREEN}3.${PLAIN} 卸载 Hysteria2
+    ${GREEN}0.${PLAIN} 退出脚本
+    
+    ====================================================================================
+    "
+    read -p "请输入选项 [0-3]: " choice
+    case $choice in
+        1) 
+            if [[ $status_code -eq 0 ]]; then
+                install_hy2
+            else
+                echo -e "${YELLOW}Hysteria2 已安装，请先卸载或直接管理。${PLAIN}"
+                sleep 2
+            fi
+            ;;
+        2) 
+            if [[ $status_code -eq 0 ]]; then
+                echo -e "${RED}请先安装 Hysteria2！${PLAIN}"
+                sleep 2
+            else
+                manage_hy2
+            fi
+            ;;
+        3) uninstall_hy2 ;;
+        0) exit 0 ;;
+        *) echo -e "${RED}无效选项，请重新输入。${PLAIN}"; sleep 1 ;;
+    esac
 }
 
-# 主菜单
-main_menu() {
-    while true; do
-        clear
-        detect_network
-        check_hy2_status
-        
-        echo -e "${BLUE}====================================================${NC}"
-        echo -e "${BLUE}           Hysteria2 Management Script v1.0${NC}"
-        echo -e "${BLUE}====================================================${NC}"
-        echo -e "${BLUE}项目地址:${NC} https://github.com/everett7623/hy2"
-        echo -e "${BLUE}作者:${NC} Jensfrank"
-        echo -e "${BLUE}关联平台:${NC} Seeloc | VPSknow | Nodeloc"
-        echo -e "${BLUE}更新日期:${NC} 2025-12-22"
-        echo -e "${BLUE}====================================================${NC}"
-        echo ""
-        echo -e "${YELLOW}系统信息:${NC}"
-        echo -e "  服务器 IPv4: ${GREEN}${IPV4}${NC}"
-        echo -e "  服务器 IPv6: ${GREEN}${IPV6}${NC}"
-        echo -e "  Hysteria2 状态: ${HY2_STATUS}"
-        echo ""
-        echo -e "${BLUE}====================================================${NC}"
-        echo "1. 安装 Hysteria2"
-        echo "2. 管理 Hysteria2"
-        echo "3. 卸载 Hysteria2"
-        echo "0. 退出脚本"
-        echo -e "${BLUE}====================================================${NC}"
-        echo ""
-        read -p "请选择操作 [0-3]: " choice
-        
-        case $choice in
-            1) install_hysteria ;;
-            2) [[ -f $HY2_BIN ]] && manage_hysteria || { echo -e "${RED}请先安装 Hysteria2${NC}"; sleep 2; } ;;
-            3) [[ -f $HY2_BIN ]] && uninstall_hysteria || { echo -e "${RED}未安装 Hysteria2${NC}"; sleep 2; } ;;
-            0) echo -e "${GREEN}感谢使用！${NC}"; exit 0 ;;
-            *) echo -e "${RED}无效选择${NC}"; sleep 1 ;;
-        esac
-    done
-}
-
-# 脚本入口
-detect_system
-check_compatibility
-main_menu
+# --- 脚本入口 ---
+version="v1.0"
+while true; do
+    menu
+    read -p "按回车键继续..."
+done
