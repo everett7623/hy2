@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.4 (纯净版：移除IP自动检测，彻底解决刷屏问题)
+# 版本：v1.0.5 (修复 curl|bash 模式下的输入冲突，完美支持一键脚本)
 # GitHub: https://github.com/everett7623/hy2
 # Seeloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -92,10 +92,12 @@ install_hy2() {
         -subj "/C=US/ST=California/L=San Francisco/O=Hysteria/OU=IT/CN=bing.com" >/dev/null 2>&1
     
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
-    read -r -p "请输入监听端口 [默认 443]: " PORT
+    
+    # 关键修改：添加 < /dev/tty 强制从终端读取输入
+    read -r -p "请输入监听端口 [默认 443]: " PORT < /dev/tty
     [[ -z "$PORT" ]] && PORT="443"
     
-    read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
+    read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD < /dev/tty
     if [[ -z "$PASSWORD" ]]; then
         PASSWORD=$(openssl rand -base64 12)
     fi
@@ -139,7 +141,7 @@ EOF
     systemctl start hysteria-server
     
     echo -e "${GREEN}安装完成！${PLAIN}"
-    read -r -p "按回车键查看配置..." temp
+    read -r -p "按回车键查看配置..." temp < /dev/tty
     show_config
 }
 
@@ -147,7 +149,7 @@ EOF
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
-        read -r -p "按回车返回..." temp
+        read -r -p "按回车返回..." temp < /dev/tty
         return
     fi
 
@@ -155,10 +157,9 @@ show_config() {
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
     SNI="amd.com"
     
-    # 既然去除了自动获取IP，这里尝试用简单命令获取本地IP，或者提示用户手动填写
-    # 尝试获取本机 IP (仅作为显示参考)
+    # 获取本机 IP
     HOST_IP=$(hostname -I | awk '{print $1}')
-    if [[ -z "$HOST_IP" ]]; then HOST_IP="请手动填入服务器IP"; fi
+    if [[ -z "$HOST_IP" ]]; then HOST_IP="YOUR_IP"; fi
     
     NODE_NAME="🌟Hysteria2-$(date +%m%d)"
     SHARE_LINK="hysteria2://${PASSWORD}@${HOST_IP}:${PORT}/?insecure=1&sni=${SNI}#${NODE_NAME}"
@@ -168,9 +169,9 @@ show_config() {
     echo -e "${GREEN}⚔️ Clash Meta:${PLAIN} { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${GREEN}🌊 Surge:${PLAIN} ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}===========================================${PLAIN}"
-    echo -e "注意：如果IP显示为内网IP，请在客户端中替换为您的公网IP。"
+    echo -e "注意：如果IP显示为内网IP，请在客户端中手动替换为公网IP。"
     echo ""
-    read -r -p "按回车键返回主菜单..." temp
+    read -r -p "按回车键返回主菜单..." temp < /dev/tty
 }
 
 # --- 管理功能 ---
@@ -182,12 +183,12 @@ manage_hy2() {
     echo -e "3. 停止服务"
     echo -e "4. 查看日志"
     echo -e "0. 返回"
-    read -r -p "请选择: " opt
+    read -r -p "请选择: " opt < /dev/tty
     case $opt in
         1) show_config ;;
         2) systemctl restart hysteria-server && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
         3) systemctl stop hysteria-server && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
-        4) journalctl -u hysteria-server -n 20 --no-pager; read -r -p "按回车继续..." temp ;;
+        4) journalctl -u hysteria-server -n 20 --no-pager; read -r -p "按回车继续..." temp < /dev/tty ;;
         0) return ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
@@ -195,7 +196,7 @@ manage_hy2() {
 
 # --- 卸载 ---
 uninstall_hy2() {
-    read -r -p "确定卸载? [y/N]: " confirm
+    read -r -p "确定卸载? [y/N]: " confirm < /dev/tty
     if [[ "$confirm" =~ ^[yY]$ ]]; then
         systemctl stop hysteria-server
         systemctl disable hysteria-server
@@ -221,7 +222,7 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "Hysteria2 Management Script (v1.0.4)"
+        echo -e "Hysteria2 Management Script (v1.0.5)"
         echo -e "项目地址：https://github.com/everett7623/hy2"
         echo -e "作者：Jensfrank"
         echo -e "Seeloc博客: https://seedloc.com"
@@ -237,10 +238,8 @@ main_menu() {
         echo -e " 0. 退出"
         echo -e "------------------------------------------------"
         
-        # 关键修改：如果读取失败（比如因为脚本传输错误导致的EOF），直接退出脚本，防止死循环
-        read -r -p "请输入选项: " choice || exit 0
-
-        [[ -z "$choice" ]] && continue
+        # 关键修改：添加 < /dev/tty，强制从终端读取输入，而不是从 curl 的管道中读取
+        read -r -p "请输入选项: " choice < /dev/tty
 
         case $choice in
             1) install_hy2 ;;
