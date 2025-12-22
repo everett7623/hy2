@@ -2,11 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 & Shadowsocks Management Script
 # 作者：Jensfrank
-# 版本：v1.0
+# 版本：v1.1
 # GitHub: https://github.com/everett7623/hy2
-# Seeloc博客: https://seedloc.com
+# Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
+# 更新日期: 2025-12-22
 #====================================================================================
 
 # 颜色定义
@@ -19,7 +20,8 @@ PURPLE='\033[0;35m'
 NC='\033[0m'
 
 # 全局变量
-VERSION="v1.0"
+VERSION="v1.1"
+UPDATE_DATE="2025-12-22"
 HY2_CONFIG_DIR="/etc/hysteria"
 HY2_CONFIG_FILE="$HY2_CONFIG_DIR/config.yaml"
 HY2_SERVICE="hysteria-server.service"
@@ -147,10 +149,10 @@ check_ipv6() {
 # 检查服务状态
 check_service_status() {
     local service=$1
-    if systemctl is-active --quiet $service 2>/dev/null; then
+    if systemctl is-active --quiet "$service" 2>/dev/null; then
         echo -e "${GREEN}运行中${NC}"
         return 0
-    elif systemctl is-enabled --quiet $service 2>/dev/null; then
+    elif systemctl is-enabled --quiet "$service" 2>/dev/null; then
         echo -e "${YELLOW}已安装(未运行)${NC}"
         return 1
     else
@@ -166,11 +168,11 @@ configure_firewall() {
     
     if command -v ufw &> /dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
         log_info "检测到 UFW 防火墙，正在配置..."
-        ufw allow $port/$protocol comment "Proxy Service" >/dev/null 2>&1
+        ufw allow "$port/$protocol" comment "Proxy Service" >/dev/null 2>&1
         log_success "UFW 防火墙规则已添加 (端口: $port/$protocol)"
     elif command -v firewall-cmd &> /dev/null && systemctl is-active --quiet firewalld 2>/dev/null; then
         log_info "检测到 FirewallD，正在配置..."
-        firewall-cmd --permanent --add-port=$port/$protocol >/dev/null 2>&1
+        firewall-cmd --permanent --add-port="$port/$protocol" >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
         log_success "FirewallD 规则已添加 (端口: $port/$protocol)"
     else
@@ -189,7 +191,7 @@ generate_port() {
     while true; do
         port=$(shuf -i 10000-65000 -n 1)
         if ! ss -tuln | grep -q ":$port "; then
-            echo $port
+            echo "$port"
             return
         fi
     done
@@ -227,7 +229,7 @@ install_hysteria2() {
     echo -e "${CYAN}   安装 Hysteria2${NC}"
     echo -e "${CYAN}================================${NC}\n"
     
-    if systemctl is-active --quiet $HY2_SERVICE 2>/dev/null; then
+    if systemctl is-active --quiet "$HY2_SERVICE" 2>/dev/null; then
         log_warn "Hysteria2 已经安装并运行中"
         echo -e "\n按任意键返回主菜单..."
         read -n 1
@@ -249,23 +251,25 @@ install_hysteria2() {
     fi
     
     # 创建配置目录
-    mkdir -p $HY2_CONFIG_DIR
+    mkdir -p "$HY2_CONFIG_DIR"
     
     # 生成证书
     log_info "正在生成自签名证书..."
     openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-        -keyout $HY2_CONFIG_DIR/server.key \
-        -out $HY2_CONFIG_DIR/server.crt \
+        -keyout "$HY2_CONFIG_DIR/server.key" \
+        -out "$HY2_CONFIG_DIR/server.crt" \
         -subj "/CN=amd.com" -days 36500 >/dev/null 2>&1
     
-    chmod 600 $HY2_CONFIG_DIR/server.key
-    chmod 644 $HY2_CONFIG_DIR/server.crt
+    chmod 600 "$HY2_CONFIG_DIR/server.key"
+    chmod 644 "$HY2_CONFIG_DIR/server.crt"
     
     # 生成配置
-    local PASSWORD=$(generate_password)
-    local PORT=$(generate_port)
+    local PASSWORD
+    PASSWORD=$(generate_password)
+    local PORT
+    PORT=$(generate_port)
     
-    cat > $HY2_CONFIG_FILE <<EOF
+    cat > "$HY2_CONFIG_FILE" <<EOF
 listen: :$PORT
 
 tls:
@@ -299,7 +303,7 @@ ignoreClientBandwidth: false
 EOF
     
     # 配置防火墙
-    configure_firewall $PORT udp
+    configure_firewall "$PORT" udp
     
     # 启动服务
     systemctl daemon-reload
@@ -308,7 +312,7 @@ EOF
     
     sleep 2
     
-    if systemctl is-active --quiet $HY2_SERVICE; then
+    if systemctl is-active --quiet "$HY2_SERVICE"; then
         log_success "Hysteria2 安装成功！"
         echo ""
         show_hysteria2_config
@@ -323,17 +327,20 @@ EOF
 
 # 显示 Hysteria2 配置
 show_hysteria2_config() {
-    if [[ ! -f $HY2_CONFIG_FILE ]]; then
+    if [[ ! -f "$HY2_CONFIG_FILE" ]]; then
         log_error "Hysteria2 配置文件不存在"
         return 1
     fi
     
-    local PASSWORD=$(grep "password:" $HY2_CONFIG_FILE | awk '{print $2}')
-    local PORT=$(grep "listen:" $HY2_CONFIG_FILE | awk -F: '{print $NF}')
+    local PASSWORD
+    PASSWORD=$(grep "password:" "$HY2_CONFIG_FILE" | awk '{print $2}')
+    local PORT
+    PORT=$(grep "listen:" "$HY2_CONFIG_FILE" | awk -F: '{print $NF}')
     local SERVER_IP=$IPV4
     [[ "$SERVER_IP" == "N/A" ]] && SERVER_IP=$IPV6
     
-    local DATE_TAG=$(date +%m%d)
+    local DATE_TAG
+    DATE_TAG=$(date +%m%d)
     local SHARE_LINK="hysteria2://${PASSWORD}@${SERVER_IP}:${PORT}/?insecure=true&sni=amd.com#🌟Hysteria2-${DATE_TAG}"
     
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
@@ -367,7 +374,7 @@ install_shadowsocks() {
         return 1
     fi
     
-    if systemctl is-active --quiet $SS_SERVICE 2>/dev/null; then
+    if systemctl is-active --quiet "$SS_SERVICE" 2>/dev/null; then
         log_warn "Shadowsocks 已经安装并运行中"
         echo -e "\n按任意键返回主菜单..."
         read -n 1
@@ -381,7 +388,8 @@ install_shadowsocks() {
     
     # 获取最新版本
     log_info "正在获取最新版本信息..."
-    local LATEST_VERSION=$(curl -s https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest | jq -r .tag_name | sed 's/v//')
+    local LATEST_VERSION
+    LATEST_VERSION=$(curl -s https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest | jq -r .tag_name | sed 's/v//')
     
     if [[ -z "$LATEST_VERSION" ]]; then
         log_error "无法获取 Shadowsocks 最新版本"
@@ -396,7 +404,7 @@ install_shadowsocks() {
     local DOWNLOAD_URL="https://github.com/shadowsocks/shadowsocks-rust/releases/download/v${LATEST_VERSION}/shadowsocks-v${LATEST_VERSION}.x86_64-unknown-linux-gnu.tar.xz"
     
     # 下载并解压
-    cd /tmp
+    cd /tmp || exit
     if ! wget -q --show-progress "$DOWNLOAD_URL" -O shadowsocks.tar.xz; then
         log_error "下载失败"
         echo -e "\n按任意键返回主菜单..."
@@ -410,13 +418,15 @@ install_shadowsocks() {
     rm -f shadowsocks.tar.xz
     
     # 创建配置目录
-    mkdir -p $SS_CONFIG_DIR
+    mkdir -p "$SS_CONFIG_DIR"
     
     # 生成配置
-    local PASSWORD=$(generate_password)
-    local PORT=$(generate_port)
+    local PASSWORD
+    PASSWORD=$(generate_password)
+    local PORT
+    PORT=$(generate_port)
     
-    cat > $SS_CONFIG_FILE <<EOF
+    cat > "$SS_CONFIG_FILE" <<EOF
 {
     "server": "::",
     "server_port": $PORT,
@@ -428,7 +438,7 @@ install_shadowsocks() {
 }
 EOF
     
-    chmod 600 $SS_CONFIG_FILE
+    chmod 600 "$SS_CONFIG_FILE"
     
     # 创建 systemd 服务
     cat > /etc/systemd/system/$SS_SERVICE <<EOF
@@ -448,23 +458,23 @@ WantedBy=multi-user.target
 EOF
     
     # 配置防火墙
-    configure_firewall $PORT tcp
-    configure_firewall $PORT udp
+    configure_firewall "$PORT" tcp
+    configure_firewall "$PORT" udp
     
     # 启动服务
     systemctl daemon-reload
-    systemctl enable $SS_SERVICE >/dev/null 2>&1
-    systemctl start $SS_SERVICE
+    systemctl enable "$SS_SERVICE" >/dev/null 2>&1
+    systemctl start "$SS_SERVICE"
     
     sleep 2
     
-    if systemctl is-active --quiet $SS_SERVICE; then
+    if systemctl is-active --quiet "$SS_SERVICE"; then
         log_success "Shadowsocks 安装成功！"
         echo ""
         show_shadowsocks_config
     else
         log_error "Shadowsocks 启动失败"
-        systemctl status $SS_SERVICE --no-pager
+        systemctl status "$SS_SERVICE" --no-pager
     fi
     
     echo -e "\n按任意键返回主菜单..."
@@ -473,19 +483,24 @@ EOF
 
 # 显示 Shadowsocks 配置
 show_shadowsocks_config() {
-    if [[ ! -f $SS_CONFIG_FILE ]]; then
+    if [[ ! -f "$SS_CONFIG_FILE" ]]; then
         log_error "Shadowsocks 配置文件不存在"
         return 1
     fi
     
-    local PASSWORD=$(jq -r .password $SS_CONFIG_FILE)
-    local PORT=$(jq -r .server_port $SS_CONFIG_FILE)
-    local METHOD=$(jq -r .method $SS_CONFIG_FILE)
+    local PASSWORD
+    PASSWORD=$(jq -r .password "$SS_CONFIG_FILE")
+    local PORT
+    PORT=$(jq -r .server_port "$SS_CONFIG_FILE")
+    local METHOD
+    METHOD=$(jq -r .method "$SS_CONFIG_FILE")
     
     # 生成分享链接
     local USER_INFO="${METHOD}:${PASSWORD}"
-    local ENCODED=$(echo -n "$USER_INFO" | base64 -w 0)
-    local DATE_TAG=$(date +%m%d)
+    local ENCODED
+    ENCODED=$(echo -n "$USER_INFO" | base64 -w 0)
+    local DATE_TAG
+    DATE_TAG=$(date +%m%d)
     local SHARE_LINK="ss://${ENCODED}@[${IPV6}]:${PORT}#🌟SS-IPv6-${DATE_TAG}"
     
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
@@ -523,36 +538,36 @@ service_management() {
         echo -e " ${RED}0.${NC} 返回主菜单"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
         echo -n "请选择操作 [0-10]: "
-        read choice
+        read -r choice
         
         case $choice in
             1) 
-                systemctl start $HY2_SERVICE 2>/dev/null && log_success "Hysteria2 已启动" || log_error "启动失败"
+                systemctl start "$HY2_SERVICE" 2>/dev/null && log_success "Hysteria2 已启动" || log_error "启动失败"
                 ;;
             2) 
-                systemctl stop $HY2_SERVICE 2>/dev/null && log_success "Hysteria2 已停止" || log_error "停止失败"
+                systemctl stop "$HY2_SERVICE" 2>/dev/null && log_success "Hysteria2 已停止" || log_error "停止失败"
                 ;;
             3) 
-                systemctl restart $HY2_SERVICE 2>/dev/null && log_success "Hysteria2 已重启" || log_error "重启失败"
+                systemctl restart "$HY2_SERVICE" 2>/dev/null && log_success "Hysteria2 已重启" || log_error "重启失败"
                 ;;
             4) 
-                systemctl status $HY2_SERVICE --no-pager
+                systemctl status "$HY2_SERVICE" --no-pager
                 ;;
             5) 
                 get_server_ip
                 show_hysteria2_config
                 ;;
             6) 
-                systemctl start $SS_SERVICE 2>/dev/null && log_success "Shadowsocks 已启动" || log_error "启动失败"
+                systemctl start "$SS_SERVICE" 2>/dev/null && log_success "Shadowsocks 已启动" || log_error "启动失败"
                 ;;
             7) 
-                systemctl stop $SS_SERVICE 2>/dev/null && log_success "Shadowsocks 已停止" || log_error "停止失败"
+                systemctl stop "$SS_SERVICE" 2>/dev/null && log_success "Shadowsocks 已停止" || log_error "停止失败"
                 ;;
             8) 
-                systemctl restart $SS_SERVICE 2>/dev/null && log_success "Shadowsocks 已重启" || log_error "重启失败"
+                systemctl restart "$SS_SERVICE" 2>/dev/null && log_success "Shadowsocks 已重启" || log_error "重启失败"
                 ;;
             9) 
-                systemctl status $SS_SERVICE --no-pager
+                systemctl status "$SS_SERVICE" --no-pager
                 ;;
             10) 
                 get_server_ip
@@ -585,7 +600,7 @@ uninstall_menu() {
         echo -e " ${RED}0.${NC} 返回主菜单"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
         echo -n "请选择操作 [0-3]: "
-        read choice
+        read -r choice
         
         case $choice in
             1) 
@@ -597,7 +612,128 @@ uninstall_menu() {
             3) 
                 echo -e "${RED}警告: 这将卸载所有已安装的代理服务！${NC}"
                 read -p "确认继续? (y/n): " confirm
-                if [[ $confirm == "y" || $confirm == "Y" ]]; then
+                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                    uninstall_hysteria2
+                    uninstall_shadowsocks
+                    log_success "所有服务已卸载"
+                fi
+                ;;
+            0) 
+                break
+                ;;
+            *) 
+                log_error "无效选项"
+                ;;
+        esac
+        
+        [[ $choice != 0 ]] && { echo ""; read -p "按回车键继续..."; }
+    done
+}
+
+# 卸载 Hysteria2
+uninstall_hysteria2() {
+    log_info "正在卸载 Hysteria2..."
+    systemctl stop "$HY2_SERVICE" 2>/dev/null
+    systemctl disable "$HY2_SERVICE" 2>/dev/null
+    rm -rf "$HY2_CONFIG_DIR"
+    rm -f /etc/systemd/system/$HY2_SERVICE
+    bash <(curl -fsSL https://get.hy2.sh/) --remove >/dev/null 2>&1
+    systemctl daemon-reload
+    log_success "Hysteria2 已卸载"
+}
+
+# 卸载 Shadowsocks
+uninstall_shadowsocks() {
+    log_info "正在卸载 Shadowsocks..."
+    systemctl stop "$SS_SERVICE" 2>/dev/null
+    systemctl disable "$SS_SERVICE" 2>/dev/null
+    rm -rf "$SS_CONFIG_DIR"
+    rm -f /etc/systemd/system/$SS_SERVICE
+    rm -f /usr/local/bin/ssserver
+    systemctl daemon-reload
+    log_success "Shadowsocks 已卸载"
+}
+
+# 更新服务菜单
+update_menu() {
+    while true; do
+        clear
+        echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║                      更新服务                                       ║${NC}"
+        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e " ${GREEN}1.${NC} 更新 Hysteria2"
+        echo -e " ${GREEN}2.${NC} 更新 Shadowsocks"
+        echo -e " ${GREEN}3.${NC} 更新系统内核"
+        echo -e " ${GREEN}4.${NC} 更新本脚本"
+        echo ""
+        echo -e " ${RED}0.${NC} 返回主菜单"
+        echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
+        echo -n "请选择操作 [0-4]: "
+        read -r choice
+        
+        case $choice in
+            1) 
+                update_hysteria2
+                ;;
+            2) 
+                update_shadowsocks
+                ;;
+            3) 
+                update_kernel
+                ;;
+            4)
+                update_script
+                ;;
+            0) 
+                break
+                ;;
+            *) 
+                log_error "无效选项"
+                ;;
+        esac
+        
+        [[ $choice != 0 ]] && { echo ""; read -p "按回车键继续..."; }
+    done
+}
+
+# 更新 Hysteria2
+update_hysteria2() {
+    log_info "正在更新 Hysteria2..."
+    if bash <(curl -fsSL https://get.hy2.sh/) >/dev/null 2>&1; then
+        systemctl restart "$HY2_SERVICE"
+        log_success "Hysteria2 更新完成"
+    else
+        log_error "Hysteria2 更新失败"
+    fi
+}
+
+# 更新 Shadowsocks
+update_shadowsocks() {
+    log_info "正在更新 Shadowsocks..."
+    log_warn "将重新安装 Shadowsocks (配置将保留)"
+    sleep 2
+    
+    # 备份配置
+    if [[ -f "$SS_CONFIG_FILE" ]]; then
+        cp "$SS_CONFIG_FILE" /tmp/ss_config_backup.json
+    fi
+    
+    uninstall_shadowsocks
+    install_shadowsocks
+    
+    # 恢复配置
+    if [[ -f /tmp/ss_config_backup.json ]]; then
+        mv /tmp/ss_config_backup.json "$SS_CONFIG_FILE"
+        systemctl restart "$SS_SERVICE"
+    fi
+}
+
+# 更新系统内核
+update_kernel() {
+    log_warn "更新系统内核可能需要重启服务器"
+    read -p "是否继续? (y/n): " confirm
+    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
         case $OS in
             ubuntu|debian)
                 apt-get update && apt-get upgrade -y
@@ -613,7 +749,7 @@ uninstall_menu() {
 # 更新脚本
 update_script() {
     log_info "正在更新脚本..."
-    if curl -fsSL $SCRIPT_URL -o /tmp/hy2_new.sh; then
+    if curl -fsSL "$SCRIPT_URL" -o /tmp/hy2_new.sh; then
         chmod +x /tmp/hy2_new.sh
         mv /tmp/hy2_new.sh "$0"
         log_success "脚本更新完成，正在重新启动..."
@@ -711,6 +847,7 @@ main_menu() {
         
         echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
         echo -e "${CYAN}║   Hysteria2 & Shadowsocks Management Script ($VERSION)            ║${NC}"
+        echo -e "${CYAN}║   更新日期: $UPDATE_DATE                                           ║${NC}"
         echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
         echo -e "  项目地址: ${BLUE}https://github.com/everett7623/hy2${NC}"
         echo -e "  博客地址: ${BLUE}https://seedloc.com${NC}"
@@ -720,8 +857,8 @@ main_menu() {
         echo -e "  服务器 IPv4: ${GREEN}$IPV4${NC}"
         echo -e "  服务器 IPv6: ${GREEN}$IPV6${NC}"
         echo ""
-        echo -e "  Hysteria2 状态: $(check_service_status $HY2_SERVICE)"
-        echo -e "  Shadowsocks 状态: $(check_service_status $SS_SERVICE)"
+        echo -e "  Hysteria2 状态: $(check_service_status "$HY2_SERVICE")"
+        echo -e "  Shadowsocks 状态: $(check_service_status "$SS_SERVICE")"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
         echo ""
         echo -e " ${GREEN}1.${NC} 安装 Hysteria2 (自签模式，无需域名解析)"
@@ -734,7 +871,7 @@ main_menu() {
         echo -e " ${RED}0.${NC} 退出脚本"
         echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
         echo -n "请选择操作 [0-6]: "
-        read choice
+        read -r choice
         
         case $choice in
             1) 
@@ -786,125 +923,4 @@ main() {
 }
 
 # 执行主程序
-main]; then
-                    uninstall_hysteria2
-                    uninstall_shadowsocks
-                    log_success "所有服务已卸载"
-                fi
-                ;;
-            0) 
-                break
-                ;;
-            *) 
-                log_error "无效选项"
-                ;;
-        esac
-        
-        [[ $choice != 0 ]] && { echo ""; read -p "按回车键继续..."; }
-    done
-}
-
-# 卸载 Hysteria2
-uninstall_hysteria2() {
-    log_info "正在卸载 Hysteria2..."
-    systemctl stop $HY2_SERVICE 2>/dev/null
-    systemctl disable $HY2_SERVICE 2>/dev/null
-    rm -rf $HY2_CONFIG_DIR
-    rm -f /etc/systemd/system/$HY2_SERVICE
-    bash <(curl -fsSL https://get.hy2.sh/) --remove >/dev/null 2>&1
-    systemctl daemon-reload
-    log_success "Hysteria2 已卸载"
-}
-
-# 卸载 Shadowsocks
-uninstall_shadowsocks() {
-    log_info "正在卸载 Shadowsocks..."
-    systemctl stop $SS_SERVICE 2>/dev/null
-    systemctl disable $SS_SERVICE 2>/dev/null
-    rm -rf $SS_CONFIG_DIR
-    rm -f /etc/systemd/system/$SS_SERVICE
-    rm -f /usr/local/bin/ssserver
-    systemctl daemon-reload
-    log_success "Shadowsocks 已卸载"
-}
-
-# 更新服务菜单
-update_menu() {
-    while true; do
-        clear
-        echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║                      更新服务                                       ║${NC}"
-        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
-        echo ""
-        echo -e " ${GREEN}1.${NC} 更新 Hysteria2"
-        echo -e " ${GREEN}2.${NC} 更新 Shadowsocks"
-        echo -e " ${GREEN}3.${NC} 更新系统内核"
-        echo -e " ${GREEN}4.${NC} 更新本脚本"
-        echo ""
-        echo -e " ${RED}0.${NC} 返回主菜单"
-        echo -e "${CYAN}════════════════════════════════════════════════════════════════════${NC}"
-        echo -n "请选择操作 [0-4]: "
-        read choice
-        
-        case $choice in
-            1) 
-                update_hysteria2
-                ;;
-            2) 
-                update_shadowsocks
-                ;;
-            3) 
-                update_kernel
-                ;;
-            4)
-                update_script
-                ;;
-            0) 
-                break
-                ;;
-            *) 
-                log_error "无效选项"
-                ;;
-        esac
-        
-        [[ $choice != 0 ]] && { echo ""; read -p "按回车键继续..."; }
-    done
-}
-
-# 更新 Hysteria2
-update_hysteria2() {
-    log_info "正在更新 Hysteria2..."
-    if bash <(curl -fsSL https://get.hy2.sh/) >/dev/null 2>&1; then
-        systemctl restart $HY2_SERVICE
-        log_success "Hysteria2 更新完成"
-    else
-        log_error "Hysteria2 更新失败"
-    fi
-}
-
-# 更新 Shadowsocks
-update_shadowsocks() {
-    log_info "正在更新 Shadowsocks..."
-    log_warn "将重新安装 Shadowsocks (配置将保留)"
-    sleep 2
-    
-    # 备份配置
-    if [[ -f $SS_CONFIG_FILE ]]; then
-        cp $SS_CONFIG_FILE /tmp/ss_config_backup.json
-    fi
-    
-    uninstall_shadowsocks
-    install_shadowsocks
-    
-    # 恢复配置
-    if [[ -f /tmp/ss_config_backup.json ]]; then
-        mv /tmp/ss_config_backup.json $SS_CONFIG_FILE
-        systemctl restart $SS_SERVICE
-    fi
-}
-
-# 更新系统内核
-update_kernel() {
-    log_warn "更新系统内核可能需要重启服务器"
-    read -p "是否继续? (y/n): " confirm
-    if [[ $confirm == "y" || $confirm == "Y" ]
+main
