@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.5 (修复 curl|bash 模式下的输入冲突，完美支持一键脚本)
+# 版本：v1.0.6
 # GitHub: https://github.com/everett7623/hy2
 # Seeloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -93,9 +93,9 @@ install_hy2() {
     
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
     
-    # 关键修改：添加 < /dev/tty 强制从终端读取输入
-    read -r -p "请输入监听端口 [默认 443]: " PORT < /dev/tty
-    [[ -z "$PORT" ]] && PORT="443"
+    # 修改默认端口为 18888
+    read -r -p "请输入监听端口 [默认 18888]: " PORT < /dev/tty
+    [[ -z "$PORT" ]] && PORT="18888"
     
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD < /dev/tty
     if [[ -z "$PASSWORD" ]]; then
@@ -222,7 +222,7 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "Hysteria2 Management Script (v1.0.5)"
+        echo -e "Hysteria2 Management Script (v1.0.6)"
         echo -e "项目地址：https://github.com/everett7623/hy2"
         echo -e "作者：Jensfrank"
         echo -e "Seeloc博客: https://seedloc.com"
@@ -238,7 +238,6 @@ main_menu() {
         echo -e " 0. 退出"
         echo -e "------------------------------------------------"
         
-        # 关键修改：添加 < /dev/tty，强制从终端读取输入，而不是从 curl 的管道中读取
         read -r -p "请输入选项: " choice < /dev/tty
 
         case $choice in
