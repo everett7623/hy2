@@ -4,9 +4,9 @@
 # 作者：Jensfrank
 # 版本：v1.0
 # GitHub: https://github.com/everett7623/hy2
-# 博客: https://seedloc.com
-# VPS博客：https://vpsknow.com
-# 论坛: https://nodeloc.com
+# Seeloc博客: https://seedloc.com
+# VPSknow网站：https://vpsknow.com
+# Nodeloc论坛: https://nodeloc.com
 #====================================================================================
 
 # 颜色定义
