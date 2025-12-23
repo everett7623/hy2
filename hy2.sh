@@ -166,7 +166,7 @@ show_config() {
 
     echo -e "\n${SKYBLUE}================ 配置信息 =================${PLAIN}"
     echo -e "${GREEN}🚀 分享链接:${PLAIN} $SHARE_LINK"
-    echo -e "${GREEN}⚔️ Clash Meta:${PLAIN} { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
+    echo -e "${GREEN}⚔️ Clash Meta:${PLAIN}  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${GREEN}🌊 Surge:${PLAIN} ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}===========================================${PLAIN}"
     echo -e "注意：如果IP显示为内网IP，请在客户端中手动替换为公网IP。"
