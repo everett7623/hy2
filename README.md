@@ -34,8 +34,8 @@
 
 适用于大多数网络环境，速度快，抗封锁能力强。
 
-```bash
 # 快速安装/管理
+```bash
 curl -sSL (https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh) | sudo bash
 
 ```
@@ -47,8 +47,8 @@ curl -sSL (https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh) | sudo
 
 建议在 **IPv6** 或 **双栈** 网络环境下使用。脚本内置 IPv4 环境风险提示，防止 IP 被封。
 
-```bash
 # 安装 Shadowsocks-Rust
+```bash
 curl -sSL (https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh) | sudo bash
 
 ```
