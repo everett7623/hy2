@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v1.0.1 (UI Optimized & Full Client Support)
+# 版本：v1.0.2 (Format Aligned with Hy2 v1.1.1 & Added QX Support)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -182,7 +182,7 @@ EOF
     show_config
 }
 
-# --- 显示配置 (v1.0.1 优化版) ---
+# --- 显示配置 (完全对齐 Hy2 v1.1.1 风格) ---
 show_config() {
     if [ ! -f "$SS_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
@@ -246,12 +246,22 @@ show_config() {
     echo -e "  - { name: '${NODE_NAME}', type: ss, server: '${SHOW_IP}', port: ${PORT}, cipher: ${METHOD}, password: '${PASSWORD}', udp: true }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 5. Surge / Loon
-    echo -e "${GREEN} Surge / Loon / Surfboard 配置:${PLAIN}"
+    # 5. Surge (Surge SS格式)
+    echo -e "${GREEN} Surge / Surfboard 配置:${PLAIN}"
     echo -e "  ${NODE_NAME} = ss, ${SHOW_IP}, ${PORT}, encrypt-method=${METHOD}, password=${PASSWORD}, udp-relay=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 6. Sing-box
+    # 6. Loon (Loon SS格式：使用 Shadowsocks 关键字，密码带引号)
+    echo -e "${GREEN} Loon 配置:${PLAIN}"
+    echo -e "  ${NODE_NAME} = Shadowsocks, ${SHOW_IP}, ${PORT}, ${METHOD}, \"${PASSWORD}\", udp=true"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 7. Quantumult X (特有优势)
+    echo -e "${GREEN} Quantumult X 配置:${PLAIN}"
+    echo -e "  shadowsocks=${SHOW_IP}:${PORT}, method=${METHOD}, password=${PASSWORD}, fast-open=false, udp-relay=true, tag=${NODE_NAME}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 8. Sing-box
     echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
     echo -e "  { \"type\": \"shadowsocks\", \"tag\": \"${NODE_NAME}\", \"server\": \"${SHOW_IP}\", \"server_port\": ${PORT}, \"method\": \"${METHOD}\", \"password\": \"${PASSWORD}\" }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -310,7 +320,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN} Shadowsocks-Rust Management Script v1.0.1${PLAIN}"
+        echo -e "${GREEN} Shadowsocks-Rust Management Script v1.0.2${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
