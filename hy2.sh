@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.8 (UI Style Optimized & Loon Support)
+# 版本：v1.0.9 (Order Optimized based on User Feedback)
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -158,7 +158,7 @@ EOF
     show_config
 }
 
-# --- 显示配置 (样式大幅优化) ---
+# --- 显示配置 (已按照您的要求重新排序) ---
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
@@ -169,7 +169,7 @@ show_config() {
     # 读取配置
     PORT=$(grep "listen:" "$HY_CONFIG" | awk -F: '{print $NF}' | tr -d ' ')
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
-    SNI="amd.com" # 脚本中固定的 SNI
+    SNI="amd.com"
     
     # 获取 IP
     HOST_IP=$(curl -s4m8 https://ip.gs)
@@ -186,6 +186,7 @@ show_config() {
     QR_API="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${ENCODED_LINK}"
 
     echo -e ""
+    # 1. 基础配置详情
     echo -e "${GREEN}Hysteria2 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${HOST_IP}${PLAIN}"
@@ -194,26 +195,32 @@ show_config() {
     echo -e "  ${BOLD}伪装 SNI${PLAIN}: ${YELLOW}${SNI}${PLAIN}"
     echo -e "  ${BOLD}自签证书${PLAIN}: ${RED}Insecure / Skip Cert Verify = True${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    
-    echo -e "${GREEN} Loon 配置:${PLAIN}"
-    echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    
-    echo -e "${GREEN} Clash Meta 配置:${PLAIN}"
-    echo -e "  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    
-    echo -e "${GREEN} Surge 配置:${PLAIN}"
-    echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    
+
+    # 2. 分享链接
     echo -e "${GREEN} 分享链接 (V2rayN / NekoBox / Shadowrocket):${PLAIN}"
     echo -e "  ${SHARE_LINK}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
+    # 3. 二维码链接
     echo -e "${GREEN} 二维码链接:${PLAIN}"
     echo -e "  ${QR_API}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    
+    # 4. Clash Meta 配置
+    echo -e "${GREEN} Clash Meta 配置:${PLAIN}"
+    echo -e "  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    
+    # 5. Surge 配置
+    echo -e "${GREEN} Surge 配置:${PLAIN}"
+    echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 6. Loon 配置
+    echo -e "${GREEN} Loon 配置:${PLAIN}"
+    echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    
     echo ""
     read -r -p "按回车键返回主菜单..." temp
 }
@@ -267,7 +274,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v1.0.8${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v1.0.9${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
