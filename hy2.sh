@@ -235,17 +235,24 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "Hysteria2 Management Script (v1.0.7 Optimized)"
-        echo -e "项目地址：https://github.com/everett7623/hy2"
-        echo -e "作者：Jensfrank"
-        echo -e "------------------------------------------------"
+        echo -e "${SKYBLUE}========================================${PLAIN}"
+        echo -e "${GREEN}   Hysteria2 Management Script v1.0.7${PLAIN}"
+        echo -e "${SKYBLUE}========================================${PLAIN}"
+        echo -e "项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
+        echo -e "作者: ${YELLOW}Jensfrank${PLAIN}"
+        echo -e "更新日期: ${YELLOW}2026-1-5${PLAIN}"
+        echo -e "${SKYBLUE}----------------------------------------${PLAIN}"
+        echo -e "Seedloc博客: https://seedloc.com"
+        echo -e "VPSknow网站: https://vpsknow.com"
+        echo -e "Nodeloc论坛: https://nodeloc.com"
+        echo -e "${SKYBLUE}========================================${PLAIN}"
         echo -e "状态: $STATUS"
-        echo -e "------------------------------------------------"
+        echo -e "${SKYBLUE}----------------------------------------${PLAIN}"
         echo -e " 1. 安装 Hysteria2"
         echo -e " 2. 管理 Hysteria2"
         echo -e " 3. 卸载 Hysteria2"
         echo -e " 0. 退出"
-        echo -e "------------------------------------------------"
+        echo -e "${SKYBLUE}========================================${PLAIN}"
         
         read -r -p "请输入选项: " choice
 
