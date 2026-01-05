@@ -1,4 +1,3 @@
-```markdown
 # 🚀 Hysteria2 Management Script | Hysteria2 一键管理脚本
 
 > **功能闭环、兼容广泛、交互友好、稳定可靠**
@@ -98,5 +97,3 @@ curl -sSL [https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh](https:/
 ---
 
 **如果觉得脚本好用，请点击右上角的 ⭐️ Star 支持一下！**
-
-```
