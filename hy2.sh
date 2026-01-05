@@ -1,17 +1,26 @@
 #!/bin/bash
 #====================================================================================
 # 项目：Hysteria2 Management Script
-# 作者：Jensfrank
-# 版本：v1.0.6
+# 作者：Jensfrank (Optimized for One-Key Install)
+# 版本：v1.0.7
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2025-12-22
+# 更新日期: 2026-1-5
 #====================================================================================
 
-# --- 自动修复 Windows 换行符 ---
-if grep -q $'\r' "$0"; then
+# --- 【核心优化】修复交互输入问题 ---
+# 如果脚本是通过管道(curl|bash)运行的，强制将输入重定向回 TTY
+# 这样就可以完美支持 bash <(curl ...) 写法，且无需修改后续的 read 命令
+if [ ! -t 0 ]; then
+    if [ -c /dev/tty ]; then
+        exec < /dev/tty
+    fi
+fi
+
+# --- 自动修复 Windows 换行符 (仅在下载为本地文件时生效) ---
+if [ -f "$0" ] && grep -q $'\r' "$0"; then
     sed -i 's/\r$//' "$0"
     exec "$0" "$@"
 fi
@@ -32,7 +41,7 @@ SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
 # --- 基础检查 ---
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}错误: 请使用 root 权限运行此脚本 (sudo bash hy2.sh)${PLAIN}"
+        echo -e "${RED}错误: 请使用 root 权限运行此脚本 (sudo bash ...)${PLAIN}"
         exit 1
     fi
 }
@@ -52,6 +61,7 @@ check_sys() {
 }
 
 install_dependencies() {
+    echo -e "${YELLOW}正在更新源并安装依赖...${PLAIN}"
     if [ "${RELEASE}" == "centos" ]; then
         yum update -y >/dev/null 2>&1
         yum install -y curl wget openssl jq >/dev/null 2>&1
@@ -63,15 +73,16 @@ install_dependencies() {
 
 # --- 安装 Hysteria 2 ---
 install_hy2() {
-    echo -e "${YELLOW}正在安装依赖...${PLAIN}"
     install_dependencies
     
-    echo -e "${YELLOW}正在下载 Hysteria2 核心...${PLAIN}"
+    echo -e "${YELLOW}正在获取 Hysteria2 最新版本信息...${PLAIN}"
     LAST_VERSION=$(curl -Ls "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [[ -z "$LAST_VERSION" ]]; then
-        echo -e "${RED}无法获取版本，请检查网络。${PLAIN}"
+        echo -e "${RED}无法获取版本，请检查网络连接。${PLAIN}"
         exit 1
     fi
+    
+    echo -e "${GREEN}检测到最新版本: ${LAST_VERSION}${PLAIN}"
     
     ARCH=$(uname -m)
     case $ARCH in
@@ -80,7 +91,12 @@ install_hy2() {
         *) echo -e "${RED}不支持的架构: $ARCH${PLAIN}"; exit 1 ;;
     esac
 
-    wget -O "$HY_BIN" "$DOWNLOAD_URL"
+    echo -e "${YELLOW}正在下载核心文件...${PLAIN}"
+    wget -q --show-progress -O "$HY_BIN" "$DOWNLOAD_URL"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}下载失败，请检查网络。${PLAIN}"
+        exit 1
+    fi
     chmod +x "$HY_BIN"
     
     mkdir -p /etc/hysteria
@@ -93,11 +109,11 @@ install_hy2() {
     
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
     
-    # 修改默认端口为 18888
-    read -r -p "请输入监听端口 [默认 18888]: " PORT < /dev/tty
+    # 注意：这里不需要再加 < /dev/tty 了，因为开头已经全局修复了
+    read -r -p "请输入监听端口 [默认 18888]: " PORT
     [[ -z "$PORT" ]] && PORT="18888"
     
-    read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD < /dev/tty
+    read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
     if [[ -z "$PASSWORD" ]]; then
         PASSWORD=$(openssl rand -base64 12)
     fi
@@ -141,7 +157,6 @@ EOF
     systemctl start hysteria-server
     
     echo -e "${GREEN}安装完成！${PLAIN}"
-    read -r -p "按回车键查看配置..." temp < /dev/tty
     show_config
 }
 
@@ -149,7 +164,7 @@ EOF
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
-        read -r -p "按回车返回..." temp < /dev/tty
+        read -r -p "按回车返回..." temp
         return
     fi
 
@@ -157,9 +172,8 @@ show_config() {
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
     SNI="amd.com"
     
-    # 获取本机 IP
-    HOST_IP=$(hostname -I | awk '{print $1}')
-    if [[ -z "$HOST_IP" ]]; then HOST_IP="YOUR_IP"; fi
+    HOST_IP=$(curl -s4m8 https://ip.gs)
+    if [[ -z "$HOST_IP" ]]; then HOST_IP=$(hostname -I | awk '{print $1}'); fi
     
     NODE_NAME="🌟Hysteria2-$(date +%m%d)"
     SHARE_LINK="hysteria2://${PASSWORD}@${HOST_IP}:${PORT}/?insecure=1&sni=${SNI}#${NODE_NAME}"
@@ -169,9 +183,8 @@ show_config() {
     echo -e "${GREEN}⚔️ Clash Meta:${PLAIN}  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${GREEN}🌊 Surge:${PLAIN} ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}===========================================${PLAIN}"
-    echo -e "注意：如果IP显示为内网IP，请在客户端中手动替换为公网IP。"
     echo ""
-    read -r -p "按回车键返回主菜单..." temp < /dev/tty
+    read -r -p "按回车键返回主菜单..." temp
 }
 
 # --- 管理功能 ---
@@ -183,12 +196,12 @@ manage_hy2() {
     echo -e "3. 停止服务"
     echo -e "4. 查看日志"
     echo -e "0. 返回"
-    read -r -p "请选择: " opt < /dev/tty
+    read -r -p "请选择: " opt
     case $opt in
         1) show_config ;;
         2) systemctl restart hysteria-server && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
         3) systemctl stop hysteria-server && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
-        4) journalctl -u hysteria-server -n 20 --no-pager; read -r -p "按回车继续..." temp < /dev/tty ;;
+        4) journalctl -u hysteria-server -n 20 --no-pager; read -r -p "按回车继续..." temp ;;
         0) return ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
@@ -196,7 +209,7 @@ manage_hy2() {
 
 # --- 卸载 ---
 uninstall_hy2() {
-    read -r -p "确定卸载? [y/N]: " confirm < /dev/tty
+    read -r -p "确定卸载? [y/N]: " confirm
     if [[ "$confirm" =~ ^[yY]$ ]]; then
         systemctl stop hysteria-server
         systemctl disable hysteria-server
@@ -222,13 +235,9 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "Hysteria2 Management Script (v1.0.6)"
+        echo -e "Hysteria2 Management Script (v1.0.7 Optimized)"
         echo -e "项目地址：https://github.com/everett7623/hy2"
         echo -e "作者：Jensfrank"
-        echo -e "Seedloc博客: https://seedloc.com"
-        echo -e "VPSknow网站：https://vpsknow.com"
-        echo -e "Nodeloc论坛: https://nodeloc.com"
-        echo -e "更新日期: 2025-12-22"
         echo -e "------------------------------------------------"
         echo -e "状态: $STATUS"
         echo -e "------------------------------------------------"
@@ -238,7 +247,7 @@ main_menu() {
         echo -e " 0. 退出"
         echo -e "------------------------------------------------"
         
-        read -r -p "请输入选项: " choice < /dev/tty
+        read -r -p "请输入选项: " choice
 
         case $choice in
             1) install_hy2 ;;
