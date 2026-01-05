@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.1.0 (Added Sing-box Support & Client Hints)
+# 版本：v1.1.1 (Fix Loon/Surge format diff based on Screenshot)
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -158,7 +158,7 @@ EOF
     show_config
 }
 
-# --- 显示配置 (v1.1.0 全面兼容版) ---
+# --- 显示配置 (v1.1.1 严格匹配截图格式) ---
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
@@ -209,14 +209,14 @@ show_config() {
     echo -e "  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     
-    # 5. Surge / Surfboard
+    # 5. Surge / Surfboard (严格匹配截图格式：password=...)
     echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
     echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 6. Loon
+    # 6. Loon (严格匹配截图格式：Hysteria2, IP, Port, "PW", udp=true...)
     echo -e "${GREEN} Loon 配置:${PLAIN}"
-    echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
+    echo -e "  ${NODE_NAME} = Hysteria2, ${HOST_IP}, ${PORT}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # 7. Sing-box
@@ -278,7 +278,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v1.1.0${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v1.1.1${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
