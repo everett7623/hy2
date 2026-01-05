@@ -4,7 +4,7 @@
 # 作者：Jensfrank
 # 版本：v1.0.6
 # GitHub: https://github.com/everett7623/hy2
-# Seeloc博客: https://seedloc.com
+# Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
 # 更新日期: 2025-12-22
@@ -225,7 +225,7 @@ main_menu() {
         echo -e "Hysteria2 Management Script (v1.0.6)"
         echo -e "项目地址：https://github.com/everett7623/hy2"
         echo -e "作者：Jensfrank"
-        echo -e "Seeloc博客: https://seedloc.com"
+        echo -e "Seedloc博客: https://seedloc.com"
         echo -e "VPSknow网站：https://vpsknow.com"
         echo -e "Nodeloc论坛: https://nodeloc.com"
         echo -e "更新日期: 2025-12-22"
