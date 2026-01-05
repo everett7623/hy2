@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.9 (Order Optimized based on User Feedback)
+# 版本：v1.1.0 (Added Sing-box Support & Client Hints)
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -158,7 +158,7 @@ EOF
     show_config
 }
 
-# --- 显示配置 (已按照您的要求重新排序) ---
+# --- 显示配置 (v1.1.0 全面兼容版) ---
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
@@ -180,13 +180,11 @@ show_config() {
     
     # 构造链接
     SHARE_LINK="hysteria2://${PASSWORD}@${HOST_IP}:${PORT}/?insecure=1&sni=${SNI}#${NODE_NAME}"
-
-    # URL编码分享链接用于二维码 API
     ENCODED_LINK=$(echo -n "$SHARE_LINK" | jq -sRr @uri)
     QR_API="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${ENCODED_LINK}"
 
     echo -e ""
-    # 1. 基础配置详情
+    # 1. 基础配置
     echo -e "${GREEN}Hysteria2 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${HOST_IP}${PLAIN}"
@@ -196,31 +194,37 @@ show_config() {
     echo -e "  ${BOLD}自签证书${PLAIN}: ${RED}Insecure / Skip Cert Verify = True${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 2. 分享链接
+    # 2. 通用分享链接
     echo -e "${GREEN} 分享链接 (V2rayN / NekoBox / Shadowrocket):${PLAIN}"
     echo -e "  ${SHARE_LINK}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 3. 二维码链接
+    # 3. 二维码
     echo -e "${GREEN} 二维码链接:${PLAIN}"
     echo -e "  ${QR_API}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     
-    # 4. Clash Meta 配置
-    echo -e "${GREEN} Clash Meta 配置:${PLAIN}"
+    # 4. Clash Meta / Stash
+    echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
     echo -e "  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     
-    # 5. Surge 配置
-    echo -e "${GREEN} Surge 配置:${PLAIN}"
+    # 5. Surge / Surfboard
+    echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
     echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 6. Loon 配置
+    # 6. Loon
     echo -e "${GREEN} Loon 配置:${PLAIN}"
     echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 7. Sing-box
+    echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
+    echo -e "  { \"type\": \"hysteria2\", \"tag\": \"${NODE_NAME}\", \"server\": \"${HOST_IP}\", \"server_port\": ${PORT}, \"password\": \"${PASSWORD}\", \"tls\": { \"enabled\": true, \"server_name\": \"${SNI}\", \"insecure\": true } }"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     
+    echo -e "${YELLOW}提示: Quantumult X 暂不支持 Hy2 协议。${PLAIN}"
     echo ""
     read -r -p "按回车键返回主菜单..." temp
 }
@@ -229,7 +233,7 @@ show_config() {
 manage_hy2() {
     clear
     echo -e "\n${SKYBLUE}--- 管理 Hysteria2 ---${PLAIN}"
-    echo -e "1. 查看配置 (含 Loon/Clash/Surge)"
+    echo -e "1. 查看配置 (全客户端兼容)"
     echo -e "2. 重启服务"
     echo -e "3. 停止服务"
     echo -e "4. 查看日志"
@@ -274,7 +278,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v1.0.9${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v1.1.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
