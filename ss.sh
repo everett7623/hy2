@@ -2,16 +2,23 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v1.0.0
+# 版本：v1.0.1 (UI Optimized & Full Client Support)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
-# Seeloc博客: https://seedloc.com
+# Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2025-12-22
+# 更新日期: 2026-1-5
 #====================================================================================
 
+# --- 【核心优化】修复交互输入问题 ---
+if [ ! -t 0 ]; then
+    if [ -c /dev/tty ]; then
+        exec < /dev/tty
+    fi
+fi
+
 # --- 自动修复 Windows 换行符 ---
-if grep -q $'\r' "$0"; then
+if [ -f "$0" ] && grep -q $'\r' "$0"; then
     sed -i 's/\r$//' "$0"
     exec "$0" "$@"
 fi
@@ -22,6 +29,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 SKYBLUE='\033[0;36m'
 PLAIN='\033[0m'
+BOLD='\033[1m'
 
 # --- 变量定义 ---
 SS_BIN="/usr/local/bin/ssserver"
@@ -31,7 +39,7 @@ SERVICE_FILE="/etc/systemd/system/shadowsocks-server.service"
 # --- 基础检查 ---
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}错误: 请使用 root 权限运行此脚本 (sudo bash ss.sh)${PLAIN}"
+        echo -e "${RED}错误: 请使用 root 权限运行此脚本 (sudo bash ...)${PLAIN}"
         exit 1
     fi
 }
@@ -53,7 +61,6 @@ check_sys() {
 # --- IPv6 环境检测 (核心安全检查) ---
 check_ipv6_env() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
-    # 检测是否存在全局 IPv6 地址
     HAS_IPV6=$(ip -6 addr show scope global)
     
     if [[ -n "$HAS_IPV6" ]]; then
@@ -65,7 +72,7 @@ check_ipv6_env() {
         echo -e "${YELLOW}强烈建议仅在 双栈(IPv4+IPv6) 或 纯IPv6 的 VPS 上使用此脚本。${PLAIN}"
         echo -e "${RED}==========================================================${PLAIN}"
         
-        read -r -p "是否强制继续安装？(风险自负) [y/N]: " force < /dev/tty
+        read -r -p "是否强制继续安装？(风险自负) [y/N]: " force
         if [[ ! "$force" =~ ^[yY]$ ]]; then
             echo "已取消安装。"
             exit 1
@@ -75,7 +82,7 @@ check_ipv6_env() {
 }
 
 install_dependencies() {
-    echo -e "${YELLOW}正在安装依赖...${PLAIN}"
+    echo -e "${YELLOW}正在更新源并安装依赖...${PLAIN}"
     if [ "${RELEASE}" == "centos" ]; then
         yum update -y >/dev/null 2>&1
         yum install -y curl wget jq tar xz >/dev/null 2>&1
@@ -97,8 +104,9 @@ install_ss() {
         exit 1
     fi
     
+    echo -e "${GREEN}检测到最新版本: ${LAST_VERSION}${PLAIN}"
+
     ARCH=$(uname -m)
-    # 构建下载文件名
     case $ARCH in
         x86_64)  FILE_ARCH="x86_64-unknown-linux-gnu" ;;
         aarch64) FILE_ARCH="aarch64-unknown-linux-gnu" ;;
@@ -107,8 +115,8 @@ install_ss() {
     
     DOWNLOAD_URL="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${LAST_VERSION}/shadowsocks-${LAST_VERSION}.${FILE_ARCH}.tar.xz"
     
-    echo -e "${YELLOW}正在下载: $DOWNLOAD_URL${PLAIN}"
-    wget -O ss-rust.tar.xz "$DOWNLOAD_URL"
+    echo -e "${YELLOW}正在下载核心文件...${PLAIN}"
+    wget -q --show-progress -O ss-rust.tar.xz "$DOWNLOAD_URL"
     
     if [ $? -ne 0 ]; then
         echo -e "${RED}下载失败。${PLAIN}"
@@ -119,17 +127,17 @@ install_ss() {
     tar -xf ss-rust.tar.xz
     chmod +x ssserver
     mv ssserver /usr/local/bin/
-    rm -f ss-rust.tar.xz sslocal ssmanager ssurl # 清理不用的文件
+    rm -f ss-rust.tar.xz sslocal ssmanager ssurl
     
     mkdir -p /etc/shadowsocks-rust
 
     echo -e "\n${SKYBLUE}--- 配置 Shadowsocks ---${PLAIN}"
     
     # 默认端口设为 28888 (与 Hy2 区分)
-    read -r -p "请输入端口 [默认 28888]: " PORT < /dev/tty
+    read -r -p "请输入端口 [默认 28888]: " PORT
     [[ -z "$PORT" ]] && PORT="28888"
     
-    read -r -p "请设置密码 [留空自动生成]: " PASSWORD < /dev/tty
+    read -r -p "请设置密码 [留空自动生成]: " PASSWORD
     if [[ -z "$PASSWORD" ]]; then
         PASSWORD=$(openssl rand -base64 16)
     fi
@@ -137,7 +145,7 @@ install_ss() {
     # 加密方式默认 aes-256-gcm (最稳妥)
     METHOD="aes-256-gcm"
 
-    # 生成配置文件 (监听 :: 表示同时监听 v4 和 v6)
+    # 生成配置文件
     cat > "$SS_CONFIG" <<EOF
 {
     "server": "::",
@@ -149,7 +157,6 @@ install_ss() {
 }
 EOF
 
-    # 配置 Systemd
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Shadowsocks-Rust Server
@@ -172,76 +179,103 @@ EOF
     systemctl start shadowsocks-server
     
     echo -e "${GREEN}Shadowsocks-Rust 安装并启动成功！${PLAIN}"
-    read -r -p "按回车键查看配置..." temp < /dev/tty
     show_config
 }
 
-# --- 显示配置 ---
+# --- 显示配置 (v1.0.1 优化版) ---
 show_config() {
     if [ ! -f "$SS_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
-        read -r -p "按回车返回..." temp < /dev/tty
+        read -r -p "按回车返回..." temp
         return
     fi
 
-    # 解析 JSON (简单解析，不依赖复杂 jq 语法以防万一)
+    # 解析 JSON
     PORT=$(grep '"server_port"' "$SS_CONFIG" | awk -F: '{print $2}' | tr -d ' ,')
     PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}')
     METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}')
     
-    # 获取本机 IP (优先显示 IPv6，因为这是 SS 的推荐环境)
+    # 获取本机 IP
     IPV6=$(ip -6 addr show scope global | grep inet6 | head -n 1 | awk '{print $2}' | cut -d/ -f1)
-    IPV4=$(hostname -I | awk '{print $1}')
+    IPV4=$(curl -s4m8 https://ip.gs)
+    if [[ -z "$IPV4" ]]; then IPV4=$(hostname -I | awk '{print $1}'); fi
     
+    # 优先显示 IPv6 (SS 推荐环境)
     if [[ -n "$IPV6" ]]; then
-        HOST_IP="[$IPV6]" # IPv6 需要加括号
+        HOST_IP="[$IPV6]"
         SHOW_IP="$IPV6"
+        IP_TYPE="IPv6 (推荐)"
     else
         HOST_IP="$IPV4"
         SHOW_IP="$IPV4"
+        IP_TYPE="IPv4"
     fi
     
-    NODE_NAME="🌟SS-Rust-$(date +%m%d)"
+    NODE_NAME="SS-Rust-$(date +%m%d)"
     
-    # 生成 SIP002 链接 ss://base64(method:password)@ip:port#name
+    # SIP002 链接
     CREDENTIALS=$(echo -n "${METHOD}:${PASSWORD}" | base64 -w 0)
     SS_LINK="ss://${CREDENTIALS}@${HOST_IP}:${PORT}#${NODE_NAME}"
 
-    echo -e "\n${SKYBLUE}================ 配置信息 =================${PLAIN}"
-    echo -e "服务器 IP: ${GREEN}${SHOW_IP}${PLAIN}"
-    echo -e "端口: ${GREEN}${PORT}${PLAIN}"
-    echo -e "密码: ${GREEN}${PASSWORD}${PLAIN}"
-    echo -e "加密: ${GREEN}${METHOD}${PLAIN}"
-    echo -e "-------------------------------------------"
-    echo -e "${GREEN}🚀 SS 分享链接 (SIP002):${PLAIN}"
-    echo -e "$SS_LINK"
+    # 二维码链接
+    ENCODED_LINK=$(echo -n "$SS_LINK" | jq -sRr @uri)
+    QR_API="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${ENCODED_LINK}"
+
     echo -e ""
-    echo -e "${GREEN}⚔️ Clash Meta 配置:${PLAIN}"
-    echo -e "- { name: '${NODE_NAME}', type: ss, server: '${SHOW_IP}', port: ${PORT}, cipher: ${METHOD}, password: '${PASSWORD}', udp: true }"
-    echo -e ""
-    echo -e "${GREEN}🌊 Surge 配置:${PLAIN}"
-    echo -e "${NODE_NAME} = ss, ${SHOW_IP}, ${PORT}, encrypt-method=${METHOD}, password=${PASSWORD}, udp-relay=true"
-    echo -e "${SKYBLUE}===========================================${PLAIN}"
-    echo -e "注意：如果您的客户端不支持 IPv6，请手动将链接中的 IP 替换为 IPv4 地址。"
+    # 1. 基础配置
+    echo -e "${GREEN}Shadowsocks 配置详情${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    echo -e "  ${BOLD}服务器IP${PLAIN}: ${YELLOW}${SHOW_IP} (${IP_TYPE})${PLAIN}"
+    echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${PORT}${PLAIN}"
+    echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
+    echo -e "  ${BOLD}加密方式${PLAIN}: ${YELLOW}${METHOD}${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 2. 分享链接
+    echo -e "${GREEN} 分享链接 (SIP002 标准):${PLAIN}"
+    echo -e "  ${SS_LINK}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 3. 二维码
+    echo -e "${GREEN} 二维码链接:${PLAIN}"
+    echo -e "  ${QR_API}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 4. Clash Meta
+    echo -e "${GREEN} Clash Meta / Stash 配置:${PLAIN}"
+    echo -e "  - { name: '${NODE_NAME}', type: ss, server: '${SHOW_IP}', port: ${PORT}, cipher: ${METHOD}, password: '${PASSWORD}', udp: true }"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 5. Surge / Loon
+    echo -e "${GREEN} Surge / Loon / Surfboard 配置:${PLAIN}"
+    echo -e "  ${NODE_NAME} = ss, ${SHOW_IP}, ${PORT}, encrypt-method=${METHOD}, password=${PASSWORD}, udp-relay=true"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # 6. Sing-box
+    echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
+    echo -e "  { \"type\": \"shadowsocks\", \"tag\": \"${NODE_NAME}\", \"server\": \"${SHOW_IP}\", \"server_port\": ${PORT}, \"method\": \"${METHOD}\", \"password\": \"${PASSWORD}\" }"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${YELLOW}注意: 如果客户端不支持 IPv6，请手动将链接中的 IP 替换为 IPv4 地址。${PLAIN}"
     echo ""
-    read -r -p "按回车键返回主菜单..." temp < /dev/tty
+    read -r -p "按回车键返回主菜单..." temp
 }
 
 # --- 管理功能 ---
 manage_ss() {
     clear
     echo -e "\n${SKYBLUE}--- 管理 Shadowsocks ---${PLAIN}"
-    echo -e "1. 查看配置"
+    echo -e "1. 查看配置 (全客户端兼容)"
     echo -e "2. 重启服务"
     echo -e "3. 停止服务"
     echo -e "4. 查看日志"
     echo -e "0. 返回"
-    read -r -p "请选择: " opt < /dev/tty
+    read -r -p "请选择: " opt
     case $opt in
         1) show_config ;;
         2) systemctl restart shadowsocks-server && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
         3) systemctl stop shadowsocks-server && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
-        4) journalctl -u shadowsocks-server -n 20 --no-pager; read -r -p "按回车继续..." temp < /dev/tty ;;
+        4) journalctl -u shadowsocks-server -n 20 --no-pager; read -r -p "按回车继续..." temp ;;
         0) return ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
@@ -249,7 +283,7 @@ manage_ss() {
 
 # --- 卸载 ---
 uninstall_ss() {
-    read -r -p "确定卸载? [y/N]: " confirm < /dev/tty
+    read -r -p "确定卸载? [y/N]: " confirm
     if [[ "$confirm" =~ ^[yY]$ ]]; then
         systemctl stop shadowsocks-server
         systemctl disable shadowsocks-server
@@ -275,20 +309,26 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "Shadowsocks-Rust Management Script (v1.0.0)"
-        echo -e "项目地址：https://github.com/shadowsocks/shadowsocks-rust"
-        echo -e "作者：Jensfrank"
-        echo -e "建议环境：IPv6 / 双栈 (纯 IPv4 慎用)"
-        echo -e "------------------------------------------------"
-        echo -e "状态: $STATUS"
-        echo -e "------------------------------------------------"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e "${GREEN} Shadowsocks-Rust Management Script v1.0.1${PLAIN}"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
+        echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
+        echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
+        echo -e " Seedloc博客 : https://seedloc.com"
+        echo -e " VPSknow网站 : https://vpsknow.com"
+        echo -e " Nodeloc论坛 : https://nodeloc.com"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e " 当前状态: $STATUS"
+        echo -e " 推荐环境: ${YELLOW}IPv6 / 双栈${PLAIN} (纯IPv4慎用)"
+        echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 安装 Shadowsocks-Rust"
-        echo -e " 2. 管理 Shadowsocks-Rust"
+        echo -e " 2. 管理 Shadowsocks-Rust (查看配置)"
         echo -e " 3. 卸载 Shadowsocks-Rust"
         echo -e " 0. 退出"
-        echo -e "------------------------------------------------"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
         
-        read -r -p "请输入选项: " choice < /dev/tty
+        read -r -p "请输入选项: " choice
 
         case $choice in
             1) install_ss ;;
