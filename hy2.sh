@@ -1,8 +1,8 @@
 #!/bin/bash
 #====================================================================================
 # 项目：Hysteria2 Management Script
-# 作者：Jensfrank (Optimized for One-Key Install)
-# 版本：v1.0.7
+# 作者：Jensfrank
+# 版本：v1.0.8 (UI Style Optimized & Loon Support)
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -11,15 +11,13 @@
 #====================================================================================
 
 # --- 【核心优化】修复交互输入问题 ---
-# 如果脚本是通过管道(curl|bash)运行的，强制将输入重定向回 TTY
-# 这样就可以完美支持 bash <(curl ...) 写法，且无需修改后续的 read 命令
 if [ ! -t 0 ]; then
     if [ -c /dev/tty ]; then
         exec < /dev/tty
     fi
 fi
 
-# --- 自动修复 Windows 换行符 (仅在下载为本地文件时生效) ---
+# --- 自动修复 Windows 换行符 ---
 if [ -f "$0" ] && grep -q $'\r' "$0"; then
     sed -i 's/\r$//' "$0"
     exec "$0" "$@"
@@ -31,6 +29,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 SKYBLUE='\033[0;36m'
 PLAIN='\033[0m'
+BOLD='\033[1m'
 
 # --- 变量定义 ---
 HY_BIN="/usr/local/bin/hysteria"
@@ -109,7 +108,6 @@ install_hy2() {
     
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
     
-    # 注意：这里不需要再加 < /dev/tty 了，因为开头已经全局修复了
     read -r -p "请输入监听端口 [默认 18888]: " PORT
     [[ -z "$PORT" ]] && PORT="18888"
     
@@ -160,7 +158,7 @@ EOF
     show_config
 }
 
-# --- 显示配置 ---
+# --- 显示配置 (样式大幅优化) ---
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
@@ -168,21 +166,54 @@ show_config() {
         return
     fi
 
+    # 读取配置
     PORT=$(grep "listen:" "$HY_CONFIG" | awk -F: '{print $NF}' | tr -d ' ')
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
-    SNI="amd.com"
+    SNI="amd.com" # 脚本中固定的 SNI
     
+    # 获取 IP
     HOST_IP=$(curl -s4m8 https://ip.gs)
     if [[ -z "$HOST_IP" ]]; then HOST_IP=$(hostname -I | awk '{print $1}'); fi
     
-    NODE_NAME="🌟Hysteria2-$(date +%m%d)"
+    # 节点命名
+    NODE_NAME="HY2-$(date +%m%d)"
+    
+    # 构造链接
     SHARE_LINK="hysteria2://${PASSWORD}@${HOST_IP}:${PORT}/?insecure=1&sni=${SNI}#${NODE_NAME}"
 
-    echo -e "\n${SKYBLUE}================ 配置信息 =================${PLAIN}"
-    echo -e "${GREEN}🚀 分享链接:${PLAIN} $SHARE_LINK"
-    echo -e "${GREEN}⚔️ Clash Meta:${PLAIN}  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
-    echo -e "${GREEN}🌊 Surge:${PLAIN} ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
-    echo -e "${SKYBLUE}===========================================${PLAIN}"
+    # URL编码分享链接用于二维码 API
+    ENCODED_LINK=$(echo -n "$SHARE_LINK" | jq -sRr @uri)
+    QR_API="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${ENCODED_LINK}"
+
+    echo -e ""
+    echo -e "${GREEN}Hysteria2 配置详情${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${HOST_IP}${PLAIN}"
+    echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${PORT}${PLAIN}"
+    echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
+    echo -e "  ${BOLD}伪装 SNI${PLAIN}: ${YELLOW}${SNI}${PLAIN}"
+    echo -e "  ${BOLD}自签证书${PLAIN}: ${RED}Insecure / Skip Cert Verify = True${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    
+    echo -e "${GREEN} Loon 配置:${PLAIN}"
+    echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    
+    echo -e "${GREEN} Clash Meta 配置:${PLAIN}"
+    echo -e "  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    
+    echo -e "${GREEN} Surge 配置:${PLAIN}"
+    echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    
+    echo -e "${GREEN} 分享链接 (V2rayN / NekoBox / Shadowrocket):${PLAIN}"
+    echo -e "  ${SHARE_LINK}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN} 二维码链接:${PLAIN}"
+    echo -e "  ${QR_API}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo ""
     read -r -p "按回车键返回主菜单..." temp
 }
@@ -191,7 +222,7 @@ show_config() {
 manage_hy2() {
     clear
     echo -e "\n${SKYBLUE}--- 管理 Hysteria2 ---${PLAIN}"
-    echo -e "1. 查看配置"
+    echo -e "1. 查看配置 (含 Loon/Clash/Surge)"
     echo -e "2. 重启服务"
     echo -e "3. 停止服务"
     echo -e "4. 查看日志"
@@ -235,24 +266,23 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        echo -e "${SKYBLUE}========================================${PLAIN}"
-        echo -e "${GREEN}   Hysteria2 Management Script v1.0.7${PLAIN}"
-        echo -e "${SKYBLUE}========================================${PLAIN}"
-        echo -e "项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
-        echo -e "作者: ${YELLOW}Jensfrank${PLAIN}"
-        echo -e "更新日期: ${YELLOW}2026-1-5${PLAIN}"
-        echo -e "${SKYBLUE}----------------------------------------${PLAIN}"
-        echo -e "Seedloc博客: https://seedloc.com"
-        echo -e "VPSknow网站: https://vpsknow.com"
-        echo -e "Nodeloc论坛: https://nodeloc.com"
-        echo -e "${SKYBLUE}========================================${PLAIN}"
-        echo -e "状态: $STATUS"
-        echo -e "${SKYBLUE}----------------------------------------${PLAIN}"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v1.0.8${PLAIN}"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
+        echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
+        echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
+        echo -e " Seedloc博客 : https://seedloc.com"
+        echo -e " VPSknow网站 : https://vpsknow.com"
+        echo -e " Nodeloc论坛 : https://nodeloc.com"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e " 当前状态: $STATUS"
+        echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 安装 Hysteria2"
-        echo -e " 2. 管理 Hysteria2"
+        echo -e " 2. 管理 Hysteria2 (查看配置)"
         echo -e " 3. 卸载 Hysteria2"
         echo -e " 0. 退出"
-        echo -e "${SKYBLUE}========================================${PLAIN}"
+        echo -e "${SKYBLUE}===============================================${PLAIN}"
         
         read -r -p "请输入选项: " choice
 
