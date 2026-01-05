@@ -75,7 +75,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 
 ## 📸 运行截图
 
-![ScreenShot_2026-01-05_161441_728.png](https://img.y8o.de/i/2026/01/05/695b72e8e30fc.png)
+![ScreenShot_2026-01-05_170403_814.png](https://img.y8o.de/i/2026/01/05/695b7e84c1d45.png)
 
 ---
 
