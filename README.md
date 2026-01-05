@@ -36,7 +36,7 @@
 
 # 快速安装/管理
 ```bash
-curl -sSL (https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh) | sudo bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
 
 ```
 
@@ -49,7 +49,7 @@ curl -sSL (https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh) | sudo
 
 # 安装 Shadowsocks-Rust
 ```bash
-curl -sSL (https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh) | sudo bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 
 ```
 
