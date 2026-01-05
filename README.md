@@ -82,7 +82,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 ## 🔗 关于作者 & 友情链接
 
 * **Author**: Jensfrank
-* **Blog**: [Seeloc 博客](https://seedloc.com) - 分享技术与生活
+* **Blog**: [Seedloc 博客](https://seedloc.com) - 分享技术与生活
 * **Website**: [VPSknow](https://vpsknow.com) - VPS 测评与推荐
 * **Forum**: [Nodeloc 论坛](https://nodeloc.com) - 主机爱好者社区
 
