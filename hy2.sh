@@ -206,7 +206,7 @@ show_config() {
     
     # 4. Clash Meta / Stash
     echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
-    echo -e "  - { name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
+    echo -e "  - {name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     
     # 5. Surge / Surfboard (严格匹配截图格式：password=...)
