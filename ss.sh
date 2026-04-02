@@ -243,7 +243,7 @@ show_config() {
 
     # 4. Clash Meta
     echo -e "${GREEN} Clash Meta / Stash 配置:${PLAIN}"
-    echo -e "  - { name: '${NODE_NAME}', type: ss, server: '${SHOW_IP}', port: ${PORT}, cipher: ${METHOD}, password: '${PASSWORD}', udp: true }"
+    echo -e "  - {name: '${NODE_NAME}', type: ss, server: '${SHOW_IP}', port: ${PORT}, cipher: ${METHOD}, password: '${PASSWORD}', udp: true }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # 5. Surge (Surge SS格式)
