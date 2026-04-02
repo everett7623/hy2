@@ -3,7 +3,7 @@
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
 # 版本：v1.0.2 (Format Aligned with Hy2 v1.1.1 & Added QX Support)
-# GitHub: https://github.com/shadowsocks/shadowsocks-rust
+# GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
