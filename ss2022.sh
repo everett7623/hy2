@@ -252,10 +252,10 @@ install_dependencies() {
         *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl tar xz-utils >/dev/null 2>&1 ;;
     esac
     
-    # 增加防呆检测：如果底层包管理器拉取失败，直接中断并提示，避免后续报错
+    # 防呆检测：如果依赖装完还是没有 tar，立刻退出，不要往下继续走
     if ! command -v tar >/dev/null 2>&1; then
         echo -e "${RED}致命错误: 系统缺少 tar 解压工具且自动安装失败。${PLAIN}"
-        echo -e "${YELLOW}请手动执行安装命令 (例如: dnf install -y tar xz) 后重试。${PLAIN}"
+        echo -e "${YELLOW}请手动执行安装命令 (例如: dnf install -y tar xz 或 yum install -y tar xz) 后重试。${PLAIN}"
         exit 1
     fi
 }
