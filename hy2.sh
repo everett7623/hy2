@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.1.1 (Fix Loon/Surge format diff based on Screenshot)
+# 版本：v1.2.0 (Add Alpine Linux Support)
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-1-5
+# 更新日期: 2026-4-22
 #====================================================================================
 
 # --- 【核心优化】修复交互输入问题 ---
@@ -36,6 +36,101 @@ HY_BIN="/usr/local/bin/hysteria"
 HY_CONFIG="/etc/hysteria/config.yaml"
 HY_CERT_DIR="/etc/hysteria/cert"
 SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
+OPENRC_SERVICE="/etc/init.d/hysteria-server"
+
+# --- 检测 init 系统 ---
+detect_init() {
+    if command -v systemctl >/dev/null 2>&1 && systemctl --version >/dev/null 2>&1; then
+        INIT_SYS="systemd"
+    elif command -v rc-service >/dev/null 2>&1; then
+        INIT_SYS="openrc"
+    else
+        INIT_SYS="none"
+    fi
+}
+
+# --- 服务管理统一封装 ---
+service_start() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl start hysteria-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service hysteria-server start
+    else
+        nohup "$HY_BIN" server -c "$HY_CONFIG" >/var/log/hysteria.log 2>&1 &
+        echo $! > /var/run/hysteria.pid
+    fi
+}
+
+service_stop() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl stop hysteria-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service hysteria-server stop
+    else
+        if [ -f /var/run/hysteria.pid ]; then
+            kill "$(cat /var/run/hysteria.pid)" 2>/dev/null
+            rm -f /var/run/hysteria.pid
+        fi
+    fi
+}
+
+service_restart() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl restart hysteria-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service hysteria-server restart
+    else
+        service_stop
+        sleep 1
+        service_start
+    fi
+}
+
+service_enable() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl daemon-reload
+        systemctl enable hysteria-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-update add hysteria-server default
+    fi
+}
+
+service_disable() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl disable hysteria-server
+        systemctl daemon-reload
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-update del hysteria-server default 2>/dev/null
+    fi
+}
+
+service_is_active() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl is-active --quiet hysteria-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service hysteria-server status 2>/dev/null | grep -q "started"
+    else
+        [ -f /var/run/hysteria.pid ] && kill -0 "$(cat /var/run/hysteria.pid)" 2>/dev/null
+    fi
+}
+
+service_logs() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        journalctl -u hysteria-server -n 20 --no-pager
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        if [ -f /var/log/hysteria.log ]; then
+            tail -n 20 /var/log/hysteria.log
+        else
+            echo -e "${YELLOW}日志文件不存在: /var/log/hysteria.log${PLAIN}"
+        fi
+    else
+        if [ -f /var/log/hysteria.log ]; then
+            tail -n 20 /var/log/hysteria.log
+        else
+            echo -e "${YELLOW}暂无日志${PLAIN}"
+        fi
+    fi
+}
 
 # --- 基础检查 ---
 check_root() {
@@ -46,22 +141,29 @@ check_root() {
 }
 
 check_sys() {
-    if [ -f /etc/redhat-release ]; then
+    if [ -f /etc/alpine-release ]; then
+        RELEASE="alpine"
+    elif [ -f /etc/redhat-release ]; then
         RELEASE="centos"
-    elif cat /etc/issue | grep -q -E -i "debian"; then
+    elif cat /etc/issue 2>/dev/null | grep -q -E -i "debian"; then
         RELEASE="debian"
-    elif cat /etc/issue | grep -q -E -i "ubuntu"; then
+    elif cat /etc/issue 2>/dev/null | grep -q -E -i "ubuntu"; then
         RELEASE="ubuntu"
-    elif cat /etc/issue | grep -q -E -i "centos|red hat|redhat"; then
+    elif cat /etc/issue 2>/dev/null | grep -q -E -i "centos|red hat|redhat"; then
         RELEASE="centos"
     else
-        echo -e "${RED}未检测到支持的系统版本${PLAIN}"
+        RELEASE="unknown"
+        echo -e "${YELLOW}警告: 未检测到已知系统版本，将尝试通用安装${PLAIN}"
     fi
 }
 
+# --- 安装依赖（兼容各发行版）---
 install_dependencies() {
     echo -e "${YELLOW}正在更新源并安装依赖...${PLAIN}"
-    if [ "${RELEASE}" == "centos" ]; then
+    if [ "$RELEASE" = "alpine" ]; then
+        apk update >/dev/null 2>&1
+        apk add --no-cache curl wget openssl jq >/dev/null 2>&1
+    elif [ "$RELEASE" = "centos" ]; then
         yum update -y >/dev/null 2>&1
         yum install -y curl wget openssl jq >/dev/null 2>&1
     else
@@ -70,19 +172,59 @@ install_dependencies() {
     fi
 }
 
+# --- 注册 OpenRC 服务 ---
+setup_openrc_service() {
+    cat > "$OPENRC_SERVICE" <<EOF
+#!/sbin/openrc-run
+
+name="hysteria-server"
+description="Hysteria 2 Server"
+command="$HY_BIN"
+command_args="server -c $HY_CONFIG"
+command_background=true
+pidfile="/var/run/hysteria.pid"
+output_log="/var/log/hysteria.log"
+error_log="/var/log/hysteria.log"
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+    chmod +x "$OPENRC_SERVICE"
+}
+
+# --- 注册 systemd 服务 ---
+setup_systemd_service() {
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=Hysteria 2 Server
+After=network.target
+[Service]
+Type=simple
+User=root
+ExecStart=$HY_BIN server -c $HY_CONFIG
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=1048576
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
 # --- 安装 Hysteria 2 ---
 install_hy2() {
     install_dependencies
-    
+
     echo -e "${YELLOW}正在获取 Hysteria2 最新版本信息...${PLAIN}"
     LAST_VERSION=$(curl -Ls "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [[ -z "$LAST_VERSION" ]]; then
         echo -e "${RED}无法获取版本，请检查网络连接。${PLAIN}"
         exit 1
     fi
-    
+
     echo -e "${GREEN}检测到最新版本: ${LAST_VERSION}${PLAIN}"
-    
+
     ARCH=$(uname -m)
     case $ARCH in
         x86_64)  DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION}/hysteria-linux-amd64" ;;
@@ -97,7 +239,7 @@ install_hy2() {
         exit 1
     fi
     chmod +x "$HY_BIN"
-    
+
     mkdir -p /etc/hysteria
     mkdir -p "$HY_CERT_DIR"
 
@@ -105,12 +247,12 @@ install_hy2() {
     openssl req -x509 -newkey rsa:4096 -days 3650 -nodes -sha256 \
         -keyout "$HY_CERT_DIR/server.key" -out "$HY_CERT_DIR/server.crt" \
         -subj "/C=US/ST=California/L=San Francisco/O=Hysteria/OU=IT/CN=bing.com" >/dev/null 2>&1
-    
+
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
-    
+
     read -r -p "请输入监听端口 [默认 18888]: " PORT
     [[ -z "$PORT" ]] && PORT="18888"
-    
+
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
     if [[ -z "$PASSWORD" ]]; then
         PASSWORD=$(openssl rand -base64 12)
@@ -135,30 +277,21 @@ masquerade:
     rewriteHost: true
 EOF
 
-    cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=Hysteria 2 Server
-After=network.target
-[Service]
-Type=simple
-User=root
-ExecStart=$HY_BIN server -c $HY_CONFIG
-Restart=on-failure
-RestartSec=5s
-LimitNOFILE=1048576
-[Install]
-WantedBy=multi-user.target
-EOF
+    # 根据 init 系统注册服务
+    if [ "$INIT_SYS" = "systemd" ]; then
+        setup_systemd_service
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        setup_openrc_service
+    fi
 
-    systemctl daemon-reload
-    systemctl enable hysteria-server
-    systemctl start hysteria-server
-    
+    service_enable
+    service_start
+
     echo -e "${GREEN}安装完成！${PLAIN}"
     show_config
 }
 
-# --- 显示配置 (v1.1.1 严格匹配截图格式) ---
+# --- 显示配置 ---
 show_config() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件。${PLAIN}"
@@ -166,25 +299,20 @@ show_config() {
         return
     fi
 
-    # 读取配置
     PORT=$(grep "listen:" "$HY_CONFIG" | awk -F: '{print $NF}' | tr -d ' ')
     PASSWORD=$(grep "password:" "$HY_CONFIG" | awk -F'"' '{print $2}')
     SNI="amd.com"
-    
-    # 获取 IP
+
     HOST_IP=$(curl -s4m8 https://ip.gs)
     if [[ -z "$HOST_IP" ]]; then HOST_IP=$(hostname -I | awk '{print $1}'); fi
-    
-    # 节点命名
+
     NODE_NAME="HY2-$(date +%m%d)"
-    
-    # 构造链接
+
     SHARE_LINK="hysteria2://${PASSWORD}@${HOST_IP}:${PORT}/?insecure=1&sni=${SNI}#${NODE_NAME}"
     ENCODED_LINK=$(echo -n "$SHARE_LINK" | jq -sRr @uri)
     QR_API="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${ENCODED_LINK}"
 
     echo -e ""
-    # 1. 基础配置
     echo -e "${GREEN}Hysteria2 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${HOST_IP}${PLAIN}"
@@ -194,36 +322,30 @@ show_config() {
     echo -e "  ${BOLD}自签证书${PLAIN}: ${RED}Insecure / Skip Cert Verify = True${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 2. 通用分享链接
     echo -e "${GREEN} 分享链接 (V2rayN / NekoBox / Shadowrocket):${PLAIN}"
     echo -e "  ${SHARE_LINK}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 3. 二维码
     echo -e "${GREEN} 二维码链接:${PLAIN}"
     echo -e "  ${QR_API}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    
-    # 4. Clash Meta / Stash
+
     echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
     echo -e "  - {name: '${NODE_NAME}', type: hysteria2, server: ${HOST_IP}, port: ${PORT}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    
-    # 5. Surge / Surfboard (严格匹配截图格式：password=...)
+
     echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
     echo -e "  ${NODE_NAME} = hysteria2, ${HOST_IP}, ${PORT}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 6. Loon (严格匹配截图格式：Hysteria2, IP, Port, "PW", udp=true...)
     echo -e "${GREEN} Loon 配置:${PLAIN}"
     echo -e "  ${NODE_NAME} = Hysteria2, ${HOST_IP}, ${PORT}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 7. Sing-box
     echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
     echo -e "  { \"type\": \"hysteria2\", \"tag\": \"${NODE_NAME}\", \"server\": \"${HOST_IP}\", \"server_port\": ${PORT}, \"password\": \"${PASSWORD}\", \"tls\": { \"enabled\": true, \"server_name\": \"${SNI}\", \"insecure\": true } }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    
+
     echo -e "${YELLOW}提示: Quantumult X 暂不支持 Hy2 协议。${PLAIN}"
     echo ""
     read -r -p "按回车键返回主菜单..." temp
@@ -241,9 +363,9 @@ manage_hy2() {
     read -r -p "请选择: " opt
     case $opt in
         1) show_config ;;
-        2) systemctl restart hysteria-server && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
-        3) systemctl stop hysteria-server && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
-        4) journalctl -u hysteria-server -n 20 --no-pager; read -r -p "按回车继续..." temp ;;
+        2) service_restart && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
+        3) service_stop && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
+        4) service_logs; read -r -p "按回车继续..." temp ;;
         0) return ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
@@ -253,11 +375,10 @@ manage_hy2() {
 uninstall_hy2() {
     read -r -p "确定卸载? [y/N]: " confirm
     if [[ "$confirm" =~ ^[yY]$ ]]; then
-        systemctl stop hysteria-server
-        systemctl disable hysteria-server
-        rm -f "$SERVICE_FILE" "$HY_BIN"
+        service_stop
+        service_disable
+        rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$HY_BIN"
         rm -rf /etc/hysteria
-        systemctl daemon-reload
         echo -e "${GREEN}已卸载。${PLAIN}"
         sleep 1
     fi
@@ -268,7 +389,7 @@ main_menu() {
     while true; do
         clear
         if [ -f "$HY_BIN" ]; then
-            if systemctl is-active --quiet hysteria-server; then
+            if service_is_active; then
                 STATUS="${GREEN}运行中${PLAIN}"
             else
                 STATUS="${RED}已停止${PLAIN}"
@@ -278,7 +399,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v1.1.1${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v1.2.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -294,7 +415,7 @@ main_menu() {
         echo -e " 3. 卸载 Hysteria2"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        
+
         read -r -p "请输入选项: " choice
 
         case $choice in
@@ -310,4 +431,5 @@ main_menu() {
 # --- 脚本入口 ---
 check_root
 check_sys
+detect_init
 main_menu
