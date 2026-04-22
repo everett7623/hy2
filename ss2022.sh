@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.1.1 (Ultimate Linux Compatibility & SS-2022 Fixes)
+# 版本：v2.1.2 (Ultimate Linux Compatibility & Anti-Flashback)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -117,7 +117,6 @@ detect_network() {
     else                               echo -e "  机器类型: ${RED}无法检测，请手动输入${PLAIN}"
     fi
 
-    # SS 特有安全警告
     if [ "$HAS_IPV6" = "0" ]; then
         echo -e "\n${RED}==========================================================${PLAIN}"
         echo -e "${RED}警告：未检测到公网 IPv6 地址！${PLAIN}"
@@ -186,7 +185,7 @@ User=root
 ExecStart=${SS_BIN} -c ${SS_CONFIG}
 Restart=on-failure
 RestartSec=5s
-LimitNOFILE=1048576
+LimitNOFILE=512000
 
 [Install]
 WantedBy=multi-user.target
@@ -217,45 +216,39 @@ EOF
 }
 
 # ============================================================
-# 依赖安装 (深度优化：基于包管理器探测，防翻车)
+# 依赖安装 & 配置生成
 # ============================================================
 
 install_dependencies() {
     echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
+    
+    # 临时放行 SELinux 防止 Rocky/CentOS 端口被拦截 (关键修复)
+    if command -v setenforce >/dev/null 2>&1; then
+        setenforce 0 2>/dev/null
+    fi
+
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -qq >/dev/null 2>&1
-        apt-get install -y -qq curl wget openssl tar xz-utils iproute2 >/dev/null 2>&1
+        apt-get install -y -qq curl wget openssl tar xz-utils >/dev/null 2>&1
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y curl wget openssl tar xz iproute >/dev/null 2>&1
+        dnf install -y curl wget openssl tar xz >/dev/null 2>&1
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y curl wget openssl tar xz iproute >/dev/null 2>&1
+        yum install -y curl wget openssl tar xz >/dev/null 2>&1
     elif command -v pacman >/dev/null 2>&1; then
-        pacman -Sy --noconfirm curl wget openssl tar xz iproute2 >/dev/null 2>&1
+        pacman -Sy --noconfirm curl wget openssl tar xz >/dev/null 2>&1
     elif command -v apk >/dev/null 2>&1; then
         apk update -q >/dev/null 2>&1
-        apk add --no-cache bash curl wget openssl tar xz iproute2 >/dev/null 2>&1
-    else
-        echo -e "${YELLOW}未识别的包管理器，将尝试直接使用系统现有组件。${PLAIN}"
+        apk add --no-cache bash curl wget openssl tar xz >/dev/null 2>&1
     fi
     
-    # 尝试开启 NTP 时间同步（解决 SS-2022 严苛的时间防重放导致连不上的问题）
-    if command -v timedatectl >/dev/null 2>&1; then
-        timedatectl set-ntp true >/dev/null 2>&1
-    fi
-    
-    # 终极防呆检测：确保后续操作绝不报错退出
     local _missing=0
     for pkg in curl wget openssl tar; do
         if ! command -v $pkg >/dev/null 2>&1; then
-            echo -e "${RED}致命错误: 系统中缺少核心组件 [ $pkg ] 且自动安装失败。${PLAIN}"
+            echo -e "${RED}致命错误: 系统中缺少组件 [ $pkg ]${PLAIN}"
             _missing=1
         fi
     done
-
-    if [ "$_missing" -eq 1 ]; then
-        echo -e "${YELLOW}请您手动执行包安装命令 (例如: dnf install -y curl wget openssl tar xz) 后重试脚本。${PLAIN}"
-        exit 1
-    fi
+    [ "$_missing" -eq 1 ] && exit 1
 }
 
 install_ss() {
@@ -264,16 +257,23 @@ install_ss() {
     
     echo -e "${YELLOW}正在获取 Shadowsocks-Rust 最新版本...${PLAIN}"
     LAST_VERSION=$(curl -Ls --max-time 10 "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
-    if [ -z "$LAST_VERSION" ]; then
-        LAST_VERSION=$(curl -Ls --max-time 10 -o /dev/null -w "%{url_effective}" "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" | sed 's|.*/tag/||')
-    fi
-    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && exit 1
+    [ -z "$LAST_VERSION" ] && LAST_VERSION=$(curl -Ls -o /dev/null -w "%{url_effective}" "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" | sed 's|.*/tag/||')
+    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败${PLAIN}" && exit 1
+    
     echo -e "${GREEN}检测到最新版本: ${LAST_VERSION}${PLAIN}"
+
+    # 智能识别 C 库版本 (兼容 Alpine 的 musl 和标准 Linux 的 gnu)
+    local _libc="gnu"
+    if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi 'musl'; then
+        _libc="musl"
+    elif [ -f /etc/alpine-release ]; then
+        _libc="musl"
+    fi
 
     local _arch
     case $(uname -m) in
-        x86_64)        _arch="x86_64-unknown-linux-gnu" ;;
-        aarch64|arm64) _arch="aarch64-unknown-linux-gnu" ;;
+        x86_64)        _arch="x86_64-unknown-linux-${_libc}" ;;
+        aarch64|arm64) _arch="aarch64-unknown-linux-${_libc}" ;;
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
     
@@ -283,9 +283,9 @@ install_ss() {
     rm -f "$SS_BIN"
     
     echo -e "${YELLOW}正在下载核心文件...${PLAIN}"
-    wget -q --show-progress -O /tmp/ss-rust.tar.xz "$_url" || { echo -e "${RED}下载失败，请检查网络节点${PLAIN}"; exit 1; }
+    wget -q --show-progress -O /tmp/ss-rust.tar.xz "$_url" || { echo -e "${RED}下载失败${PLAIN}"; exit 1; }
     
-    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver || { echo -e "${RED}文件解压失败${PLAIN}"; exit 1; }
+    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver || { echo -e "${RED}解压失败${PLAIN}"; exit 1; }
     mv /tmp/ssserver "$SS_BIN"
     chmod +x "$SS_BIN"
     rm -f /tmp/ss-rust.tar.xz
@@ -305,16 +305,12 @@ install_ss() {
         EXT_PORT="$LISTEN_PORT"
     fi
 
-    # SS-2022 强制配置
     METHOD="2022-blake3-aes-256-gcm"
-    echo -e "${YELLOW}协议已默认设置为 ${METHOD} (极强抗封锁)${PLAIN}"
-    echo -e "${YELLOW}系统已为您自动生成 SS-2022 专用的 32 字节 Base64 密钥：${PLAIN}"
-    
-    # 严格的 Base64 密码生成：剥离所有可能引发解析错误的隐藏换行符
+    echo -e "${YELLOW}协议已默认设置为 ${METHOD}${PLAIN}"
     PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
-    echo -e "${GREEN}-> ${PASSWORD}${PLAIN}"
+    echo -e "${GREEN}自动生成 32 字节密钥 -> ${PASSWORD}${PLAIN}"
 
-    # 兼容性核心修复：如果系统没有 IPv6，强制绑定 IPv4 0.0.0.0，避免 ssserver 直接崩溃
+    # 强制兼容 IPv4/IPv6 绑定
     local LISTEN_ADDR="0.0.0.0"
     [ "$HAS_IPV6" = "1" ] && LISTEN_ADDR="::"
     
@@ -329,7 +325,6 @@ install_ss() {
 }
 EOF
 
-    # 保存元数据以便脱离 jq 读取
     echo "$NAT_MODE"    > "$SS_META/nat_mode"
     echo "$EXT_PORT"    > "$SS_META/ext_port"
     echo "$LISTEN_PORT" > "$SS_META/listen_port"
@@ -344,26 +339,21 @@ EOF
     service_enable
     service_start
 
-    # 深度存活检测：不仅看服务状态，直接看端口有没有真正在监听
-    sleep 3
+    sleep 2
     if service_is_active; then
         echo -e "${GREEN}✓ Shadowsocks 2022 启动成功${PLAIN}"
-        if command -v ss >/dev/null 2>&1; then
-            if ! ss -nltp 2>/dev/null | grep -q ":${LISTEN_PORT}"; then
-                echo -e "${RED}⚠ 警告：服务显示运行中，但在系统中未检测到 ${LISTEN_PORT} 端口的监听！${PLAIN}"
-                echo -e "${YELLOW}这通常是因为端口被占用，请稍后检查日志。${PLAIN}"
-            fi
-        fi
     else
-        echo -e "${RED}✗ 启动失败，请查看日志排查原因：${PLAIN}"
+        echo -e "${RED}✗ 启动失败，请查看以下日志排查原因：${PLAIN}"
         service_logs
+        # 【重点修复】增加 read 暂停，防止清屏闪退
+        read -r -p "按回车键返回主菜单..." _tmp 
         return
     fi
     show_config
 }
 
 # ============================================================
-# 纯 Bash URL 编码
+# URL 编码与展示
 # ============================================================
 uri_encode() {
     local _in="$1" _out="" _i=0 _c _hex _byte
@@ -382,9 +372,6 @@ uri_encode() {
     echo "$_out"
 }
 
-# ============================================================
-# 展示配置与节点
-# ============================================================
 read_config_vars() {
     [ ! -f "$SS_CONFIG" ] && return 1
     if [ -d "$SS_META" ]; then
@@ -396,12 +383,9 @@ read_config_vars() {
         PUBLIC_IP=$(cat "$SS_META/public_ip" 2>/dev/null)
         PUBLIC_IPV6=$(cat "$SS_META/public_ipv6" 2>/dev/null)
     fi
-    
-    # 兜底读取
     [[ -z "$EXT_PORT" ]] && EXT_PORT=$(grep '"server_port"' "$SS_CONFIG" | grep -oE '[0-9]+' | head -1)
     [[ -z "$PASSWORD" ]] && PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
     [[ -z "$METHOD" ]] && METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
-    
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
@@ -412,10 +396,7 @@ show_node() {
     local _ip="$1" _port="$2" _tag="$3"
     local _host="$_ip"
     echo "$_ip" | grep -q ':' && _host="[${_ip}]"
-    
     local _node="SS22-${_tag}-$(date +%m%d)"
-    
-    # SIP002 标准： base64(method:password) -- 针对由于 base64 命令不同导致的换行进行彻底剔除
     local _credentials
     _credentials=$(printf "%s:%s" "$METHOD" "$PASSWORD" | base64 | tr -d ' \n\r')
     local _link="ss://${_credentials}@${_host}:${_port}#${_node}"
@@ -423,30 +404,22 @@ show_node() {
     _encoded=$(uri_encode "$_link")
     local _qr="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
 
-    echo -e "${GREEN} 分享链接 (SIP002 标准):${PLAIN}"
-    echo -e "  ${_link}"
+    echo -e "${GREEN} 分享链接 (SIP002 标准):${PLAIN}\n  ${_link}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN} 二维码链接:${PLAIN}"
-    echo -e "  ${_qr}"
+    echo -e "${GREEN} 二维码链接:${PLAIN}\n  ${_qr}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN} Clash Meta / Stash 配置:${PLAIN}"
     echo -e "  - {name: '${_node}', type: ss, server: '${_ip}', port: ${_port}, cipher: ${METHOD}, password: '${PASSWORD}', udp: true }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN} Surge / Surfboard 配置:${PLAIN}"
     echo -e "  ${_node} = ss, ${_ip}, ${_port}, encrypt-method=${METHOD}, password=${PASSWORD}, udp-relay=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN} Loon 配置:${PLAIN}"
     echo -e "  ${_node} = Shadowsocks, ${_ip}, ${_port}, ${METHOD}, \"${PASSWORD}\", udp=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN} Quantumult X 配置:${PLAIN}"
     echo -e "  shadowsocks=${_ip}:${_port}, method=${METHOD}, password=${PASSWORD}, fast-open=false, udp-relay=true, tag=${_node}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
     echo -e "  { \"type\": \"shadowsocks\", \"tag\": \"${_node}\", \"server\": \"${_ip}\", \"server_port\": ${_port}, \"method\": \"${METHOD}\", \"password\": \"${PASSWORD}\" }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -467,31 +440,20 @@ show_config() {
         echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
     echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
-    echo -e "  ${BOLD}加密方式${PLAIN}: ${YELLOW}${METHOD}${PLAIN} ${RED}(Shadowsocks 2022)${PLAIN}"
+    echo -e "  ${BOLD}加密方式${PLAIN}: ${YELLOW}${METHOD}${PLAIN}"
     [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
     
     echo -e "\n${RED}⚠️ 注意：SS-2022 协议对时间误差极其敏感！${PLAIN}"
-    echo -e "${YELLOW}请务必确保您的手机/电脑【本地时间】准确无误。${PLAIN}"
+    echo -e "${YELLOW}请确保您的手机/电脑【本地时间】与世界标准时间完全同步。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 优先展示 IPv6 节点，符合 SS 防火墙抗性推荐
-    if [ -n "$PUBLIC_IPV6" ]; then
-        echo -e "${YELLOW}▼ IPv6 节点配置 (推荐)${PLAIN}"
-        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
-    fi
-
-    if [ -n "$PUBLIC_IP" ]; then
-        echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
-        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
-    fi
+    [ -n "$PUBLIC_IPV6" ] && echo -e "${YELLOW}▼ IPv6 节点配置 (推荐)${PLAIN}" && show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
+    [ -n "$PUBLIC_IP" ]   && echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}" && show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
 
     echo ""
     read -r -p "按回车键返回主菜单..." _tmp
 }
 
-# ============================================================
-# 管理与入口
-# ============================================================
 manage_ss() {
     clear
     echo -e "\n${SKYBLUE}--- 管理 Shadowsocks ---${PLAIN}"
@@ -532,15 +494,11 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN} Shadowsocks-Rust Management Script v2.1.1${PLAIN}"
+        echo -e "${GREEN} Shadowsocks-Rust Management Script v2.1.2${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
-        echo -e " Seedloc博客 : https://seedloc.com"
-        echo -e " VPSknow网站 : https://vpsknow.com"
-        echo -e " Nodeloc论坛 : https://nodeloc.com"
-        echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 当前状态: $STATUS"
         echo -e " 核心协议: ${YELLOW}Shadowsocks 2022${PLAIN} (自动配置 32 字节密钥)"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
