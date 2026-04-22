@@ -74,7 +74,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 
 ## 📸 运行截图
 
+#### 运行Hysteria 2 安装截图
 <img width="1521" height="1405" alt="hy2" src="https://github.com/user-attachments/assets/9ee30ebb-9ce4-4596-823a-2270b1d49d29" />
+
+#### 运行Shadowsocks 安装截图
 <img width="1486" height="1482" alt="ss2022" src="https://github.com/user-attachments/assets/3ea42eb9-d920-473b-bd20-ccc1f43218f4" />
 
 -----
