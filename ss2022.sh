@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.1.0 (Bulletproof Dependency & SS-2022 Optimized)
+# 版本：v2.1.1 (Ultimate Linux Compatibility & SS-2022 Fixes)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -224,18 +224,23 @@ install_dependencies() {
     echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -qq >/dev/null 2>&1
-        apt-get install -y -qq curl wget openssl tar xz-utils >/dev/null 2>&1
+        apt-get install -y -qq curl wget openssl tar xz-utils iproute2 >/dev/null 2>&1
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y curl wget openssl tar xz >/dev/null 2>&1
+        dnf install -y curl wget openssl tar xz iproute >/dev/null 2>&1
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y curl wget openssl tar xz >/dev/null 2>&1
+        yum install -y curl wget openssl tar xz iproute >/dev/null 2>&1
     elif command -v pacman >/dev/null 2>&1; then
-        pacman -Sy --noconfirm curl wget openssl tar xz >/dev/null 2>&1
+        pacman -Sy --noconfirm curl wget openssl tar xz iproute2 >/dev/null 2>&1
     elif command -v apk >/dev/null 2>&1; then
         apk update -q >/dev/null 2>&1
-        apk add --no-cache bash curl wget openssl tar xz >/dev/null 2>&1
+        apk add --no-cache bash curl wget openssl tar xz iproute2 >/dev/null 2>&1
     else
         echo -e "${YELLOW}未识别的包管理器，将尝试直接使用系统现有组件。${PLAIN}"
+    fi
+    
+    # 尝试开启 NTP 时间同步（解决 SS-2022 严苛的时间防重放导致连不上的问题）
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl set-ntp true >/dev/null 2>&1
     fi
     
     # 终极防呆检测：确保后续操作绝不报错退出
@@ -304,10 +309,14 @@ install_ss() {
     METHOD="2022-blake3-aes-256-gcm"
     echo -e "${YELLOW}协议已默认设置为 ${METHOD} (极强抗封锁)${PLAIN}"
     echo -e "${YELLOW}系统已为您自动生成 SS-2022 专用的 32 字节 Base64 密钥：${PLAIN}"
-    PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
+    
+    # 严格的 Base64 密码生成：剥离所有可能引发解析错误的隐藏换行符
+    PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
     echo -e "${GREEN}-> ${PASSWORD}${PLAIN}"
 
-    local LISTEN_ADDR="::"
+    # 兼容性核心修复：如果系统没有 IPv6，强制绑定 IPv4 0.0.0.0，避免 ssserver 直接崩溃
+    local LISTEN_ADDR="0.0.0.0"
+    [ "$HAS_IPV6" = "1" ] && LISTEN_ADDR="::"
     
     cat > "$SS_CONFIG" <<EOF
 {
@@ -335,11 +344,18 @@ EOF
     service_enable
     service_start
 
-    sleep 2
+    # 深度存活检测：不仅看服务状态，直接看端口有没有真正在监听
+    sleep 3
     if service_is_active; then
         echo -e "${GREEN}✓ Shadowsocks 2022 启动成功${PLAIN}"
+        if command -v ss >/dev/null 2>&1; then
+            if ! ss -nltp 2>/dev/null | grep -q ":${LISTEN_PORT}"; then
+                echo -e "${RED}⚠ 警告：服务显示运行中，但在系统中未检测到 ${LISTEN_PORT} 端口的监听！${PLAIN}"
+                echo -e "${YELLOW}这通常是因为端口被占用，请稍后检查日志。${PLAIN}"
+            fi
+        fi
     else
-        echo -e "${RED}✗ 启动失败，请查看日志${PLAIN}"
+        echo -e "${RED}✗ 启动失败，请查看日志排查原因：${PLAIN}"
         service_logs
         return
     fi
@@ -399,9 +415,9 @@ show_node() {
     
     local _node="SS22-${_tag}-$(date +%m%d)"
     
-    # SIP002 标准： base64(method:password)
+    # SIP002 标准： base64(method:password) -- 针对由于 base64 命令不同导致的换行进行彻底剔除
     local _credentials
-    _credentials=$(printf "%s:%s" "$METHOD" "$PASSWORD" | base64 | tr -d '\n')
+    _credentials=$(printf "%s:%s" "$METHOD" "$PASSWORD" | base64 | tr -d ' \n\r')
     local _link="ss://${_credentials}@${_host}:${_port}#${_node}"
     local _encoded
     _encoded=$(uri_encode "$_link")
@@ -453,6 +469,9 @@ show_config() {
     echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
     echo -e "  ${BOLD}加密方式${PLAIN}: ${YELLOW}${METHOD}${PLAIN} ${RED}(Shadowsocks 2022)${PLAIN}"
     [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
+    
+    echo -e "\n${RED}⚠️ 注意：SS-2022 协议对时间误差极其敏感！${PLAIN}"
+    echo -e "${YELLOW}请务必确保您的手机/电脑【本地时间】准确无误。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # 优先展示 IPv6 节点，符合 SS 防火墙抗性推荐
@@ -513,7 +532,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN} Shadowsocks-Rust Management Script v2.1.0${PLAIN}"
+        echo -e "${GREEN} Shadowsocks-Rust Management Script v2.1.1${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
