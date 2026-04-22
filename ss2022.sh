@@ -2,15 +2,15 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.0.0 (Aligned with Hy2 v2.1.3 & Added SS-2022 Support)
+# 版本：v2.1.0 (Bulletproof Dependency & SS-2022 Optimized)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
 # 更新日期: 2026-04-22
 #
-# 支持系统: Debian, Ubuntu, CentOS, Rocky, Alpine, Arch 等
-# 支持环境: 标准 VPS / NAT 机器 / IPv6 单双栈 / 低配系统(无 jq 依赖)
+# 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
+# 支持环境: 标准 VPS / NAT 机器 / IPv6 单双栈 / 极简系统环境
 #====================================================================================
 
 # ============================================================
@@ -20,10 +20,12 @@ if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
         exec bash "$0" "$@"
     else
-        if [ -f /etc/alpine-release ]; then
+        if command -v apk >/dev/null 2>&1; then
             apk add --no-cache bash >/dev/null 2>&1
         elif command -v apt-get >/dev/null 2>&1; then
             apt-get install -y -qq bash >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y bash >/dev/null 2>&1
         elif command -v yum >/dev/null 2>&1; then
             yum install -y bash >/dev/null 2>&1
         fi
@@ -71,30 +73,6 @@ EXT_PORT=""
 
 check_root() {
     [ "$EUID" -ne 0 ] && echo -e "${RED}错误: 请以 root 权限运行${PLAIN}" && exit 1
-}
-
-check_sys() {
-    if [ -f /etc/alpine-release ]; then
-        RELEASE="alpine"
-    elif [ -f /etc/os-release ]; then
-        . /etc/os-release
-        case "$ID" in
-            debian|ubuntu|linuxmint|kali) RELEASE="debian" ;;
-            centos|rhel)                  RELEASE="centos" ;;
-            fedora)                       RELEASE="fedora" ;;
-            rocky|almalinux|ol)           RELEASE="rocky"  ;;
-            arch|manjaro|endeavouros)     RELEASE="arch"   ;;
-            *)
-                case "${ID_LIKE:-}" in
-                    *rhel*|*centos*|*fedora*) RELEASE="rocky"  ;;
-                    *debian*|*ubuntu*)        RELEASE="debian" ;;
-                    *)                        RELEASE="unknown" ;;
-                esac
-                ;;
-        esac
-    else
-        RELEASE="unknown"
-    fi
 }
 
 detect_init() {
@@ -239,23 +217,38 @@ EOF
 }
 
 # ============================================================
-# 安装 & 配置
+# 依赖安装 (深度优化：基于包管理器探测，防翻车)
 # ============================================================
 
 install_dependencies() {
-    echo -e "${YELLOW}正在安装依赖...${PLAIN}"
-    case "$RELEASE" in
-        alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl tar xz >/dev/null 2>&1 ;;
-        centos)       yum  install -y curl wget openssl tar xz >/dev/null 2>&1 ;;
-        fedora|rocky) dnf  install -y curl wget openssl tar xz >/dev/null 2>&1 ;;
-        arch)         pacman -Sy --noconfirm curl wget openssl tar xz >/dev/null 2>&1 ;;
-        *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl tar xz-utils >/dev/null 2>&1 ;;
-    esac
+    echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq >/dev/null 2>&1
+        apt-get install -y -qq curl wget openssl tar xz-utils >/dev/null 2>&1
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y curl wget openssl tar xz >/dev/null 2>&1
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y curl wget openssl tar xz >/dev/null 2>&1
+    elif command -v pacman >/dev/null 2>&1; then
+        pacman -Sy --noconfirm curl wget openssl tar xz >/dev/null 2>&1
+    elif command -v apk >/dev/null 2>&1; then
+        apk update -q >/dev/null 2>&1
+        apk add --no-cache bash curl wget openssl tar xz >/dev/null 2>&1
+    else
+        echo -e "${YELLOW}未识别的包管理器，将尝试直接使用系统现有组件。${PLAIN}"
+    fi
     
-    # 防呆检测：如果依赖装完还是没有 tar，立刻退出，不要往下继续走
-    if ! command -v tar >/dev/null 2>&1; then
-        echo -e "${RED}致命错误: 系统缺少 tar 解压工具且自动安装失败。${PLAIN}"
-        echo -e "${YELLOW}请手动执行安装命令 (例如: dnf install -y tar xz 或 yum install -y tar xz) 后重试。${PLAIN}"
+    # 终极防呆检测：确保后续操作绝不报错退出
+    local _missing=0
+    for pkg in curl wget openssl tar; do
+        if ! command -v $pkg >/dev/null 2>&1; then
+            echo -e "${RED}致命错误: 系统中缺少核心组件 [ $pkg ] 且自动安装失败。${PLAIN}"
+            _missing=1
+        fi
+    done
+
+    if [ "$_missing" -eq 1 ]; then
+        echo -e "${YELLOW}请您手动执行包安装命令 (例如: dnf install -y curl wget openssl tar xz) 后重试脚本。${PLAIN}"
         exit 1
     fi
 }
@@ -285,9 +278,9 @@ install_ss() {
     rm -f "$SS_BIN"
     
     echo -e "${YELLOW}正在下载核心文件...${PLAIN}"
-    wget -q --show-progress -O /tmp/ss-rust.tar.xz "$_url" || { echo -e "${RED}下载失败${PLAIN}"; exit 1; }
+    wget -q --show-progress -O /tmp/ss-rust.tar.xz "$_url" || { echo -e "${RED}下载失败，请检查网络节点${PLAIN}"; exit 1; }
     
-    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver
+    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver || { echo -e "${RED}文件解压失败${PLAIN}"; exit 1; }
     mv /tmp/ssserver "$SS_BIN"
     chmod +x "$SS_BIN"
     rm -f /tmp/ss-rust.tar.xz
@@ -309,8 +302,8 @@ install_ss() {
 
     # SS-2022 强制配置
     METHOD="2022-blake3-aes-256-gcm"
-    echo -e "${YELLOW}协议已默认设置为 ${METHOD} (抗主动探测增强)${PLAIN}"
-    echo -e "${YELLOW}该协议强制要求 32 字节 Base64 编码的密钥，系统已为您自动生成：${PLAIN}"
+    echo -e "${YELLOW}协议已默认设置为 ${METHOD} (极强抗封锁)${PLAIN}"
+    echo -e "${YELLOW}系统已为您自动生成 SS-2022 专用的 32 字节 Base64 密钥：${PLAIN}"
     PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
     echo -e "${GREEN}-> ${PASSWORD}${PLAIN}"
 
@@ -344,7 +337,7 @@ EOF
 
     sleep 2
     if service_is_active; then
-        echo -e "${GREEN}✓ Shadowsocks-Rust 启动成功${PLAIN}"
+        echo -e "${GREEN}✓ Shadowsocks 2022 启动成功${PLAIN}"
     else
         echo -e "${RED}✗ 启动失败，请查看日志${PLAIN}"
         service_logs
@@ -520,7 +513,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN} Shadowsocks-Rust Management Script v2.0.0${PLAIN}"
+        echo -e "${GREEN} Shadowsocks-Rust Management Script v2.1.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -550,6 +543,5 @@ main_menu() {
 }
 
 check_root
-check_sys
 detect_init
 main_menu
