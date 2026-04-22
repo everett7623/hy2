@@ -36,7 +36,6 @@
 
 #### 快速安装/管理 Hysteria 2
 ```bash
-# 快速安装/管理 Hysteria 2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
 ````
 
