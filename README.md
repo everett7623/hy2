@@ -33,7 +33,7 @@
 
 适用于绝大多数网络环境，UDP 协议极速抢占带宽，抗封锁能力强。
 
-# 快速安装/管理 Hysteria 2
+#### 快速安装/管理 Hysteria 2
 ```bash
 # 快速安装/管理 Hysteria 2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
@@ -46,7 +46,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
 
 建议在 **IPv6 单栈** 或 **双栈** 网络环境下使用作为强力备用节点。纯 IPv4 极易被墙，脚本内附强制风险拦截。
 
-# 快速安装/管理 Shadowsocks 
+#### 快速安装/管理 Shadowsocks 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 ```
