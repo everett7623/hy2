@@ -246,10 +246,18 @@ install_dependencies() {
     echo -e "${YELLOW}正在安装依赖...${PLAIN}"
     case "$RELEASE" in
         alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl tar xz >/dev/null 2>&1 ;;
-        centos|rocky) yum install -y curl wget openssl tar xz >/dev/null 2>&1 ;;
+        centos)       yum  install -y curl wget openssl tar xz >/dev/null 2>&1 ;;
+        fedora|rocky) dnf  install -y curl wget openssl tar xz >/dev/null 2>&1 ;;
         arch)         pacman -Sy --noconfirm curl wget openssl tar xz >/dev/null 2>&1 ;;
         *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl tar xz-utils >/dev/null 2>&1 ;;
     esac
+    
+    # 增加防呆检测：如果底层包管理器拉取失败，直接中断并提示，避免后续报错
+    if ! command -v tar >/dev/null 2>&1; then
+        echo -e "${RED}致命错误: 系统缺少 tar 解压工具且自动安装失败。${PLAIN}"
+        echo -e "${YELLOW}请手动执行安装命令 (例如: dnf install -y tar xz) 后重试。${PLAIN}"
+        exit 1
+    fi
 }
 
 install_ss() {
