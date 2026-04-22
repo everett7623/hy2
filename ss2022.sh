@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.1.4 (GLIBC Fix: Forced musl build & Menu Text Aligned)
+# 版本：v3.0.0 (Cipher Selection & Standard Format)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -10,7 +10,7 @@
 # 更新日期: 2026-04-22
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
-# 支持环境: 标准 VPS / NAT 机器 / IPv6 单双栈 / 老旧系统(规避 GLIBC 报错)
+# 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
 #====================================================================================
 
 # ============================================================
@@ -121,7 +121,7 @@ detect_network() {
         echo -e "\n${RED}==========================================================${PLAIN}"
         echo -e "${RED}警告：未检测到公网 IPv6 地址！${PLAIN}"
         echo -e "${RED}Shadowsocks 协议在纯 IPv4 环境下较易被识别并封锁。${PLAIN}"
-        echo -e "${YELLOW}建议在 双栈(IPv4+IPv6) 或 纯IPv6 的 VPS 上使用。${PLAIN}"
+        echo -e "${YELLOW}建议在 双栈(IPv4+IPv6) 或 纯 IPv6 的 VPS 上使用。${PLAIN}"
         echo -e "${RED}==========================================================${PLAIN}"
         read -r -p "是否强制继续安装？(风险自负) [y/N]: " _force
         [[ ! "$_force" =~ ^[yY]$ ]] && echo "已取消。" && exit 1
@@ -129,12 +129,11 @@ detect_network() {
 }
 
 # ============================================================
-# 服务管理 & 防火墙放行
+# 防火墙端口放行 (解决连接超时)
 # ============================================================
-
 open_ports() {
     local _port=$1
-    echo -e "${YELLOW}正在自动放行系统防火墙端口 ${_port}...${PLAIN}"
+    echo -e "${YELLOW}正在自动放行 Linux 系统防火墙端口 ${_port}...${PLAIN}"
     
     if systemctl is-active --quiet firewalld 2>/dev/null || command -v firewall-cmd >/dev/null 2>&1; then
         firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1
@@ -159,44 +158,70 @@ open_ports() {
     fi
 }
 
+# ============================================================
+# 服务管理
+# ============================================================
+
 service_start() {
-    if [ "$INIT_SYS" = "systemd" ]; then systemctl start shadowsocks-server
-    elif [ "$INIT_SYS" = "openrc" ]; then rc-service shadowsocks-server start
-    else nohup "$SS_BIN" -c "$SS_CONFIG" >/var/log/ssserver.log 2>&1 & echo $! > /var/run/ssserver.pid
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl start shadowsocks-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service shadowsocks-server start
+    else
+        nohup "$SS_BIN" -c "$SS_CONFIG" >/var/log/ssserver.log 2>&1 & echo $! > /var/run/ssserver.pid
     fi
 }
 
 service_stop() {
-    if [ "$INIT_SYS" = "systemd" ]; then systemctl stop shadowsocks-server 2>/dev/null
-    elif [ "$INIT_SYS" = "openrc" ]; then rc-service shadowsocks-server stop 2>/dev/null
-    else [ -f /var/run/ssserver.pid ] && kill "$(cat /var/run/ssserver.pid)" 2>/dev/null && rm -f /var/run/ssserver.pid; pkill -f "ssserver" 2>/dev/null
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl stop shadowsocks-server 2>/dev/null
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service shadowsocks-server stop 2>/dev/null
+    else
+        [ -f /var/run/ssserver.pid ] && kill "$(cat /var/run/ssserver.pid)" 2>/dev/null && rm -f /var/run/ssserver.pid
+        pkill -f "ssserver" 2>/dev/null
     fi
 }
 
-service_restart() { service_stop; sleep 1; service_start; }
+service_restart() {
+    service_stop
+    sleep 1
+    service_start
+}
 
 service_enable() {
-    if [ "$INIT_SYS" = "systemd" ]; then systemctl daemon-reload; systemctl enable shadowsocks-server >/dev/null 2>&1
-    elif [ "$INIT_SYS" = "openrc" ]; then rc-update add shadowsocks-server default >/dev/null 2>&1
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl daemon-reload
+        systemctl enable shadowsocks-server >/dev/null 2>&1
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-update add shadowsocks-server default >/dev/null 2>&1
     fi
 }
 
 service_disable() {
-    if [ "$INIT_SYS" = "systemd" ]; then systemctl disable shadowsocks-server 2>/dev/null; systemctl daemon-reload
-    elif [ "$INIT_SYS" = "openrc" ]; then rc-update del shadowsocks-server default 2>/dev/null
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl disable shadowsocks-server 2>/dev/null
+        systemctl daemon-reload
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-update del shadowsocks-server default 2>/dev/null
     fi
 }
 
 service_is_active() {
-    if [ "$INIT_SYS" = "systemd" ]; then systemctl is-active --quiet shadowsocks-server
-    elif [ "$INIT_SYS" = "openrc" ]; then rc-service shadowsocks-server status 2>/dev/null | grep -q "started"
-    else [ -f /var/run/ssserver.pid ] && kill -0 "$(cat /var/run/ssserver.pid)" 2>/dev/null
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl is-active --quiet shadowsocks-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service shadowsocks-server status 2>/dev/null | grep -q "started"
+    else
+        [ -f /var/run/ssserver.pid ] && kill -0 "$(cat /var/run/ssserver.pid)" 2>/dev/null
     fi
 }
 
 service_logs() {
-    if [ "$INIT_SYS" = "systemd" ]; then journalctl -u shadowsocks-server -n 20 --no-pager
-    else tail -n 20 /var/log/ssserver.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
+    if [ "$INIT_SYS" = "systemd" ]; then
+        journalctl -u shadowsocks-server -n 20 --no-pager
+    else
+        tail -n 20 /var/log/ssserver.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
 }
 
@@ -243,7 +268,7 @@ EOF
 }
 
 # ============================================================
-# 依赖安装 & 配置生成
+# 依赖安装 & 强力防坑机制
 # ============================================================
 
 install_dependencies() {
@@ -283,18 +308,27 @@ install_ss() {
     
     echo -e "${YELLOW}正在获取 Shadowsocks-Rust 最新版本...${PLAIN}"
     LAST_VERSION=$(curl -Ls --max-time 10 "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
-    [ -z "$LAST_VERSION" ] && LAST_VERSION=$(curl -Ls -o /dev/null -w "%{url_effective}" "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" | sed 's|.*/tag/||')
-    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败${PLAIN}" && exit 1
+    
+    if [ -z "$LAST_VERSION" ]; then
+        LAST_VERSION=$(curl -Ls -o /dev/null -w "%{url_effective}" "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" | sed 's|.*/tag/||')
+    fi
+    
+    if [ -z "$LAST_VERSION" ]; then
+        echo -e "${RED}获取版本失败，请检查网络${PLAIN}"
+        exit 1
+    fi
     
     echo -e "${GREEN}检测到最新版本: ${LAST_VERSION}${PLAIN}"
 
-    # 【核心修复】：强制使用 musl 静态编译库，彻底解决 CentOS/Rocky 8 等系统 glibc 版本过低报错的问题
+    # 强制全部使用 MUSL 版本，不再区分系统，彻底干掉 GLIBC 报错！
     local _arch
     case $(uname -m) in
         x86_64)        _arch="x86_64-unknown-linux-musl" ;;
         aarch64|arm64) _arch="aarch64-unknown-linux-musl" ;;
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
+    
+    echo -e "${SKYBLUE}>>> 已强制使用 musl 静态编译库，彻底免疫一切 GLIBC 报错！ <<<${PLAIN}"
     
     local _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${LAST_VERSION}/shadowsocks-${LAST_VERSION}.${_arch}.tar.xz"
     
@@ -303,7 +337,6 @@ install_ss() {
     
     echo -e "${YELLOW}正在下载核心文件...${PLAIN}"
     wget -q --show-progress -O /tmp/ss-rust.tar.xz "$_url" || { echo -e "${RED}下载失败${PLAIN}"; exit 1; }
-    
     tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver || { echo -e "${RED}解压失败${PLAIN}"; exit 1; }
     mv /tmp/ssserver "$SS_BIN"
     chmod +x "$SS_BIN"
@@ -311,8 +344,7 @@ install_ss() {
     
     mkdir -p /etc/shadowsocks-rust "$SS_META"
 
-    echo -e "\n${SKYBLUE}--- 配置 Shadowsocks 2022 ---${PLAIN}"
-    
+    echo -e "\n${SKYBLUE}--- 配置 Shadowsocks 协议 ---${PLAIN}"
     if [ "$NAT_MODE" = "1" ]; then
         read -r -p "请输入本机监听端口 [默认 28888]: " LISTEN_PORT
         [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="28888"
@@ -324,13 +356,32 @@ install_ss() {
         EXT_PORT="$LISTEN_PORT"
     fi
 
-    METHOD="2022-blake3-aes-256-gcm"
-    echo -e "${YELLOW}协议已默认设置为 ${METHOD}${PLAIN}"
-    PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
-    echo -e "${GREEN}自动生成 32 字节密钥 -> ${PASSWORD}${PLAIN}"
+    echo -e "\n${YELLOW}请选择要使用的加密协议：${PLAIN}"
+    echo -e " 1. ${GREEN}aes-256-gcm${PLAIN} (经典原版协议，100% 兼容全平台，保证能通，【默认推荐】)"
+    echo -e " 2. ${RED}2022-blake3-aes-256-gcm${PLAIN} (SS-2022 协议，强抗封锁，但要求手机系统时间极其准确)"
+    read -r -p "请输入选项 [1 或 2，默认 1]: " _cipher_opt
+
+    if [ "$_cipher_opt" = "2" ]; then
+        METHOD="2022-blake3-aes-256-gcm"
+        PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
+        echo -e "${YELLOW}已启用 SS-2022，系统已自动生成 32 字节规范密钥 -> ${PASSWORD}${PLAIN}"
+        
+        # 尽力尝试强制时间同步，挽救 SS-2022 超时问题
+        echo -e "${YELLOW}正在尝试同步服务器时间以防连接超时...${PLAIN}"
+        command -v timedatectl >/dev/null 2>&1 && timedatectl set-ntp true >/dev/null 2>&1
+    else
+        METHOD="aes-256-gcm"
+        read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
+        if [[ -z "$PASSWORD" ]]; then
+            PASSWORD=$(openssl rand -base64 16 | tr -d ' \n\r')
+        fi
+        echo -e "${GREEN}已启用经典 aes-256-gcm 协议，保证最高连通率！${PLAIN}"
+    fi
 
     local LISTEN_ADDR="0.0.0.0"
-    [ "$HAS_IPV6" = "1" ] && LISTEN_ADDR="::"
+    if [ "$HAS_IPV6" = "1" ]; then
+        LISTEN_ADDR="::"
+    fi
     
     cat > "$SS_CONFIG" <<EOF
 {
@@ -348,33 +399,43 @@ EOF
     echo "$LISTEN_PORT" > "$SS_META/listen_port"
     echo "$PASSWORD"    > "$SS_META/password"
     echo "$METHOD"      > "$SS_META/method"
-    [ -n "$PUBLIC_IP"   ] && echo "$PUBLIC_IP"   > "$SS_META/public_ip"
-    [ -n "$PUBLIC_IPV6" ] && echo "$PUBLIC_IPV6" > "$SS_META/public_ipv6"
+    
+    if [ -n "$PUBLIC_IP" ]; then
+        echo "$PUBLIC_IP" > "$SS_META/public_ip"
+    fi
+    if [ -n "$PUBLIC_IPV6" ]; then
+        echo "$PUBLIC_IPV6" > "$SS_META/public_ipv6"
+    fi
 
-    # 执行防火墙自动穿透
+    # 放行防火墙端口
     open_ports "$LISTEN_PORT"
 
-    if   [ "$INIT_SYS" = "systemd" ]; then setup_systemd_service
-    elif [ "$INIT_SYS" = "openrc"  ]; then setup_openrc_service
+    if [ "$INIT_SYS" = "systemd" ]; then
+        setup_systemd_service
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        setup_openrc_service
     fi
+    
     service_enable
     service_start
 
     sleep 2
     if service_is_active; then
-        echo -e "${GREEN}✓ Shadowsocks 2022 启动成功${PLAIN}"
+        echo -e "${GREEN}✓ Shadowsocks 服务端启动成功${PLAIN}"
     else
         echo -e "${RED}✗ 启动失败，请查看以下日志排查原因：${PLAIN}"
         service_logs
         read -r -p "按回车键返回主菜单..." _tmp 
         return
     fi
+    
     show_config
 }
 
 # ============================================================
 # URL 编码与展示
 # ============================================================
+
 uri_encode() {
     local _in="$1" _out="" _i=0 _c _hex _byte
     local _len=${#_in}
@@ -393,7 +454,10 @@ uri_encode() {
 }
 
 read_config_vars() {
-    [ ! -f "$SS_CONFIG" ] && return 1
+    if [ ! -f "$SS_CONFIG" ]; then
+        return 1
+    fi
+    
     if [ -d "$SS_META" ]; then
         NAT_MODE=$(cat "$SS_META/nat_mode" 2>/dev/null); NAT_MODE=${NAT_MODE:-0}
         EXT_PORT=$(cat "$SS_META/ext_port" 2>/dev/null)
@@ -403,9 +467,17 @@ read_config_vars() {
         PUBLIC_IP=$(cat "$SS_META/public_ip" 2>/dev/null)
         PUBLIC_IPV6=$(cat "$SS_META/public_ipv6" 2>/dev/null)
     fi
-    [[ -z "$EXT_PORT" ]] && EXT_PORT=$(grep '"server_port"' "$SS_CONFIG" | grep -oE '[0-9]+' | head -1)
-    [[ -z "$PASSWORD" ]] && PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
-    [[ -z "$METHOD" ]] && METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
+    
+    if [[ -z "$EXT_PORT" ]]; then
+        EXT_PORT=$(grep '"server_port"' "$SS_CONFIG" | grep -oE '[0-9]+' | head -1)
+    fi
+    if [[ -z "$PASSWORD" ]]; then
+        PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
+    fi
+    if [[ -z "$METHOD" ]]; then
+        METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
+    fi
+    
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
@@ -415,11 +487,20 @@ read_config_vars() {
 show_node() {
     local _ip="$1" _port="$2" _tag="$3"
     local _host="$_ip"
-    echo "$_ip" | grep -q ':' && _host="[${_ip}]"
-    local _node="SS22-${_tag}-$(date +%m%d)"
+    
+    if echo "$_ip" | grep -q ':'; then
+        _host="[${_ip}]"
+    fi
+    
+    local _node="SS-${_tag}-$(date +%m%d)"
+    if echo "$METHOD" | grep -q "2022"; then
+        _node="SS22-${_tag}-$(date +%m%d)"
+    fi
+    
     local _credentials
     _credentials=$(printf "%s:%s" "$METHOD" "$PASSWORD" | base64 | tr -d ' \n\r')
     local _link="ss://${_credentials}@${_host}:${_port}#${_node}"
+    
     local _encoded
     _encoded=$(uri_encode "$_link")
     local _qr="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
@@ -447,28 +528,50 @@ show_node() {
 
 show_config() {
     read_config_vars
-    [ -z "$EXT_PORT" ] && echo -e "${RED}未找到有效配置${PLAIN}" && read -r -p "按回车返回..." _tmp && return
+    if [ -z "$EXT_PORT" ]; then
+        echo -e "${RED}未找到有效配置${PLAIN}"
+        read -r -p "按回车返回..." _tmp
+        return
+    fi
 
     echo -e "\n${GREEN}Shadowsocks 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    [ -n "$PUBLIC_IP"   ] && echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${PUBLIC_IP}${PLAIN}"
-    [ -n "$PUBLIC_IPV6" ] && echo -e "  ${BOLD}IPv6地址${PLAIN}: ${YELLOW}${PUBLIC_IPV6} (推荐)${PLAIN}"
+    if [ -n "$PUBLIC_IP" ]; then
+        echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${PUBLIC_IP}${PLAIN}"
+    fi
+    if [ -n "$PUBLIC_IPV6" ]; then
+        echo -e "  ${BOLD}IPv6地址${PLAIN}: ${YELLOW}${PUBLIC_IPV6} (推荐)${PLAIN}"
+    fi
+    
     if [ "$NAT_MODE" = "1" ] && [ "$EXT_PORT" != "$LISTEN_PORT" ]; then
         echo -e "  ${BOLD}监听端口${PLAIN}: ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
         echo -e "  ${BOLD}对外端口${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}← 客户端连接此端口${PLAIN}"
     else
         echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
+    
     echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
     echo -e "  ${BOLD}加密方式${PLAIN}: ${YELLOW}${METHOD}${PLAIN}"
-    [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
     
-    echo -e "\n${RED}⚠️ 注意：SS-2022 协议对时间误差极其敏感！${PLAIN}"
-    echo -e "${YELLOW}请确保您的手机/电脑【本地时间】与网络时间完全同步。${PLAIN}"
+    if [ "$NAT_MODE" = "1" ]; then
+        echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
+    fi
+    
+    if echo "$METHOD" | grep -q "2022"; then
+        echo -e "\n${RED}⚠️ 注意：您开启了 SS-2022 协议，对时间误差极其敏感！${PLAIN}"
+        echo -e "${YELLOW}如果配置全对依然连不上（超时），请务必校准您的手机和电脑时间！${PLAIN}"
+    fi
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    [ -n "$PUBLIC_IPV6" ] && echo -e "${YELLOW}▼ IPv6 节点配置 (推荐)${PLAIN}" && show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
-    [ -n "$PUBLIC_IP" ]   && echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}" && show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+    if [ -n "$PUBLIC_IPV6" ]; then
+        echo -e "${YELLOW}▼ IPv6 节点配置 (推荐)${PLAIN}"
+        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
+    fi
+
+    if [ -n "$PUBLIC_IP" ]; then
+        echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
+        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+    fi
 
     echo ""
     read -r -p "按回车键返回主菜单..." _tmp
@@ -476,7 +579,7 @@ show_config() {
 
 manage_ss() {
     clear
-    echo -e "\n${SKYBLUE}--- 管理 Shadowsocks 2022 ---${PLAIN}"
+    echo -e "\n${SKYBLUE}--- 管理 Shadowsocks ---${PLAIN}"
     echo -e "1. 查看配置 (全客户端兼容)"
     echo -e "2. 重启服务"
     echo -e "3. 停止服务"
@@ -495,36 +598,40 @@ manage_ss() {
 
 uninstall_ss() {
     read -r -p "确定卸载? [y/N]: " confirm
-    [[ ! "$confirm" =~ ^[yY]$ ]] && return
-    service_stop
-    service_disable
-    rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$SS_BIN"
-    rm -rf /etc/shadowsocks-rust
-    echo -e "${GREEN}已卸载完成${PLAIN}"
-    sleep 1
+    if [[ "$confirm" =~ ^[yY]$ ]]; then
+        service_stop
+        service_disable
+        rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$SS_BIN"
+        rm -rf /etc/shadowsocks-rust
+        echo -e "${GREEN}已卸载完成${PLAIN}"
+        sleep 1
+    fi
 }
 
 main_menu() {
     while true; do
         clear
         if [ -f "$SS_BIN" ]; then
-            service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
+            if service_is_active; then
+                STATUS="${GREEN}运行中${PLAIN}"
+            else
+                STATUS="${RED}已停止${PLAIN}"
+            fi
         else
             STATUS="${RED}未安装${PLAIN}"
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN} Shadowsocks-Rust Management Script v2.1.4${PLAIN}"
+        echo -e "${GREEN} Shadowsocks-Rust Management Script v3.0.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 当前状态: $STATUS"
-        echo -e " 核心协议: ${YELLOW}Shadowsocks 2022${PLAIN} (自动配置 32 字节密钥)"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
-        echo -e " 1. 安装 Shadowsocks 2022"
-        echo -e " 2. 管理 Shadowsocks 2022 (查看配置)"
-        echo -e " 3. 卸载 Shadowsocks 2022"
+        echo -e " 1. 安装 Shadowsocks 服务"
+        echo -e " 2. 管理 Shadowsocks 配置 (查看节点)"
+        echo -e " 3. 卸载 Shadowsocks 服务"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         
