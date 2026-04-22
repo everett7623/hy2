@@ -524,9 +524,9 @@ main_menu() {
         echo -e " 当前状态: $STATUS"
         echo -e " 核心协议: ${YELLOW}Shadowsocks 2022${PLAIN} (自动配置 32 字节密钥)"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
-        echo -e " 1. 安装 Shadowsocks-Rust"
-        echo -e " 2. 管理 Shadowsocks-Rust (查看配置)"
-        echo -e " 3. 卸载 Shadowsocks-Rust"
+        echo -e " 1. 安装 Shadowsocks 2022"
+        echo -e " 2. 管理 Shadowsocks 2022 (查看配置)"
+        echo -e " 3. 卸载 Shadowsocks 2022"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         
