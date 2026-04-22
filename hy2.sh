@@ -26,6 +26,28 @@
 #   低配 VPS（无需 jq，低内存友好）
 #====================================================================================
 
+# ============================================================
+# 自举：确保以 bash 运行（兼容 curl | sh 方式执行）
+# Alpine 等系统默认 sh 为 busybox，不支持 bash 语法
+# ============================================================
+if [ -z "$BASH_VERSION" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    else
+        # bash 还没装：先用 sh 兼容方式装 bash，再重启
+        if [ -f /etc/alpine-release ]; then
+            apk add --no-cache bash >/dev/null 2>&1
+        elif command -v apt-get >/dev/null 2>&1; then
+            apt-get install -y -qq bash >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y bash >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y bash >/dev/null 2>&1
+        fi
+        exec bash "$0" "$@"
+    fi
+fi
+
 # --- 修复交互输入 ---
 if [ ! -t 0 ]; then
     [ -c /dev/tty ] && exec < /dev/tty
@@ -34,7 +56,7 @@ fi
 # --- 修复 Windows 换行符 ---
 if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
     sed -i 's/\r$//' "$0"
-    exec "$0" "$@"
+    exec bash "$0" "$@"
 fi
 
 # --- 颜色 ---
@@ -62,6 +84,7 @@ PUBLIC_IP=""
 PUBLIC_IPV6=""
 LISTEN_PORT=""
 EXT_PORT=""
+SNI="amd.com"
 
 # ============================================================
 # 环境检测
@@ -198,7 +221,6 @@ EOF
 }
 
 setup_openrc_service() {
-    # 用两段 heredoc 避免变量展开问题
     cat > "$OPENRC_SERVICE" <<'SVCHEAD'
 #!/sbin/openrc-run
 
@@ -228,6 +250,7 @@ EOF
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
 
+    local _ip _url
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
         _ip=$(curl -s4 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
         if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -242,8 +265,9 @@ detect_network() {
         fi
     done
 
-    # NAT 判断：接口上找不到公网 IPv4
+    # NAT 判断：本机接口 IP 列表里找不到公网 IPv4
     if [ "$HAS_IPV4" = "1" ]; then
+        local _local_ips
         _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
             | grep -v '^127\.' | grep -v '^169\.254\.')
         echo "$_local_ips" | grep -q "^${PUBLIC_IP}$" || NAT_MODE=1
@@ -251,26 +275,26 @@ detect_network() {
 
     [ "$HAS_IPV4" = "0" ] && [ "$HAS_IPV6" = "1" ] && IPV6_ONLY=1
 
-    if   [ "$NAT_MODE"   = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
-    elif [ "$IPV6_ONLY"  = "1" ]; then echo -e "  机器类型: ${YELLOW}纯 IPv6${PLAIN}（IPv6: ${PUBLIC_IPV6}）"
-    elif [ "$HAS_IPV6"   = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv4: ${PUBLIC_IP} | IPv6: ${PUBLIC_IPV6}）"
-    elif [ "$HAS_IPV4"   = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
-    else                                echo -e "  机器类型: ${RED}无法检测，请手动输入${PLAIN}"
+    if   [ "$NAT_MODE"  = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
+    elif [ "$IPV6_ONLY" = "1" ]; then echo -e "  机器类型: ${YELLOW}纯 IPv6${PLAIN}（IPv6: ${PUBLIC_IPV6}）"
+    elif [ "$HAS_IPV6"  = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv4: ${PUBLIC_IP} | IPv6: ${PUBLIC_IPV6}）"
+    elif [ "$HAS_IPV4"  = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
+    else                               echo -e "  机器类型: ${RED}无法检测，请手动输入${PLAIN}"
     fi
 }
 
 # ============================================================
-# 依赖安装（全系统，不装 jq）
+# 依赖安装（不装 jq，bash 已在自举阶段装好）
 # ============================================================
 
 install_dependencies() {
     echo -e "${YELLOW}正在安装依赖...${PLAIN}"
     case "$RELEASE" in
-        alpine)  apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl >/dev/null 2>&1 ;;
-        centos)  yum  install -y curl wget openssl >/dev/null 2>&1 ;;
-        fedora|rocky) dnf install -y curl wget openssl >/dev/null 2>&1 ;;
-        arch)    pacman -Sy --noconfirm curl wget openssl >/dev/null 2>&1 ;;
-        *)       apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl >/dev/null 2>&1 ;;
+        alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl >/dev/null 2>&1 ;;
+        centos)       yum  install -y curl wget openssl >/dev/null 2>&1 ;;
+        fedora|rocky) dnf  install -y curl wget openssl >/dev/null 2>&1 ;;
+        arch)         pacman -Sy --noconfirm curl wget openssl >/dev/null 2>&1 ;;
+        *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl >/dev/null 2>&1 ;;
     esac
 }
 
@@ -293,25 +317,26 @@ get_latest_version() {
 }
 
 download_hy2() {
+    local _arch
     case $(uname -m) in
-        x86_64)        ARCH_SUFFIX="amd64" ;;
-        aarch64|arm64) ARCH_SUFFIX="arm64" ;;
-        armv7l|armv7)  ARCH_SUFFIX="armv7" ;;
-        s390x)         ARCH_SUFFIX="s390x" ;;
+        x86_64)        _arch="amd64" ;;
+        aarch64|arm64) _arch="arm64" ;;
+        armv7l|armv7)  _arch="armv7" ;;
+        s390x)         _arch="s390x" ;;
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
 
-    DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION}/hysteria-linux-${ARCH_SUFFIX}"
+    local _url="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION}/hysteria-linux-${_arch}"
 
     # 杀旧进程 + 删旧二进制，避免 "Text file busy"
     pkill -f "hysteria server" 2>/dev/null
     sleep 1
     rm -f "$HY_BIN"
 
-    echo -e "${YELLOW}正在下载 (${ARCH_SUFFIX})...${PLAIN}"
-    _retry=3; _ok=0
+    echo -e "${YELLOW}正在下载 (${_arch})...${PLAIN}"
+    local _retry=3 _ok=0
     while [ $_retry -gt 0 ]; do
-        wget -q --show-progress -O "$HY_BIN" "$DOWNLOAD_URL" && _ok=1 && break
+        wget -q --show-progress -O "$HY_BIN" "$_url" && _ok=1 && break
         _retry=$((_retry - 1))
         [ $_retry -gt 0 ] && echo -e "${YELLOW}下载失败，重试中...${PLAIN}" && sleep 3
     done
@@ -324,7 +349,7 @@ download_hy2() {
 # ============================================================
 
 configure_nat_port() {
-    echo -e ""
+    echo ""
     echo -e "${YELLOW}检测到 NAT 机器，请配置端口信息：${PLAIN}"
     echo -e "${SKYBLUE}说明：${PLAIN}"
     echo -e "  • 监听端口：Hysteria 在本容器/本机监听的端口"
@@ -374,15 +399,12 @@ install_hy2() {
         fi
     fi
 
-    # IPv6 Only：双栈监听
+    # IPv6 Only：监听双栈
+    local LISTEN_ADDR=":${LISTEN_PORT}"
     if [ "$IPV6_ONLY" = "1" ]; then
         echo -e "${YELLOW}纯 IPv6 机器，将监听 [::]:${LISTEN_PORT}${PLAIN}"
         LISTEN_ADDR="[::]:${LISTEN_PORT}"
-    else
-        LISTEN_ADDR=":${LISTEN_PORT}"
     fi
-
-    SNI="amd.com"
 
     echo -e "${YELLOW}生成自签名证书...${PLAIN}"
     openssl req -x509 -newkey rsa:2048 -days 3650 -nodes -sha256 \
@@ -390,9 +412,9 @@ install_hy2() {
         -subj "/CN=${SNI}" >/dev/null 2>&1
 
     # 带宽参数
-    BW_UP="50 mbps"; BW_DOWN="100 mbps"
+    local BW_UP="50 mbps" BW_DOWN="100 mbps"
     echo ""
-    read -r -p "是否为低配/低带宽机器，使用默认保守参数(50/100mbps)? [Y/n]: " LOW_BW
+    read -r -p "是否使用默认保守带宽参数(50up/100down mbps)? [Y/n]: " LOW_BW
     if [[ "$LOW_BW" =~ ^[nN]$ ]]; then
         read -r -p "请输入上行带宽 mbps [默认 50]: " _up
         read -r -p "请输入下行带宽 mbps [默认 100]: " _dn
@@ -468,16 +490,16 @@ read_config_vars() {
     SNI="amd.com"
 
     if [ -d "$HY_META" ]; then
-        NAT_MODE=$(cat "$HY_META/nat_mode"    2>/dev/null || echo 0)
-        EXT_PORT=$(cat "$HY_META/ext_port"    2>/dev/null || echo "$LISTEN_PORT")
-        PUBLIC_IP=$(cat "$HY_META/public_ip"  2>/dev/null || echo "")
-        PUBLIC_IPV6=$(cat "$HY_META/public_ipv6" 2>/dev/null || echo "")
+        NAT_MODE=$(cat "$HY_META/nat_mode"       2>/dev/null); NAT_MODE=${NAT_MODE:-0}
+        EXT_PORT=$(cat "$HY_META/ext_port"       2>/dev/null)
+        PUBLIC_IP=$(cat "$HY_META/public_ip"     2>/dev/null)
+        PUBLIC_IPV6=$(cat "$HY_META/public_ipv6" 2>/dev/null)
     fi
 
-    [[ -z "$EXT_PORT"    ]] && EXT_PORT="$LISTEN_PORT"
-    [[ -z "$NAT_MODE"    ]] && NAT_MODE=0
+    [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
+    [[ -z "$NAT_MODE" ]] && NAT_MODE=0
 
-    # IP 兜底
+    # IP 兜底（元数据为空时重新检测）
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
@@ -485,22 +507,28 @@ read_config_vars() {
 }
 
 # ============================================================
-# URL encode（纯 shell，不依赖 jq）
-# 只 encode 真正需要 encode 的字符，保留 URI 结构字符
+# URL encode — 纯 bash，不依赖 jq / python
+# 保留 URI 合法字符，只编码空格等特殊字符
 # ============================================================
 
 uri_encode() {
-    # 对字符串整体做百分号编码（只编码非安全字符）
-    # 保留: A-Z a-z 0-9 - _ . ~ : / ? # [ ] @ ! $ & ' ( ) * + , ; =
-    local _in="$1"
-    local _out=""
-    local _i _c _hex
+    local _in="$1" _out="" _i=0 _c _hex _byte
     local _len=${#_in}
-    for (( _i=0; _i<_len; _i++ )); do
+    while [ $_i -lt $_len ]; do
         _c="${_in:_i:1}"
         case "$_c" in
-            [A-Za-z0-9\-_.~:/?#\[\]@\!\$\&\'()\*+,\;=]) _out+="$_c" ;;
-            ' ') _out+="%20" ;;
+            [A-Za-z0-9\-_.~:/?#@!\$\&\'()\*+,\;=])
+                _out+="$_c"
+                ;;
+            ' ')
+                _out+="%20"
+                ;;
+            '[')
+                _out+="%5B"
+                ;;
+            ']')
+                _out+="%5D"
+                ;;
             *)
                 _hex=$(printf '%s' "$_c" | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')
                 for _byte in $_hex; do
@@ -508,19 +536,18 @@ uri_encode() {
                 done
                 ;;
         esac
+        _i=$((_i + 1))
     done
     echo "$_out"
 }
 
 # ============================================================
-# 生成并展示单个节点配置
+# 展示单个节点（IPv4 或 IPv6）
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
 
 show_node() {
-    local _ip="$1"
-    local _port="$2"
-    local _tag="$3"
+    local _ip="$1" _port="$2" _tag="$3"
 
     # URI 中 IPv6 加方括号
     local _host="$_ip"
@@ -544,7 +571,7 @@ show_node() {
     echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # Surge/Surfboard：直接用原始 IP，不加方括号
+    # Surge/Surfboard：原始 IP，不加方括号
     echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
     echo -e "  ${_node} = hysteria2, ${_ip}, ${_port}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -559,7 +586,7 @@ show_node() {
 }
 
 # ============================================================
-# 显示配置（菜单与输出格式与原版完全一致）
+# 显示配置
 # ============================================================
 
 show_config() {
@@ -589,9 +616,7 @@ show_config() {
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # IPv4 节点
-    if [ -n "$PUBLIC_IP" ]; then
-        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
-    fi
+    [ -n "$PUBLIC_IP" ] && show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
 
     # IPv6 节点（双栈或纯 IPv6）
     if [ -n "$PUBLIC_IPV6" ]; then
@@ -658,7 +683,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.1.1${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.1.2${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
