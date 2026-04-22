@@ -35,7 +35,7 @@
 
 ```bash
 # 快速安装/管理 Hysteria 2
-bash <(curl -fsSL [https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh](https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh))
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
 ````
 
   * **默认端口**：`18888` (支持 NAT 自定义外网端口)
@@ -47,7 +47,7 @@ bash <(curl -fsSL [https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh
 
 ```bash
 # 快速安装/管理 Shadowsocks 
-bash <(curl -fsSL [https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh](https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh))
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 ```
 
   * **默认端口**：`28888` (支持 NAT 自定义外网端口)
