@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.2.0
+# 版本：v2.2.1
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -562,41 +562,31 @@ read_config_vars() {
 }
 
 # ============================================================
-# URL encode — 纯 bash，一次性处理整串，性能优化版
+# URL encode — 优先 python3，降级纯 bash 逐字节处理
+# 用于对密码等字段做百分号转义，safe='' 表示全转义
 # ============================================================
 uri_encode() {
-    local _in="$1" _out="" _hex _byte
-    # 一次性将整串转为十六进制字节流
-    _hex=$(printf '%s' "$_in" | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')
-    local _i=0
-    local _len=${#_hex}
+    local _in="$1"
+    if command -v python3 >/dev/null 2>&1; then
+        printf '%s' "$_in" | python3 -c \
+            "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')"
+        return
+    fi
+    # 降级：纯 bash 逐字节
+    local _out="" _i=0 _c _hex _b
+    local _len=${#_in}
     while [ $_i -lt $_len ]; do
-        _byte="${_hex:_i:2}"
-        # 查表：字母数字及安全符号直接输出，其余百分号转义
-        case "$_byte" in
-            # A-Z: 41-5A
-            4[1-9A-F]|5[0-9A])
-                _out+=$(printf "\\x${_byte}")
-                ;;
-            # a-z: 61-7A
-            6[1-9A-F]|7[0-9A])
-                _out+=$(printf "\\x${_byte}")
-                ;;
-            # 0-9: 30-39
-            3[0-9])
-                _out+=$(printf "\\x${_byte}")
-                ;;
-            # . 2E  ~ 7E  - 2D  _ 5F
-            2E|7E|2D|5F)
-                _out+=$(printf "\\x${_byte}")
-                ;;
+        _c="${_in:_i:1}"
+        case "$_c" in
+            [a-zA-Z0-9.~_-]) _out+="$_c" ;;
             *)
-                _out+="%${_byte}"
+                _hex=$(printf '%s' "$_c" | od -An -tx1 | tr -d ' \n')
+                for _b in $_hex; do _out+="%${_b^^}"; done
                 ;;
         esac
-        _i=$((_i + 2))
+        _i=$((_i + 1))
     done
-    echo "$_out"
+    printf '%s' "$_out"
 }
 
 # ============================================================
@@ -612,7 +602,11 @@ show_node() {
     echo "$_ip" | grep -q ':' && _host="[${_ip}]"
 
     local _node="HY2-${_tag}-$(date +%m%d)"
-    local _link="hysteria2://${PASSWORD}@${_host}:${_port}/?insecure=1&sni=${SNI}#${_node}"
+    # 密码单独转义（含 / + @ 等特殊字符），结构字符保持原样
+    local _pass_encoded
+    _pass_encoded=$(uri_encode "${PASSWORD}")
+    local _link="hysteria2://${_pass_encoded}@${_host}:${_port}/?insecure=1&sni=${SNI}#${_node}"
+    # 二维码 data 参数对整条链接再 encode 一次
     local _encoded
     _encoded=$(uri_encode "$_link")
     local _qr="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
