@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.1.3
+# 版本：v2.2.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-04-22
+# 更新日期: 2026-05-09
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -34,7 +34,6 @@ if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
         exec bash "$0" "$@"
     else
-        # bash 还没装：先用 sh 兼容方式装 bash，再重启
         if [ -f /etc/alpine-release ]; then
             apk add --no-cache bash >/dev/null 2>&1
         elif command -v apt-get >/dev/null 2>&1; then
@@ -85,6 +84,8 @@ PUBLIC_IPV6=""
 LISTEN_PORT=""
 EXT_PORT=""
 SNI="amd.com"
+BW_UP="50"
+BW_DOWN="100"
 
 # ============================================================
 # 环境检测
@@ -195,9 +196,9 @@ service_is_active() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u hysteria-server -n 20 --no-pager
+        journalctl -u hysteria-server -n 30 --no-pager
     else
-        tail -n 20 /var/log/hysteria.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
+        tail -n 30 /var/log/hysteria.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
 }
 
@@ -284,7 +285,7 @@ detect_network() {
 }
 
 # ============================================================
-# 依赖安装（不装 jq，bash 已在自举阶段装好）
+# 依赖安装
 # ============================================================
 
 install_dependencies() {
@@ -299,7 +300,7 @@ install_dependencies() {
 }
 
 # ============================================================
-# 下载 Hysteria2（不依赖 jq，带重试）
+# 获取版本 & 下载（带官方镜像 fallback，不依赖 jq）
 # ============================================================
 
 get_latest_version() {
@@ -319,29 +320,39 @@ get_latest_version() {
 download_hy2() {
     local _arch
     case $(uname -m) in
-        x86_64)        _arch="amd64" ;;
-        aarch64|arm64) _arch="arm64" ;;
-        armv7l|armv7)  _arch="armv7" ;;
-        s390x)         _arch="s390x" ;;
+        x86_64)          _arch="amd64"  ;;
+        aarch64|arm64)   _arch="arm64"  ;;
+        armv7l|armv7)    _arch="armv7"  ;;
+        s390x)           _arch="s390x"  ;;
+        loongarch64)     _arch="loong64" ;;
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
 
-    local _url="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION}/hysteria-linux-${_arch}"
+    # 主源：GitHub Release；备用：官方永久镜像
+    local _url_github="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION}/hysteria-linux-${_arch}"
+    local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
 
     # 杀旧进程 + 删旧二进制，避免 "Text file busy"
     pkill -f "hysteria server" 2>/dev/null
     sleep 1
     rm -f "$HY_BIN"
 
-    echo -e "${YELLOW}正在下载 (${_arch})...${PLAIN}"
-    local _retry=3 _ok=0
-    while [ $_retry -gt 0 ]; do
-        wget -q --show-progress -O "$HY_BIN" "$_url" && _ok=1 && break
-        _retry=$((_retry - 1))
-        [ $_retry -gt 0 ] && echo -e "${YELLOW}下载失败，重试中...${PLAIN}" && sleep 3
-    done
-    [ $_ok -eq 0 ] && echo -e "${RED}下载失败，请检查网络${PLAIN}" && exit 1
+    echo -e "${YELLOW}正在下载 hysteria-linux-${_arch}...${PLAIN}"
+    local _ok=0
+
+    # 先试 GitHub
+    if wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_github" 2>/dev/null; then
+        _ok=1
+    else
+        echo -e "${YELLOW}GitHub 下载失败，切换官方镜像重试...${PLAIN}"
+        if wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_mirror" 2>/dev/null; then
+            _ok=1
+        fi
+    fi
+
+    [ $_ok -eq 0 ] && echo -e "${RED}下载失败，请检查网络${PLAIN}" && rm -f "$HY_BIN" && exit 1
     chmod +x "$HY_BIN"
+    echo -e "${GREEN}下载完成${PLAIN}"
 }
 
 # ============================================================
@@ -352,9 +363,9 @@ configure_nat_port() {
     echo ""
     echo -e "${YELLOW}检测到 NAT 机器，请配置端口信息：${PLAIN}"
     echo -e "${SKYBLUE}说明：${PLAIN}"
-    echo -e "  • 监听端口：Hysteria 在本容器/本机监听的端口"
+    echo -e "  • 监听端口：Hysteria 在本机监听的端口"
     echo -e "  • 对外端口：宿主机转发后，客户端实际连接的端口"
-    echo -e "  • 若面板内外端口一致，两者填相同即可"
+    echo -e "  • 若内外端口一致，两者填相同即可"
     echo ""
     read -r -p "请输入本机监听端口 [默认 18888]: " LISTEN_PORT
     [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
@@ -411,15 +422,16 @@ install_hy2() {
         -keyout "$HY_CERT_DIR/server.key" -out "$HY_CERT_DIR/server.crt" \
         -subj "/CN=${SNI}" >/dev/null 2>&1
 
-    # 带宽参数
-    local BW_UP="50 mbps" BW_DOWN="100 mbps"
+    # 带宽参数（保存到 meta 供 show_node 使用）
+    BW_UP="50"
+    BW_DOWN="100"
     echo ""
-    read -r -p "是否使用默认保守带宽参数(50up/100down mbps)? [Y/n]: " LOW_BW
+    read -r -p "是否使用默认带宽参数 (上行 50 Mbps / 下行 100 Mbps)? [Y/n]: " LOW_BW
     if [[ "$LOW_BW" =~ ^[nN]$ ]]; then
-        read -r -p "请输入上行带宽 mbps [默认 50]: " _up
-        read -r -p "请输入下行带宽 mbps [默认 100]: " _dn
-        [[ -n "$_up" ]] && BW_UP="${_up} mbps"
-        [[ -n "$_dn" ]] && BW_DOWN="${_dn} mbps"
+        read -r -p "请输入上行带宽 Mbps [默认 50]: " _up
+        read -r -p "请输入下行带宽 Mbps [默认 100]: " _dn
+        [[ -n "$_up" ]] && BW_UP="$_up"
+        [[ -n "$_dn" ]] && BW_DOWN="$_dn"
     fi
 
     cat > "$HY_CONFIG" <<EOF
@@ -434,8 +446,8 @@ auth:
   password: "$PASSWORD"
 
 bandwidth:
-  up: $BW_UP
-  down: $BW_DOWN
+  up: ${BW_UP} mbps
+  down: ${BW_DOWN} mbps
 
 masquerade:
   type: proxy
@@ -448,6 +460,8 @@ EOF
     echo "$NAT_MODE"    > "$HY_META/nat_mode"
     echo "$EXT_PORT"    > "$HY_META/ext_port"
     echo "$LISTEN_PORT" > "$HY_META/listen_port"
+    echo "$BW_UP"       > "$HY_META/bw_up"
+    echo "$BW_DOWN"     > "$HY_META/bw_down"
     [ -n "$PUBLIC_IP"   ] && echo "$PUBLIC_IP"   > "$HY_META/public_ip"
     [ -n "$PUBLIC_IPV6" ] && echo "$PUBLIC_IPV6" > "$HY_META/public_ipv6"
 
@@ -478,6 +492,45 @@ EOF
 }
 
 # ============================================================
+# 升级（保留配置，仅替换二进制）
+# ============================================================
+
+upgrade_hy2() {
+    if [ ! -f "$HY_BIN" ]; then
+        echo -e "${RED}未检测到已安装的 Hysteria2，请先安装${PLAIN}"
+        sleep 2
+        return
+    fi
+
+    local _cur_ver=""
+    _cur_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    echo -e "  当前版本: ${YELLOW}${_cur_ver:-未知}${PLAIN}"
+
+    get_latest_version
+
+    if [ -n "$_cur_ver" ] && [ "app/${_cur_ver}" = "$LAST_VERSION" ]; then
+        echo -e "${GREEN}已是最新版本，无需升级${PLAIN}"
+        sleep 2
+        return
+    fi
+
+    echo -e "${YELLOW}开始升级...${PLAIN}"
+    download_hy2
+    service_restart
+    sleep 2
+
+    if service_is_active; then
+        local _new_ver
+        _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+    else
+        echo -e "${RED}✗ 升级后服务启动失败，请查看日志${PLAIN}"
+        service_logs
+    fi
+    sleep 2
+}
+
+# ============================================================
 # 读取配置变量
 # ============================================================
 
@@ -490,10 +543,12 @@ read_config_vars() {
     SNI="amd.com"
 
     if [ -d "$HY_META" ]; then
-        NAT_MODE=$(cat "$HY_META/nat_mode"       2>/dev/null); NAT_MODE=${NAT_MODE:-0}
-        EXT_PORT=$(cat "$HY_META/ext_port"       2>/dev/null)
-        PUBLIC_IP=$(cat "$HY_META/public_ip"     2>/dev/null)
+        NAT_MODE=$(cat "$HY_META/nat_mode"   2>/dev/null); NAT_MODE=${NAT_MODE:-0}
+        EXT_PORT=$(cat "$HY_META/ext_port"   2>/dev/null)
+        PUBLIC_IP=$(cat "$HY_META/public_ip" 2>/dev/null)
         PUBLIC_IPV6=$(cat "$HY_META/public_ipv6" 2>/dev/null)
+        BW_UP=$(cat "$HY_META/bw_up"         2>/dev/null); BW_UP=${BW_UP:-50}
+        BW_DOWN=$(cat "$HY_META/bw_down"     2>/dev/null); BW_DOWN=${BW_DOWN:-100}
     fi
 
     [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
@@ -507,27 +562,39 @@ read_config_vars() {
 }
 
 # ============================================================
-# URL encode — 纯 bash，不依赖 jq / python
-# 修复语法解析错误，并严格全转义以确保二维码 API 正常识别
+# URL encode — 纯 bash，一次性处理整串，性能优化版
 # ============================================================
 uri_encode() {
-    local _in="$1" _out="" _i=0 _c _hex _byte
-    local _len=${#_in}
+    local _in="$1" _out="" _hex _byte
+    # 一次性将整串转为十六进制字节流
+    _hex=$(printf '%s' "$_in" | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')
+    local _i=0
+    local _len=${#_hex}
     while [ $_i -lt $_len ]; do
-        _c="${_in:_i:1}"
-        case "$_c" in
-            # 仅保留最基础的字母数字和几个安全符号，其余全部强制转义
-            [a-zA-Z0-9.~_-])
-                _out+="$_c"
+        _byte="${_hex:_i:2}"
+        # 查表：字母数字及安全符号直接输出，其余百分号转义
+        case "$_byte" in
+            # A-Z: 41-5A
+            4[1-9A-F]|5[0-9A])
+                _out+=$(printf "\\x${_byte}")
+                ;;
+            # a-z: 61-7A
+            6[1-9A-F]|7[0-9A])
+                _out+=$(printf "\\x${_byte}")
+                ;;
+            # 0-9: 30-39
+            3[0-9])
+                _out+=$(printf "\\x${_byte}")
+                ;;
+            # . 2E  ~ 7E  - 2D  _ 5F
+            2E|7E|2D|5F)
+                _out+=$(printf "\\x${_byte}")
                 ;;
             *)
-                _hex=$(printf '%s' "$_c" | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')
-                for _byte in $_hex; do
-                    _out+="%${_byte}"
-                done
+                _out+="%${_byte}"
                 ;;
         esac
-        _i=$((_i + 1))
+        _i=$((_i + 2))
     done
     echo "$_out"
 }
@@ -550,29 +617,49 @@ show_node() {
     _encoded=$(uri_encode "$_link")
     local _qr="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
 
+    # ---- 分享链接 ----
     echo -e "${GREEN} 分享链接 (V2rayN / NekoBox / Shadowrocket):${PLAIN}"
     echo -e "  ${_link}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
+    # ---- 二维码 ----
     echo -e "${GREEN} 二维码链接:${PLAIN}"
     echo -e "  ${_qr}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
+    # ---- Clash Meta ----
     echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
-    echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: 50, down: 100 }"
+    echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: ${BW_UP}, down: ${BW_DOWN}}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # Surge/Surfboard：原始 IP，不加方括号
+    # ---- Surge / Surfboard ----
     echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
-    echo -e "  ${_node} = hysteria2, ${_ip}, ${_port}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true"
+    echo -e "  ${_node} = hysteria2, ${_ip}, ${_port}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true, download-bandwidth=${BW_DOWN}, upload-bandwidth=${BW_UP}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
+    # ---- Loon ----
     echo -e "${GREEN} Loon 配置:${PLAIN}"
     echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
+    # ---- Sing-box（多行格式，字段完整）----
     echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
-    echo -e "  { \"type\": \"hysteria2\", \"tag\": \"${_node}\", \"server\": \"${_ip}\", \"server_port\": ${_port}, \"password\": \"${PASSWORD}\", \"tls\": { \"enabled\": true, \"server_name\": \"${SNI}\", \"insecure\": true } }"
+    cat <<SINGBOX
+  {
+    "type": "hysteria2",
+    "tag": "${_node}",
+    "server": "${_ip}",
+    "server_port": ${_port},
+    "up_mbps": ${BW_UP},
+    "down_mbps": ${BW_DOWN},
+    "password": "${PASSWORD}",
+    "tls": {
+      "enabled": true,
+      "server_name": "${SNI}",
+      "insecure": true
+    }
+  }
+SINGBOX
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -602,6 +689,7 @@ show_config() {
     fi
     echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
     echo -e "  ${BOLD}伪装 SNI${PLAIN}: ${YELLOW}${SNI}${PLAIN}"
+    echo -e "  ${BOLD}带宽设置${PLAIN}: ${YELLOW}上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
     echo -e "  ${BOLD}自签证书${PLAIN}: ${RED}Insecure / Skip Cert Verify = True${PLAIN}"
     [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -623,26 +711,58 @@ show_config() {
 }
 
 # ============================================================
-# 管理
+# 修改密码
+# ============================================================
+
+change_password() {
+    if [ ! -f "$HY_CONFIG" ]; then
+        echo -e "${RED}未找到配置文件，请先安装${PLAIN}"
+        sleep 2
+        return
+    fi
+
+    read_config_vars
+    echo -e "  当前密码: ${YELLOW}${PASSWORD}${PLAIN}"
+    read -r -p "请输入新密码 [留空自动生成]: " NEW_PASS
+    if [ -z "$NEW_PASS" ]; then
+        NEW_PASS=$(openssl rand -base64 12 2>/dev/null || tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)
+    fi
+
+    sed -i "s|password:.*|password: \"${NEW_PASS}\"|" "$HY_CONFIG"
+    service_restart
+    sleep 1
+    echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
+    # 同步写入 meta（下次 show_config 不需要重新检测）
+    sleep 2
+}
+
+# ============================================================
+# 管理子菜单
 # ============================================================
 
 manage_hy2() {
-    clear
-    echo -e "\n${SKYBLUE}--- 管理 Hysteria2 ---${PLAIN}"
-    echo -e "1. 查看配置 (全客户端兼容)"
-    echo -e "2. 重启服务"
-    echo -e "3. 停止服务"
-    echo -e "4. 查看日志"
-    echo -e "0. 返回"
-    read -r -p "请选择: " opt
-    case $opt in
-        1) show_config ;;
-        2) service_restart && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
-        3) service_stop    && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
-        4) service_logs; read -r -p "按回车继续..." _tmp ;;
-        0) return ;;
-        *) echo -e "${RED}输入错误${PLAIN}"; sleep 1 ;;
-    esac
+    while true; do
+        clear
+        echo -e "\n${SKYBLUE}--- 管理 Hysteria2 ---${PLAIN}"
+        echo -e "1. 查看配置 (全客户端兼容)"
+        echo -e "2. 重启服务"
+        echo -e "3. 停止服务"
+        echo -e "4. 启动服务"
+        echo -e "5. 查看日志"
+        echo -e "6. 修改密码"
+        echo -e "0. 返回"
+        read -r -p "请选择: " opt
+        case $opt in
+            1) show_config ;;
+            2) service_restart && echo -e "${GREEN}服务已重启${PLAIN}" && sleep 1 ;;
+            3) service_stop    && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
+            4) service_start   && echo -e "${GREEN}服务已启动${PLAIN}" && sleep 1 ;;
+            5) service_logs; read -r -p "按回车继续..." _tmp ;;
+            6) change_password ;;
+            0) return ;;
+            *) echo -e "${RED}输入错误${PLAIN}"; sleep 1 ;;
+        esac
+    done
 }
 
 # ============================================================
@@ -650,7 +770,7 @@ manage_hy2() {
 # ============================================================
 
 uninstall_hy2() {
-    read -r -p "确定卸载? [y/N]: " confirm
+    read -r -p "确定卸载 Hysteria2? [y/N]: " confirm
     [[ ! "$confirm" =~ ^[yY]$ ]] && return
     service_stop
     service_disable
@@ -667,14 +787,24 @@ uninstall_hy2() {
 main_menu() {
     while true; do
         clear
+
+        local STATUS
         if [ -f "$HY_BIN" ]; then
             service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
         else
             STATUS="${RED}未安装${PLAIN}"
         fi
 
+        # 已安装时显示当前版本
+        local _ver_line=""
+        if [ -f "$HY_BIN" ]; then
+            local _ver
+            _ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            [ -n "$_ver" ] && _ver_line=" (${_ver})"
+        fi
+
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.1.2${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.2.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -683,11 +813,12 @@ main_menu() {
         echo -e " VPSknow网站 : https://vpsknow.com"
         echo -e " Nodeloc论坛 : https://nodeloc.com"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e " 当前状态: $STATUS"
+        echo -e " 当前状态: $STATUS${_ver_line}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 安装 Hysteria2"
-        echo -e " 2. 管理 Hysteria2 (查看配置)"
-        echo -e " 3. 卸载 Hysteria2"
+        echo -e " 2. 管理 Hysteria2"
+        echo -e " 3. 升级 Hysteria2"
+        echo -e " 4. 卸载 Hysteria2"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
 
@@ -695,7 +826,8 @@ main_menu() {
         case $choice in
             1) install_hy2 ;;
             2) manage_hy2 ;;
-            3) uninstall_hy2 ;;
+            3) upgrade_hy2 ;;
+            4) uninstall_hy2 ;;
             0) exit 0 ;;
             *) echo -e "${RED}输入错误...${PLAIN}"; sleep 1 ;;
         esac
