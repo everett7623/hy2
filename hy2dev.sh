@@ -643,8 +643,7 @@ show_node() {
     local _pass_encoded
     _pass_encoded=$(uri_encode "${PASSWORD}")
 
-    # 分享链接：insecure=0（默认使用证书验证；连不上时提示改为1）
-    local _link="hysteria2://${_pass_encoded}@${_host}:${_port}/?insecure=0&sni=${SNI}#${_node}"
+    local _link="hysteria2://${_pass_encoded}@${_host}:${_port}/?insecure=1&sni=${SNI}#${_node}"
     local _encoded
     _encoded=$(uri_encode "$_link")
     local _qr="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
@@ -652,7 +651,6 @@ show_node() {
     # ---- 分享链接 ----
     echo -e "${GREEN} 分享链接 (V2rayN / NekoBox / Shadowrocket):${PLAIN}"
     echo -e "  ${_link}"
-    echo -e "${YELLOW}  * 如连接失败，可将链接中 insecure=0 改为 insecure=1${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- 二维码 ----
@@ -662,23 +660,20 @@ show_node() {
 
     # ---- Clash Meta / Stash / Clash Verge ----
     echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
-    echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: false, up: ${BW_UP}, down: ${BW_DOWN}}"
-    echo -e "${YELLOW}  * 如连接失败，可将 skip-cert-verify: false 改为 true${PLAIN}"
+    echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: ${BW_UP}, down: ${BW_DOWN}}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- Surge / Surfboard ----
     echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
-    echo -e "  ${_node} = hysteria2, ${_ip}, ${_port}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=false, download-bandwidth=${BW_DOWN}, upload-bandwidth=${BW_UP}"
+    echo -e "  ${_node} = hysteria2, ${_ip}, ${_port}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true, download-bandwidth=${BW_DOWN}, upload-bandwidth=${BW_UP}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- Loon ----
     echo -e "${GREEN} Loon 配置:${PLAIN}"
-    echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=false"
+    echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- Sing-box 完整配置 ----
-    # insecure: false 为安全默认值
-    # sniff: true 开启 DNS 嗅探，路由更准确
     echo -e "${GREEN} Sing-box 完整配置 (可直接导入):${PLAIN}"
     cat <<SINGBOX
 {
@@ -688,9 +683,7 @@ show_node() {
       "type": "mixed",
       "tag": "mixed-in",
       "listen": "127.0.0.1",
-      "listen_port": 2080,
-      "sniff": true,
-      "sniff_override_destination": false
+      "listen_port": 2080
     }
   ],
   "outbounds": [
@@ -705,23 +698,22 @@ show_node() {
       "tls": {
         "enabled": true,
         "server_name": "${SNI}",
-        "insecure": false
+        "insecure": true
       }
     },
     { "type": "direct", "tag": "direct" },
-    { "type": "block",  "tag": "block"  },
-    { "type": "dns",    "tag": "dns-out" }
+    { "type": "block", "tag": "block" },
+    { "type": "dns", "tag": "dns-out" }
   ],
   "route": {
     "rules": [
-      { "protocol": "dns",        "outbound": "dns-out" },
-      { "geoip": ["private"],     "outbound": "direct"  }
+      { "protocol": "dns", "outbound": "dns-out" },
+      { "geoip": ["private"], "outbound": "direct" }
     ],
     "final": "${_node}"
   }
 }
 SINGBOX
-    echo -e "${YELLOW}  * 如连接失败，将 \"insecure\": false 改为 \"insecure\": true${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -752,7 +744,7 @@ show_config() {
     echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
     echo -e "  ${BOLD}伪装 SNI${PLAIN}: ${YELLOW}${SNI}${PLAIN}"
     echo -e "  ${BOLD}带宽设置${PLAIN}: ${YELLOW}上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
-    echo -e "  ${BOLD}证书验证${PLAIN}: ${YELLOW}自签证书 / 默认不跳过验证（insecure=false）${PLAIN}"
+    echo -e "  ${BOLD}自签证书${PLAIN}: ${RED}Insecure / Skip Cert Verify = True${PLAIN}"
     [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
