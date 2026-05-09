@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.2.1
+# 版本：v2.2.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -636,23 +636,46 @@ show_node() {
     echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # ---- Sing-box（多行格式，字段完整）----
-    echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
+    # ---- Sing-box 完整可用配置 ----
+    echo -e "${GREEN} Sing-box 完整配置 (可直接导入):${PLAIN}"
     cat <<SINGBOX
-  {
-    "type": "hysteria2",
-    "tag": "${_node}",
-    "server": "${_ip}",
-    "server_port": ${_port},
-    "up_mbps": ${BW_UP},
-    "down_mbps": ${BW_DOWN},
-    "password": "${PASSWORD}",
-    "tls": {
-      "enabled": true,
-      "server_name": "${SNI}",
-      "insecure": true
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
     }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "${_node}",
+      "server": "${_ip}",
+      "server_port": ${_port},
+      "up_mbps": ${BW_UP},
+      "down_mbps": ${BW_DOWN},
+      "password": "${PASSWORD}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${SNI}",
+        "insecure": true
+      }
+    },
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" },
+    { "type": "dns", "tag": "dns-out" }
+  ],
+  "route": {
+    "rules": [
+      { "protocol": "dns", "outbound": "dns-out" },
+      { "geoip": ["private"], "outbound": "direct" }
+    ],
+    "final": "${_node}"
   }
+}
 SINGBOX
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
