@@ -124,11 +124,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ssdev.s
 ## 📸 运行截图
 
 #### Hysteria 2 安装示例
-<img width="1521" height="1405" alt="hy2" src="https://github.com/user-attachments/assets/9ee30ebb-9ce4-4596-823a-2270b1d49d29" />
+<img width="1187" height="1365" alt="hy2" src="https://github.com/user-attachments/assets/1c798220-b59e-4e1f-81ce-2052d45820b9" />
 
 #### Shadowsocks 安装示例
-<img width="1486" height="1482" alt="ss2022" src="https://github.com/user-attachments/assets/3ea42eb9-d920-473b-bd20-ccc1f43218f4" />
-
+<img width="1186" height="1367" alt="ssdev" src="https://github.com/user-attachments/assets/f4440535-4880-48ab-bf5e-3c163817bee7" />
 ---
 
 ## 🔗 关于作者
