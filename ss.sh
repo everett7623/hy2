@@ -621,7 +621,7 @@ main_menu() {
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e "${GREEN} Shadowsocks-Rust Management Script v3.0.1${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
+        echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 当前状态: $STATUS"
