@@ -485,8 +485,10 @@ upgrade_ss() {
         sleep 2; return
     fi
 
-    local _cur_ver=""
-    _cur_ver=$("$SS_BIN" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    # ssserver --version 输出格式: "shadowsocks 1.24.0"（无 v 前缀）
+    local _cur_raw _cur_ver=""
+    _cur_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    [ -n "$_cur_raw" ] && _cur_ver="v${_cur_raw}"
     echo -e "  当前版本: ${YELLOW}${_cur_ver:-未知}${PLAIN}"
 
     get_latest_version
@@ -502,8 +504,9 @@ upgrade_ss() {
     sleep 2
 
     if service_is_active; then
-        local _new_ver
-        _new_ver=$("$SS_BIN" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        local _new_raw _new_ver=""
+        _new_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        [ -n "$_new_raw" ] && _new_ver="v${_new_raw}"
         echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
     else
         echo -e "${RED}✗ 升级后服务启动失败，请查看日志${PLAIN}"
@@ -826,7 +829,9 @@ get_latest() {
 }
 
 get_current() {
-    "$SS_BIN" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    local _raw
+    _raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    [ -n "$_raw" ] && echo "v${_raw}" || echo ""
 }
 
 detect_arch() {
@@ -1038,8 +1043,8 @@ main_menu() {
         local _ver_line=""
         if [ -f "$SS_BIN" ]; then
             local _ver
-            _ver=$("$SS_BIN" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-            [ -n "$_ver" ] && _ver_line=" (${_ver})"
+            _ver=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            [ -n "$_ver" ] && _ver_line=" (v${_ver})"
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
