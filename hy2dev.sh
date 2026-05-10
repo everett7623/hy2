@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.0
+# 版本：v2.3.1
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-09
+# 更新日期: 2026-05-10
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -25,7 +25,7 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# 更新日志 v2.3.0:
+# 更新日志 v2.3.1:
 #   + 修复版本号解析（剥离 app/ 前缀，升级比对不再误判）
 #   + singbox 默认 insecure=false，更安全；分享链接同步为 insecure=0
 #   + singbox 增加 sniff: true，DNS 嗅探更准确
@@ -36,6 +36,7 @@
 #   + 新增：定时自动更新（cron，每天凌晨3点检查）
 #   + 新增：防火墙自动放行端口（ufw / firewalld / iptables 三套兼容）
 #   + 新增：服务器工具子菜单（BBR / 自动更新 / 防火墙 / 系统信息）
+#   + 去除：去除singbox输出
 #====================================================================================
 
 # ============================================================
@@ -672,49 +673,6 @@ show_node() {
     echo -e "${GREEN} Loon 配置:${PLAIN}"
     echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # ---- Sing-box 完整配置 ----
-    echo -e "${GREEN} Sing-box 完整配置 (可直接导入):${PLAIN}"
-    cat <<SINGBOX
-{
-  "log": { "level": "info" },
-  "inbounds": [
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "127.0.0.1",
-      "listen_port": 2080
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "hysteria2",
-      "tag": "${_node}",
-      "server": "${_ip}",
-      "server_port": ${_port},
-      "up_mbps": ${BW_UP},
-      "down_mbps": ${BW_DOWN},
-      "password": "${PASSWORD}",
-      "tls": {
-        "enabled": true,
-        "server_name": "${SNI}",
-        "insecure": true
-      }
-    },
-    { "type": "direct", "tag": "direct" },
-    { "type": "block", "tag": "block" },
-    { "type": "dns", "tag": "dns-out" }
-  ],
-  "route": {
-    "rules": [
-      { "protocol": "dns", "outbound": "dns-out" },
-      { "geoip": ["private"], "outbound": "direct" }
-    ],
-    "final": "${_node}"
-  }
-}
-SINGBOX
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
 # ============================================================
@@ -1239,7 +1197,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.0${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.3.1${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
