@@ -34,9 +34,16 @@
 
 适用于绝大多数网络环境，UDP 协议极速抢占带宽，抗封锁能力强。
 
-#### 快速安装/管理 Hysteria 2
+#### 快速安装/管理 
+
+Hysteria 2
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
+````
+
+Hysteria 2 安装脚本DEV版本
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2dev.sh)
 ````
 
   * **默认端口**：`18888` (支持 NAT 自定义外网端口)
