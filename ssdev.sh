@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v3.0.1 (Cipher Selection & Standard Format)
+# 版本：v3.1.0-dev (+ Upgrade & Server Tools)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -12,12 +12,16 @@
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
 #
-# 更新日志 v3.0.1:
-#   - 去除 Sing-box 输出格式（易出错，移除）
-#   - uri_encode() 优先使用 python3，降级纯 bash（与 hy2 统一）
-#   - open_ports() 修复 ufw 判断逻辑（改为 ufw status | grep active）
-#   - manage_ss() 补全"启动服务"选项，改为循环菜单（与 hy2 风格统一）
-#   - 主菜单版本号对齐修正（v3.0.0 → v3.0.1）
+# 更新日志 v3.1.0-dev:
+#   + 新增：升级功能（保留配置，仅替换二进制）
+#   + 新增：服务器工具子菜单（BBR / 自动更新 / 系统信息）
+#   + 新增：一键开启 BBR 拥塞控制
+#   + 新增：定时自动更新（cron，每天凌晨3点检查）
+#   + 新增：防火墙自动放行端口（ufw / firewalld / iptables 三套兼容）
+#   - 去除 Sing-box 输出格式（易出错，已移除）
+#   - uri_encode() 优先使用 python3，降级纯 bash
+#   - open_ports() 修复 ufw 判断逻辑
+#   - manage_ss() 补全"启动服务"选项，改为循环菜单
 #====================================================================================
 
 # ============================================================
@@ -63,6 +67,8 @@ SS_CONFIG="/etc/shadowsocks-rust/config.json"
 SS_META="/etc/shadowsocks-rust/meta"
 SERVICE_FILE="/etc/systemd/system/shadowsocks-server.service"
 OPENRC_SERVICE="/etc/init.d/shadowsocks-server"
+AUTO_UPDATE_SCRIPT="/usr/local/bin/ss-autoupdate.sh"
+AUTO_UPDATE_LOG="/var/log/ss-autoupdate.log"
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -80,6 +86,30 @@ EXT_PORT=""
 
 check_root() {
     [ "$EUID" -ne 0 ] && echo -e "${RED}错误: 请以 root 权限运行${PLAIN}" && exit 1
+}
+
+check_sys() {
+    if [ -f /etc/alpine-release ]; then
+        RELEASE="alpine"
+    elif [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "$ID" in
+            debian|ubuntu|linuxmint|kali) RELEASE="debian" ;;
+            centos|rhel)                  RELEASE="centos" ;;
+            fedora)                       RELEASE="fedora" ;;
+            rocky|almalinux|ol)           RELEASE="rocky"  ;;
+            arch|manjaro|endeavouros)     RELEASE="arch"   ;;
+            *)
+                case "${ID_LIKE:-}" in
+                    *rhel*|*centos*|*fedora*) RELEASE="rocky"  ;;
+                    *debian*|*ubuntu*)        RELEASE="debian" ;;
+                    *)                        RELEASE="unknown" ;;
+                esac
+                ;;
+        esac
+    else
+        RELEASE="unknown"
+    fi
 }
 
 detect_init() {
@@ -137,7 +167,6 @@ detect_network() {
 
 # ============================================================
 # 防火墙端口放行
-# 修复：ufw 改为 status grep 判断，与 hy2 脚本统一
 # ============================================================
 
 open_ports() {
@@ -230,9 +259,9 @@ service_is_active() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u shadowsocks-server -n 20 --no-pager
+        journalctl -u shadowsocks-server -n 50 --no-pager
     else
-        tail -n 20 /var/log/ssserver.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
+        tail -n 50 /var/log/ssserver.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
 }
 
@@ -279,7 +308,7 @@ EOF
 }
 
 # ============================================================
-# 依赖安装 & 强力防坑机制
+# 依赖安装
 # ============================================================
 
 install_dependencies() {
@@ -314,15 +343,13 @@ install_dependencies() {
 }
 
 # ============================================================
-# 安装
+# 获取最新版本 & 下载二进制
 # ============================================================
 
-install_ss() {
-    detect_network
-    install_dependencies
-
-    echo -e "${YELLOW}正在获取 Shadowsocks-Rust 最新版本...${PLAIN}"
-    LAST_VERSION=$(curl -Ls --max-time 10 "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" \
+get_latest_version() {
+    echo -e "${YELLOW}正在获取最新版本...${PLAIN}"
+    LAST_VERSION=$(curl -Ls --max-time 10 \
+        "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
 
     if [ -z "$LAST_VERSION" ]; then
@@ -330,14 +357,11 @@ install_ss() {
             "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" | sed 's|.*/tag/||')
     fi
 
-    if [ -z "$LAST_VERSION" ]; then
-        echo -e "${RED}获取版本失败，请检查网络${PLAIN}"
-        exit 1
-    fi
+    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && exit 1
+    echo -e "${GREEN}最新版本: ${LAST_VERSION}${PLAIN}"
+}
 
-    echo -e "${GREEN}检测到最新版本: ${LAST_VERSION}${PLAIN}"
-
-    # 强制全部使用 MUSL 版本，彻底免疫 GLIBC 报错
+download_ss() {
     local _arch
     case $(uname -m) in
         x86_64)        _arch="x86_64-unknown-linux-musl" ;;
@@ -352,12 +376,26 @@ install_ss() {
     service_stop
     rm -f "$SS_BIN"
 
-    echo -e "${YELLOW}正在下载核心文件...${PLAIN}"
-    wget -q --show-progress -O /tmp/ss-rust.tar.xz "$_url" || { echo -e "${RED}下载失败${PLAIN}"; exit 1; }
-    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver || { echo -e "${RED}解压失败${PLAIN}"; exit 1; }
+    echo -e "${YELLOW}正在下载 shadowsocks-rust ${LAST_VERSION} (${_arch})...${PLAIN}"
+    wget -q --show-progress --timeout=30 -O /tmp/ss-rust.tar.xz "$_url" \
+        || { echo -e "${RED}下载失败，请检查网络${PLAIN}"; exit 1; }
+    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver \
+        || { echo -e "${RED}解压失败${PLAIN}"; exit 1; }
     mv /tmp/ssserver "$SS_BIN"
     chmod +x "$SS_BIN"
     rm -f /tmp/ss-rust.tar.xz
+    echo -e "${GREEN}下载完成${PLAIN}"
+}
+
+# ============================================================
+# 安装
+# ============================================================
+
+install_ss() {
+    detect_network
+    install_dependencies
+    get_latest_version
+    download_ss
 
     mkdir -p /etc/shadowsocks-rust "$SS_META"
 
@@ -374,15 +412,14 @@ install_ss() {
     fi
 
     echo -e "\n${YELLOW}请选择要使用的加密协议：${PLAIN}"
-    echo -e " 1. ${GREEN}aes-256-gcm${PLAIN} (经典原版协议，100% 兼容全平台，保证能通，【默认推荐】)"
-    echo -e " 2. ${RED}2022-blake3-aes-256-gcm${PLAIN} (SS-2022 协议，强抗封锁，但要求手机系统时间极其准确)"
+    echo -e " 1. ${GREEN}aes-256-gcm${PLAIN} (经典原版协议，100% 兼容全平台，【默认推荐】)"
+    echo -e " 2. ${RED}2022-blake3-aes-256-gcm${PLAIN} (SS-2022 协议，强抗封锁，但要求时间极其准确)"
     read -r -p "请输入选项 [1 或 2，默认 1]: " _cipher_opt
 
     if [ "$_cipher_opt" = "2" ]; then
         METHOD="2022-blake3-aes-256-gcm"
         PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
         echo -e "${YELLOW}已启用 SS-2022，系统已自动生成 32 字节规范密钥 -> ${PASSWORD}${PLAIN}"
-
         echo -e "${YELLOW}正在尝试同步服务器时间以防连接超时...${PLAIN}"
         command -v timedatectl >/dev/null 2>&1 && timedatectl set-ntp true >/dev/null 2>&1
     else
@@ -395,9 +432,7 @@ install_ss() {
     fi
 
     local LISTEN_ADDR="0.0.0.0"
-    if [ "$HAS_IPV6" = "1" ]; then
-        LISTEN_ADDR="::"
-    fi
+    [ "$HAS_IPV6" = "1" ] && LISTEN_ADDR="::"
 
     cat > "$SS_CONFIG" <<EOF
 {
@@ -418,7 +453,6 @@ EOF
     [ -n "$PUBLIC_IP"   ] && echo "$PUBLIC_IP"   > "$SS_META/public_ip"
     [ -n "$PUBLIC_IPV6" ] && echo "$PUBLIC_IPV6" > "$SS_META/public_ipv6"
 
-    # 放行防火墙端口
     open_ports "$LISTEN_PORT"
 
     if   [ "$INIT_SYS" = "systemd" ]; then setup_systemd_service
@@ -442,8 +476,44 @@ EOF
 }
 
 # ============================================================
+# 升级（保留配置，仅替换二进制）
+# ============================================================
+
+upgrade_ss() {
+    if [ ! -f "$SS_BIN" ]; then
+        echo -e "${RED}未检测到已安装的 Shadowsocks-Rust，请先安装${PLAIN}"
+        sleep 2; return
+    fi
+
+    local _cur_ver=""
+    _cur_ver=$("$SS_BIN" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    echo -e "  当前版本: ${YELLOW}${_cur_ver:-未知}${PLAIN}"
+
+    get_latest_version
+
+    if [ -n "$_cur_ver" ] && [ "$_cur_ver" = "$LAST_VERSION" ]; then
+        echo -e "${GREEN}已是最新版本，无需升级${PLAIN}"
+        sleep 2; return
+    fi
+
+    echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
+    download_ss
+    service_restart
+    sleep 2
+
+    if service_is_active; then
+        local _new_ver
+        _new_ver=$("$SS_BIN" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+    else
+        echo -e "${RED}✗ 升级后服务启动失败，请查看日志${PLAIN}"
+        service_logs
+    fi
+    sleep 2
+}
+
+# ============================================================
 # URL 编码
-# 修复：优先使用 python3，降级纯 bash（与 hy2 脚本统一）
 # ============================================================
 
 uri_encode() {
@@ -474,32 +544,24 @@ uri_encode() {
 # ============================================================
 
 read_config_vars() {
-    if [ ! -f "$SS_CONFIG" ]; then
-        return 1
-    fi
+    [ ! -f "$SS_CONFIG" ] && return 1
 
     if [ -d "$SS_META" ]; then
-        NAT_MODE=$(cat "$SS_META/nat_mode"   2>/dev/null); NAT_MODE=${NAT_MODE:-0}
-        EXT_PORT=$(cat "$SS_META/ext_port"   2>/dev/null)
+        NAT_MODE=$(cat "$SS_META/nat_mode"       2>/dev/null); NAT_MODE=${NAT_MODE:-0}
+        EXT_PORT=$(cat "$SS_META/ext_port"       2>/dev/null)
         LISTEN_PORT=$(cat "$SS_META/listen_port" 2>/dev/null)
-        PASSWORD=$(cat "$SS_META/password"   2>/dev/null)
-        METHOD=$(cat "$SS_META/method"       2>/dev/null)
-        PUBLIC_IP=$(cat "$SS_META/public_ip" 2>/dev/null)
+        PASSWORD=$(cat "$SS_META/password"       2>/dev/null)
+        METHOD=$(cat "$SS_META/method"           2>/dev/null)
+        PUBLIC_IP=$(cat "$SS_META/public_ip"     2>/dev/null)
         PUBLIC_IPV6=$(cat "$SS_META/public_ipv6" 2>/dev/null)
     fi
 
     # 兜底：从配置文件解析
-    if [[ -z "$EXT_PORT" ]]; then
-        EXT_PORT=$(grep '"server_port"' "$SS_CONFIG" | grep -oE '[0-9]+' | head -1)
-    fi
-    if [[ -z "$PASSWORD" ]]; then
-        PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
-    fi
-    if [[ -z "$METHOD" ]]; then
-        METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
-    fi
+    [[ -z "$EXT_PORT"  ]] && EXT_PORT=$(grep '"server_port"' "$SS_CONFIG" | grep -oE '[0-9]+' | head -1)
+    [[ -z "$PASSWORD"  ]] && PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
+    [[ -z "$METHOD"    ]] && METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
 
-    # IP 兜底（元数据为空时重新检测）
+    # IP 兜底
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
@@ -508,13 +570,11 @@ read_config_vars() {
 
 # ============================================================
 # 展示单个节点
-# 去除：Sing-box 输出（易出错，已移除）
 # ============================================================
 
 show_node() {
     local _ip="$1" _port="$2" _tag="$3"
     local _host="$_ip"
-
     echo "$_ip" | grep -q ':' && _host="[${_ip}]"
 
     local _node="SS-${_tag}-$(date +%m%d)"
@@ -609,7 +669,6 @@ show_config() {
 
 # ============================================================
 # 管理子菜单
-# 修复：补全"启动服务"选项，改为循环菜单（与 hy2 风格统一）
 # ============================================================
 
 manage_ss() {
@@ -646,9 +705,319 @@ uninstall_ss() {
         service_disable
         rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$SS_BIN"
         rm -rf /etc/shadowsocks-rust
+        remove_auto_update_quiet
         echo -e "${GREEN}已卸载完成${PLAIN}"
         sleep 1
     fi
+}
+
+# ============================================================
+# ★ 一键开启 BBR（与 hy2 脚本完全一致）
+# ============================================================
+
+enable_bbr() {
+    echo -e "\n${SKYBLUE}--- 一键开启 BBR ---${PLAIN}"
+
+    local _kver _kmaj _kmin
+    _kver=$(uname -r)
+    _kmaj=$(echo "$_kver" | cut -d. -f1)
+    _kmin=$(echo "$_kver" | cut -d. -f2)
+
+    echo -e "  当前内核: ${YELLOW}${_kver}${PLAIN}"
+
+    if [ "$_kmaj" -lt 4 ] || { [ "$_kmaj" -eq 4 ] && [ "$_kmin" -lt 9 ]; }; then
+        echo -e "${RED}内核版本过低（< 4.9），不支持 BBR，请升级内核后重试${PLAIN}"
+        sleep 3; return
+    fi
+
+    local _cur_cc
+    _cur_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    echo -e "  当前拥塞控制: ${YELLOW}${_cur_cc:-未知}${PLAIN}"
+
+    local _cc="bbr"
+    if [ "$_kmaj" -gt 5 ] || { [ "$_kmaj" -eq 5 ] && [ "$_kmin" -ge 15 ]; }; then
+        if modprobe tcp_bbr3 >/dev/null 2>&1 || \
+           grep -q "bbr3" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+            _cc="bbr3"
+        fi
+    fi
+
+    echo -e "${YELLOW}将启用 ${_cc} + FQ 队列调度...${PLAIN}"
+    modprobe tcp_bbr 2>/dev/null || true
+
+    local _sysctl_conf="/etc/sysctl.d/99-ss-bbr.conf"
+    cat > "$_sysctl_conf" <<EOF
+# Shadowsocks-Rust 脚本写入 - BBR 优化
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = ${_cc}
+net.ipv4.tcp_fastopen = 3
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 16384 16777216
+EOF
+
+    sysctl -p "$_sysctl_conf" >/dev/null 2>&1
+
+    local _result
+    _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    if [ "$_result" = "$_cc" ]; then
+        echo -e "${GREEN}✓ BBR (${_cc}) 已成功启用${PLAIN}"
+        echo -e "${GREEN}✓ 队列调度: $(sysctl -n net.core.default_qdisc 2>/dev/null)${PLAIN}"
+        echo -e "${GREEN}✓ 配置已写入 ${_sysctl_conf}，重启后生效${PLAIN}"
+    else
+        echo -e "${YELLOW}⚠ 回落至 bbr...${PLAIN}"
+        sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1
+        sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1
+        _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+        if [ "$_result" = "bbr" ]; then
+            echo -e "${GREEN}✓ BBR 已启用${PLAIN}"
+        else
+            echo -e "${RED}✗ BBR 启用失败，请手动检查内核模块${PLAIN}"
+        fi
+    fi
+    sleep 3
+}
+
+check_bbr_status() {
+    local _cc _qdisc
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+
+    echo -e "  拥塞控制算法: ${YELLOW}${_cc:-未知}${PLAIN}"
+    echo -e "  队列调度算法: ${YELLOW}${_qdisc:-未知}${PLAIN}"
+
+    if echo "${_cc:-}" | grep -qi "bbr"; then
+        echo -e "  BBR 状态: ${GREEN}已启用${PLAIN}"
+    else
+        echo -e "  BBR 状态: ${RED}未启用${PLAIN}"
+    fi
+
+    local _avail
+    _avail=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
+    echo -e "  可用算法: ${SKYBLUE}${_avail}${PLAIN}"
+}
+
+# ============================================================
+# ★ 自动更新（与 hy2 脚本逻辑一致，适配 ss 路径）
+# ============================================================
+
+install_auto_update() {
+    echo -e "\n${SKYBLUE}--- 配置自动更新 ---${PLAIN}"
+
+    if [ ! -f "$SS_BIN" ]; then
+        echo -e "${RED}未安装 Shadowsocks-Rust，请先安装${PLAIN}"
+        sleep 2; return
+    fi
+
+    cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
+#!/bin/bash
+# Shadowsocks-Rust 自动更新脚本（由 ssdev.sh 生成）
+SS_BIN="/usr/local/bin/ssserver"
+LOG="/var/log/ss-autoupdate.log"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+get_latest() {
+    local _ver
+    _ver=$(curl -Ls --max-time 15 \
+        "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" \
+        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+    echo "$_ver"
+}
+
+get_current() {
+    "$SS_BIN" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_arch() {
+    case $(uname -m) in
+        x86_64)        echo "x86_64-unknown-linux-musl"  ;;
+        aarch64|arm64) echo "aarch64-unknown-linux-musl" ;;
+        *) echo "" ;;
+    esac
+}
+
+restart_service() {
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled shadowsocks-server >/dev/null 2>&1; then
+        systemctl restart shadowsocks-server
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service shadowsocks-server restart 2>/dev/null
+    fi
+}
+
+main() {
+    local _latest _current _arch _url
+    _latest=$(get_latest)
+    _current=$(get_current)
+    _arch=$(detect_arch)
+
+    if [ -z "$_latest" ] || [ -z "$_arch" ]; then
+        echo "[$TIMESTAMP] 获取版本或架构失败，跳过更新" >> "$LOG"
+        return
+    fi
+
+    if [ "$_current" = "$_latest" ]; then
+        echo "[$TIMESTAMP] 已是最新版本 $_current，无需更新" >> "$LOG"
+        return
+    fi
+
+    echo "[$TIMESTAMP] 发现新版本: $_current → $_latest，开始更新..." >> "$LOG"
+
+    _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${_latest}/shadowsocks-${_latest}.${_arch}.tar.xz"
+    pkill -f "ssserver" 2>/dev/null
+    sleep 1
+    rm -f "$SS_BIN"
+
+    if wget -q --timeout=60 -O /tmp/ss-rust.tar.xz "$_url" 2>/dev/null && \
+       tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver 2>/dev/null; then
+        mv /tmp/ssserver "$SS_BIN"
+        chmod +x "$SS_BIN"
+        rm -f /tmp/ss-rust.tar.xz
+        restart_service
+        sleep 2
+        local _new
+        _new=$(get_current)
+        echo "[$TIMESTAMP] 更新成功，当前版本: $_new" >> "$LOG"
+    else
+        echo "[$TIMESTAMP] 更新失败，请手动检查" >> "$LOG"
+    fi
+
+    # 保留最近 500 行日志
+    tail -n 500 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
+}
+
+main
+AUTOUPDATE_EOF
+
+    chmod +x "$AUTO_UPDATE_SCRIPT"
+
+    if ! command -v crontab >/dev/null 2>&1; then
+        echo -e "${YELLOW}正在安装 cron...${PLAIN}"
+        case "$RELEASE" in
+            alpine) apk add --no-cache dcron >/dev/null 2>&1; rc-update add dcron default >/dev/null 2>&1; rc-service dcron start >/dev/null 2>&1 ;;
+            arch)   pacman -Sy --noconfirm cronie >/dev/null 2>&1 ;;
+            centos|rocky|fedora) dnf install -y cronie >/dev/null 2>&1 ;;
+            *)      apt-get install -y -qq cron >/dev/null 2>&1 ;;
+        esac
+    fi
+
+    local _cron_entry="0 3 * * * /bin/bash ${AUTO_UPDATE_SCRIPT} >> ${AUTO_UPDATE_LOG} 2>&1"
+    ( crontab -l 2>/dev/null | grep -v "ss-autoupdate"; echo "$_cron_entry" ) | crontab -
+
+    echo -e "${GREEN}✓ 自动更新已配置${PLAIN}"
+    echo -e "  执行时间: ${YELLOW}每天 03:00${PLAIN}"
+    echo -e "  更新日志: ${YELLOW}${AUTO_UPDATE_LOG}${PLAIN}"
+    echo -e "  更新脚本: ${YELLOW}${AUTO_UPDATE_SCRIPT}${PLAIN}"
+    sleep 3
+}
+
+remove_auto_update() {
+    remove_auto_update_quiet
+    echo -e "${GREEN}✓ 自动更新已移除${PLAIN}"
+    sleep 2
+}
+
+remove_auto_update_quiet() {
+    ( crontab -l 2>/dev/null | grep -v "ss-autoupdate" ) | crontab - 2>/dev/null
+    rm -f "$AUTO_UPDATE_SCRIPT"
+}
+
+check_auto_update_status() {
+    if crontab -l 2>/dev/null | grep -q "ss-autoupdate"; then
+        echo -e "  自动更新: ${GREEN}已启用（每天 03:00）${PLAIN}"
+    else
+        echo -e "  自动更新: ${RED}未启用${PLAIN}"
+    fi
+
+    if [ -f "$AUTO_UPDATE_LOG" ]; then
+        echo -e "\n  ${SKYBLUE}最近更新记录（最后5条）:${PLAIN}"
+        tail -n 5 "$AUTO_UPDATE_LOG" 2>/dev/null | while IFS= read -r line; do
+            echo -e "    ${line}"
+        done
+    fi
+}
+
+view_auto_update_log() {
+    if [ -f "$AUTO_UPDATE_LOG" ]; then
+        echo -e "\n${SKYBLUE}--- 自动更新日志（最近 30 条）---${PLAIN}"
+        tail -n 30 "$AUTO_UPDATE_LOG"
+    else
+        echo -e "${YELLOW}暂无更新日志${PLAIN}"
+    fi
+    echo ""
+    read -r -p "按回车继续..." _tmp
+}
+
+# ============================================================
+# ★ 系统信息
+# ============================================================
+
+show_system_info() {
+    echo -e "\n${SKYBLUE}--- 系统信息 ---${PLAIN}"
+    echo -e "  系统: ${YELLOW}$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2 || uname -s)${PLAIN}"
+    echo -e "  内核: ${YELLOW}$(uname -r)${PLAIN}"
+    echo -e "  架构: ${YELLOW}$(uname -m)${PLAIN}"
+
+    local _cpu_model _cpu_cores
+    _cpu_model=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs)
+    _cpu_cores=$(nproc 2>/dev/null || grep -c "processor" /proc/cpuinfo 2>/dev/null)
+    echo -e "  CPU: ${YELLOW}${_cpu_model:-未知} × ${_cpu_cores:-?}${PLAIN}"
+
+    local _mem_total _mem_free _mem_used
+    _mem_total=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
+    _mem_free=$(awk '/MemAvailable/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
+    _mem_used=$(( ${_mem_total:-0} - ${_mem_free:-0} ))
+    echo -e "  内存: ${YELLOW}${_mem_used}MB / ${_mem_total}MB${PLAIN}"
+
+    local _disk
+    _disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')
+    echo -e "  磁盘: ${YELLOW}${_disk:-未知}${PLAIN}"
+
+    local _load
+    _load=$(uptime 2>/dev/null | awk -F'load average:' '{print $2}' | xargs)
+    echo -e "  负载: ${YELLOW}${_load:-未知}${PLAIN}"
+
+    local _uptime
+    _uptime=$(uptime -p 2>/dev/null || uptime 2>/dev/null | awk -F'up ' '{print $2}' | cut -d, -f1-2)
+    echo -e "  运行时间: ${YELLOW}${_uptime:-未知}${PLAIN}"
+
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    check_bbr_status
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    check_auto_update_status
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo ""
+    read -r -p "按回车返回..." _tmp
+}
+
+# ============================================================
+# ★ 服务器工具子菜单
+# ============================================================
+
+server_tools_menu() {
+    while true; do
+        clear
+        echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
+        echo -e "1. 一键开启 BBR"
+        echo -e "2. 查看 BBR 状态"
+        echo -e "3. 开启自动更新（每天 03:00）"
+        echo -e "4. 关闭自动更新"
+        echo -e "5. 查看自动更新日志"
+        echo -e "6. 系统信息总览"
+        echo -e "0. 返回"
+        read -r -p "请选择: " opt
+        case $opt in
+            1) enable_bbr ;;
+            2) echo ""; check_bbr_status; echo ""; read -r -p "按回车继续..." _tmp ;;
+            3) install_auto_update ;;
+            4) remove_auto_update ;;
+            5) view_auto_update_log ;;
+            6) show_system_info ;;
+            0) return ;;
+            *) echo -e "${RED}输入错误${PLAIN}"; sleep 1 ;;
+        esac
+    done
 }
 
 # ============================================================
@@ -674,7 +1043,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.0.1${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.1.0-dev${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -687,7 +1056,9 @@ main_menu() {
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 安装 Shadowsocks 服务"
         echo -e " 2. 管理 Shadowsocks 配置 (查看节点)"
-        echo -e " 3. 卸载 Shadowsocks 服务"
+        echo -e " 3. 升级 Shadowsocks 服务"
+        echo -e " 4. 卸载 Shadowsocks 服务"
+        echo -e " 5. 服务器工具  (BBR / 自动更新 / 系统信息)"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
 
@@ -695,7 +1066,9 @@ main_menu() {
         case $choice in
             1) install_ss ;;
             2) manage_ss ;;
-            3) uninstall_ss ;;
+            3) upgrade_ss ;;
+            4) uninstall_ss ;;
+            5) server_tools_menu ;;
             0) exit 0 ;;
             *) echo -e "${RED}输入错误...${PLAIN}"; sleep 1 ;;
         esac
@@ -707,5 +1080,6 @@ main_menu() {
 # ============================================================
 
 check_root
+check_sys
 detect_init
 main_menu
