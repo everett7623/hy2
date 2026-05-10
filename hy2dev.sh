@@ -25,7 +25,7 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# 更新日志 v2.3.1:
+# 更新日志 v2.3.1-dev:
 #   + 修复版本号解析（剥离 app/ 前缀，升级比对不再误判）
 #   + singbox 默认 insecure=false，更安全；分享链接同步为 insecure=0
 #   + singbox 增加 sniff: true，DNS 嗅探更准确
