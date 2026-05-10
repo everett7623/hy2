@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.2.2
+# 版本：v2.2.3
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-09
+# 更新日期: 2026-05-10
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -597,16 +597,14 @@ uri_encode() {
 show_node() {
     local _ip="$1" _port="$2" _tag="$3"
 
-    # URI 中 IPv6 加方括号
     local _host="$_ip"
     echo "$_ip" | grep -q ':' && _host="[${_ip}]"
 
     local _node="HY2-${_tag}-$(date +%m%d)"
-    # 密码单独转义（含 / + @ 等特殊字符），结构字符保持原样
     local _pass_encoded
     _pass_encoded=$(uri_encode "${PASSWORD}")
+
     local _link="hysteria2://${_pass_encoded}@${_host}:${_port}/?insecure=1&sni=${SNI}#${_node}"
-    # 二维码 data 参数对整条链接再 encode 一次
     local _encoded
     _encoded=$(uri_encode "$_link")
     local _qr="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
@@ -621,7 +619,7 @@ show_node() {
     echo -e "  ${_qr}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # ---- Clash Meta ----
+    # ---- Clash Meta / Stash / Clash Verge ----
     echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
     echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: ${BW_UP}, down: ${BW_DOWN}}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -634,49 +632,6 @@ show_node() {
     # ---- Loon ----
     echo -e "${GREEN} Loon 配置:${PLAIN}"
     echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # ---- Sing-box 完整可用配置 ----
-    echo -e "${GREEN} Sing-box 完整配置 (可直接导入):${PLAIN}"
-    cat <<SINGBOX
-{
-  "log": { "level": "info" },
-  "inbounds": [
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "127.0.0.1",
-      "listen_port": 2080
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "hysteria2",
-      "tag": "${_node}",
-      "server": "${_ip}",
-      "server_port": ${_port},
-      "up_mbps": ${BW_UP},
-      "down_mbps": ${BW_DOWN},
-      "password": "${PASSWORD}",
-      "tls": {
-        "enabled": true,
-        "server_name": "${SNI}",
-        "insecure": true
-      }
-    },
-    { "type": "direct", "tag": "direct" },
-    { "type": "block", "tag": "block" },
-    { "type": "dns", "tag": "dns-out" }
-  ],
-  "route": {
-    "rules": [
-      { "protocol": "dns", "outbound": "dns-out" },
-      { "geoip": ["private"], "outbound": "direct" }
-    ],
-    "final": "${_node}"
-  }
-}
-SINGBOX
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -821,7 +776,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.2.0${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.2.3${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
