@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v3.0.0 (Cipher Selection & Standard Format)
+# 版本：v3.0.1 (Cipher Selection & Standard Format)
 # GitHub: https://github.com/shadowsocks/shadowsocks-rust
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-04-22
+# 更新日期: 2026-05-10
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
@@ -521,9 +521,6 @@ show_node() {
     echo -e "${GREEN} Quantumult X 配置:${PLAIN}"
     echo -e "  shadowsocks=${_ip}:${_port}, method=${METHOD}, password=${PASSWORD}, fast-open=false, udp-relay=true, tag=${_node}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    echo -e "${GREEN} Sing-box 配置 (Outbound):${PLAIN}"
-    echo -e "  { \"type\": \"shadowsocks\", \"tag\": \"${_node}\", \"server\": \"${_ip}\", \"server_port\": ${_port}, \"method\": \"${METHOD}\", \"password\": \"${PASSWORD}\" }"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
 show_config() {
@@ -622,7 +619,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN} Shadowsocks-Rust Management Script v3.0.0${PLAIN}"
+        echo -e "${GREEN} Shadowsocks-Rust Management Script v3.0.1${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/shadowsocks/shadowsocks-rust${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
