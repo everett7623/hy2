@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.2.3
+# 版本：v2.2.4
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-10
+# 更新日期: 2026-05-11
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -667,7 +667,10 @@ show_config() {
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # IPv4 节点
-    [ -n "$PUBLIC_IP" ] && show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+    if [ -n "$PUBLIC_IP" ]; then
+        echo -e "${YELLOW}▼ IPv4 节点${PLAIN}"
+        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+    fi
 
     # IPv6 节点（双栈或纯 IPv6）
     if [ -n "$PUBLIC_IPV6" ]; then
@@ -776,7 +779,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.2.3${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.2.4${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
