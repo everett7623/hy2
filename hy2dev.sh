@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.1-dev (+ Upgrade & Server Tools)
+# 版本：v2.3.2-dev (+ Upgrade & Server Tools)
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-10
+# 更新日期: 2026-05-11
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -25,7 +25,7 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# 更新日志 v2.3.1-dev:
+# 更新日志 v2.3.2-dev:
 #   + 修复版本号解析（剥离 app/ 前缀，升级比对不再误判）
 #   + singbox 默认 insecure=false，更安全；分享链接同步为 insecure=0
 #   + singbox 增加 sniff: true，DNS 嗅探更准确
@@ -706,7 +706,13 @@ show_config() {
     [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    [ -n "$PUBLIC_IP"   ] && show_node "$PUBLIC_IP"   "$EXT_PORT" "v4"
+    # IPv4 节点
+    if [ -n "$PUBLIC_IP" ]; then
+        echo -e "${YELLOW}▼ IPv4 节点${PLAIN}"
+        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+    fi
+
+    # IPv6 节点（双栈或纯 IPv6）
     if [ -n "$PUBLIC_IPV6" ]; then
         echo -e "${YELLOW}▼ IPv6 节点${PLAIN}"
         show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
@@ -1197,7 +1203,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.1${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.3.2${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
