@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.2-dev (+ Upgrade & Server Tools)
+# 版本：v2.3.3-dev
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-11
+# 更新日期: 2026-05-12
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -25,22 +25,22 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# 更新日志 v2.3.2-dev:
-#   + 修复版本号解析（剥离 app/ 前缀，升级比对不再误判）
-#   + singbox 默认 insecure=false，更安全；分享链接同步为 insecure=0
-#   + singbox 增加 sniff: true，DNS 嗅探更准确
-#   + 恢复多客户端格式输出（Clash Meta / Surge / Loon），保留完整兼容性
-#   + 日志显示行数提升至 50 行
-#   + 密码自动生成强度提升（base64 16字节 → 20位随机）
-#   + 新增：一键开启 BBR 拥塞控制
-#   + 新增：定时自动更新（cron，每天凌晨3点检查）
+# 更新日志 v2.3.3（基于 v2.2.4 稳定版重构 dev 分支）:
+#   fix: download_hy2() URL 修复 —— 下载时恢复 app/ 前缀，升级对比使用剥离后版本号
+#   fix: 密码自动生成改为两步法，避免管道截断导致空密码
+#   fix: change_bandwidth() sed 改用 awk 重写配置，兼容任意缩进格式
+#   fix: 分享链接 insecure=1（自签证书场景下正确值，与 v2.2.4 保持一致）
 #   + 新增：防火墙自动放行端口（ufw / firewalld / iptables 三套兼容）
+#   + 新增：一键开启 BBR 拥塞控制（支持 BBRv3 自动检测）
+#   + 新增：定时自动更新（cron，每天凌晨 3 点检查）
 #   + 新增：服务器工具子菜单（BBR / 自动更新 / 防火墙 / 系统信息）
-#   + 去除：去除singbox输出
+#   + 新增：管理菜单增加修改带宽选项
+#   + 日志显示行数提升至 50 行
 #====================================================================================
 
 # ============================================================
 # 自举：确保以 bash 运行（兼容 curl | sh 方式执行）
+# Alpine 等系统默认 sh 为 busybox，不支持 bash 语法
 # ============================================================
 if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
@@ -315,24 +315,38 @@ install_dependencies() {
 
 # ============================================================
 # 获取版本 & 下载
-# 修复：剥离 app/ 前缀，确保版本号格式为 vX.Y.Z
+#
+# 设计说明：
+#   Hysteria 官方 GitHub tag 格式为 "app/v2.x.x"
+#   下载 URL 需要完整 tag（含 app/ 前缀）
+#   版本号对比（当前 vs 最新）使用剥离前缀后的 vX.Y.Z 格式
+#
+#   因此维护两个变量：
+#     LAST_VERSION     — 纯版本号（vX.Y.Z），用于对比和展示
+#     LAST_VERSION_TAG — 完整 tag（app/vX.Y.Z），用于构造下载 URL
 # ============================================================
 
 get_latest_version() {
     echo -e "${YELLOW}正在获取最新版本...${PLAIN}"
-    LAST_VERSION=$(curl -Ls --max-time 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
+
+    # 从 GitHub API 获取完整 tag（如 app/v2.6.1）
+    local _raw_tag
+    _raw_tag=$(curl -Ls --max-time 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
 
-    # 剥离 "app/" 前缀（Hysteria 官方 tag 格式为 app/v2.x.x）
-    LAST_VERSION="${LAST_VERSION#app/}"
-
-    if [ -z "$LAST_VERSION" ]; then
-        LAST_VERSION=$(curl -Ls --max-time 10 -o /dev/null -w "%{url_effective}" \
+    # 备用：跟随重定向取 URL 末段
+    if [ -z "$_raw_tag" ]; then
+        _raw_tag=$(curl -Ls --max-time 10 -o /dev/null -w "%{url_effective}" \
             "https://github.com/apernet/hysteria/releases/latest" | sed 's|.*/tag/||')
-        LAST_VERSION="${LAST_VERSION#app/}"
     fi
 
-    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && exit 1
+    [ -z "$_raw_tag" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && exit 1
+
+    # 保留完整 tag 用于下载 URL
+    LAST_VERSION_TAG="$_raw_tag"
+    # 剥离 app/ 前缀用于版本对比和显示
+    LAST_VERSION="${_raw_tag#app/}"
+
     echo -e "${GREEN}最新版本: ${LAST_VERSION}${PLAIN}"
 }
 
@@ -347,14 +361,18 @@ download_hy2() {
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
 
-    local _url_github="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION}/hysteria-linux-${_arch}"
+    # 主源使用完整 tag（含 app/ 前缀），确保 URL 正确
+    local _url_github="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION_TAG}/hysteria-linux-${_arch}"
+    # 备用：官方永久镜像（始终指向最新版，无需 tag）
     local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
 
+    # 杀旧进程 + 删旧二进制，避免 "Text file busy"
     pkill -f "hysteria server" 2>/dev/null
     sleep 1
     rm -f "$HY_BIN"
 
     echo -e "${YELLOW}正在下载 hysteria-linux-${_arch}...${PLAIN}"
+
     if wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_github" 2>/dev/null; then
         chmod +x "$HY_BIN"
         echo -e "${GREEN}下载完成（来源：GitHub）${PLAIN}"
@@ -398,7 +416,7 @@ configure_std_port() {
 
 open_firewall_port() {
     local _port="$1"
-    local _proto="${2:-udp}"  # Hysteria2 默认 UDP
+    local _proto="${2:-udp}"
 
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
         ufw allow "${_port}/${_proto}" >/dev/null 2>&1
@@ -410,15 +428,33 @@ open_firewall_port() {
     elif command -v iptables >/dev/null 2>&1; then
         iptables -I INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null
         # 尝试持久化
-        if command -v iptables-save >/dev/null 2>&1; then
-            if [ -f /etc/iptables/rules.v4 ]; then
-                iptables-save > /etc/iptables/rules.v4 2>/dev/null
-            fi
+        if [ -f /etc/iptables/rules.v4 ] && command -v iptables-save >/dev/null 2>&1; then
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null
         fi
         echo -e "  ${GREEN}✓ iptables 已放行 ${_proto}/${_port}${PLAIN}"
     else
         echo -e "  ${YELLOW}⚠ 未检测到防火墙工具，请手动放行 ${_proto}/${_port}${PLAIN}"
     fi
+}
+
+# ============================================================
+# 密码生成（两步法，避免管道截断导致空密码）
+# ============================================================
+
+gen_password() {
+    local _pass=""
+    if command -v openssl >/dev/null 2>&1; then
+        # 生成足够长的随机串，tr 过滤后截取 20 位
+        # 用循环保证长度充足，避免极端情况下过滤后不足 20 位
+        while [ ${#_pass} -lt 20 ]; do
+            _pass="${_pass}$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9')"
+        done
+    else
+        while [ ${#_pass} -lt 20 ]; do
+            _pass="${_pass}$(tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | dd bs=32 count=1 2>/dev/null)"
+        done
+    fi
+    printf '%s' "${_pass:0:20}"
 }
 
 # ============================================================
@@ -447,14 +483,9 @@ install_hy2() {
     open_firewall_port "$LISTEN_PORT" "udp"
 
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
-    if [ -z "$PASSWORD" ]; then
-        if command -v openssl >/dev/null 2>&1; then
-            PASSWORD=$(openssl rand -base64 16 | tr -dc 'A-Za-z0-9' | head -c 20)
-        else
-            PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 20)
-        fi
-    fi
+    [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
 
+    # IPv6 Only：监听双栈
     local LISTEN_ADDR=":${LISTEN_PORT}"
     if [ "$IPV6_ONLY" = "1" ]; then
         echo -e "${YELLOW}纯 IPv6 机器，将监听 [::]:${LISTEN_PORT}${PLAIN}"
@@ -534,7 +565,7 @@ EOF
 
 # ============================================================
 # 升级（保留配置，仅替换二进制）
-# 修复：版本比对使用剥离前缀后的纯 vX.Y.Z 格式
+# 版本对比使用剥离 app/ 前缀后的纯 vX.Y.Z 格式
 # ============================================================
 
 upgrade_hy2() {
@@ -548,8 +579,8 @@ upgrade_hy2() {
     echo -e "  当前版本: ${YELLOW}${_cur_ver:-未知}${PLAIN}"
 
     get_latest_version
+    # LAST_VERSION 已剥离 app/ 前缀（vX.Y.Z），可直接与 _cur_ver 对比
 
-    # LAST_VERSION 已剥离 app/ 前缀，直接与 _cur_ver 比对
     if [ -n "$_cur_ver" ] && [ "$_cur_ver" = "$LAST_VERSION" ]; then
         echo -e "${GREEN}已是最新版本，无需升级${PLAIN}"
         sleep 2; return
@@ -584,12 +615,12 @@ read_config_vars() {
     SNI="amd.com"
 
     if [ -d "$HY_META" ]; then
-        NAT_MODE=$(cat "$HY_META/nat_mode"      2>/dev/null); NAT_MODE=${NAT_MODE:-0}
-        EXT_PORT=$(cat "$HY_META/ext_port"      2>/dev/null)
-        PUBLIC_IP=$(cat "$HY_META/public_ip"    2>/dev/null)
+        NAT_MODE=$(cat "$HY_META/nat_mode"       2>/dev/null); NAT_MODE=${NAT_MODE:-0}
+        EXT_PORT=$(cat "$HY_META/ext_port"       2>/dev/null)
+        PUBLIC_IP=$(cat "$HY_META/public_ip"     2>/dev/null)
         PUBLIC_IPV6=$(cat "$HY_META/public_ipv6" 2>/dev/null)
-        BW_UP=$(cat "$HY_META/bw_up"            2>/dev/null); BW_UP=${BW_UP:-50}
-        BW_DOWN=$(cat "$HY_META/bw_down"        2>/dev/null); BW_DOWN=${BW_DOWN:-100}
+        BW_UP=$(cat "$HY_META/bw_up"             2>/dev/null); BW_UP=${BW_UP:-50}
+        BW_DOWN=$(cat "$HY_META/bw_down"         2>/dev/null); BW_DOWN=${BW_DOWN:-100}
     fi
 
     [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
@@ -603,7 +634,7 @@ read_config_vars() {
 }
 
 # ============================================================
-# URL encode（优先 python3，降级纯 bash）
+# URL encode — 优先 python3，降级纯 bash 逐字节处理
 # ============================================================
 
 uri_encode() {
@@ -644,6 +675,7 @@ show_node() {
     local _pass_encoded
     _pass_encoded=$(uri_encode "${PASSWORD}")
 
+    # insecure=1：自签名证书场景下客户端必须跳过证书验证
     local _link="hysteria2://${_pass_encoded}@${_host}:${_port}/?insecure=1&sni=${SNI}#${_node}"
     local _encoded
     _encoded=$(uri_encode "$_link")
@@ -738,10 +770,7 @@ change_password() {
     read_config_vars
     echo -e "  当前密码: ${YELLOW}${PASSWORD}${PLAIN}"
     read -r -p "请输入新密码 [留空自动生成]: " NEW_PASS
-    if [ -z "$NEW_PASS" ]; then
-        NEW_PASS=$(openssl rand -base64 16 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 20 \
-            || tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)
-    fi
+    [ -z "$NEW_PASS" ] && NEW_PASS=$(gen_password)
 
     sed -i "s|password:.*|password: \"${NEW_PASS}\"|" "$HY_CONFIG"
     service_restart
@@ -752,6 +781,7 @@ change_password() {
 
 # ============================================================
 # 修改带宽
+# 使用 awk 重写 bandwidth 块，兼容任意缩进格式
 # ============================================================
 
 change_bandwidth() {
@@ -762,13 +792,21 @@ change_bandwidth() {
 
     read_config_vars
     echo -e "  当前带宽: ${YELLOW}上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
-    read -r -p "请输入新的上行带宽 Mbps [留空保持不变]: " _new_up
-    read -r -p "请输入新的下行带宽 Mbps [留空保持不变]: " _new_dn
+    read -r -p "请输入新的上行带宽 Mbps [留空保持 ${BW_UP}]: " _new_up
+    read -r -p "请输入新的下行带宽 Mbps [留空保持 ${BW_DOWN}]: " _new_dn
     [[ -n "$_new_up" ]] && BW_UP="$_new_up"
     [[ -n "$_new_dn" ]] && BW_DOWN="$_new_dn"
 
-    sed -i "s|^  up:.*|  up: ${BW_UP} mbps|" "$HY_CONFIG"
-    sed -i "s|^  down:.*|  down: ${BW_DOWN} mbps|" "$HY_CONFIG"
+    # 用 awk 精准替换 bandwidth 块下的 up/down 行，不依赖固定缩进
+    local _tmp_cfg
+    _tmp_cfg=$(mktemp)
+    awk -v up="${BW_UP}" -v dn="${BW_DOWN}" '
+        /^bandwidth:/ { in_bw=1; print; next }
+        in_bw && /^[^[:space:]]/ { in_bw=0 }
+        in_bw && /^[[:space:]]+up:/ { sub(/up:.*/, "up: " up " mbps"); }
+        in_bw && /^[[:space:]]+down:/ { sub(/down:.*/, "down: " dn " mbps"); }
+        { print }
+    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG"
 
     # 更新元数据
     echo "$BW_UP"   > "$HY_META/bw_up"
@@ -832,18 +870,13 @@ uninstall_hy2() {
 }
 
 # ============================================================
-# ★ 新增：一键开启 BBR
-# 说明：
-#   - 内核 < 4.9：不支持 BBR，提示升级内核
-#   - 内核 4.9 ~ 5.14：设置 tcp_congestion_control=bbr + fq
-#   - 内核 >= 5.15：尝试启用 BBRv3（bbr3），否则回落到 BBRv2/BBR
-#   - Alpine/OpenRC 系统：写入 /etc/sysctl.d/99-bbr.conf 并 sysctl -p
+# 一键开启 BBR 拥塞控制
+# 内核 < 4.9：不支持；4.9~5.14：BBR；>= 5.15：尝试 BBRv3
 # ============================================================
 
 enable_bbr() {
     echo -e "\n${SKYBLUE}--- 一键开启 BBR ---${PLAIN}"
 
-    # 检查内核版本
     local _kver _kmaj _kmin
     _kver=$(uname -r)
     _kmaj=$(echo "$_kver" | cut -d. -f1)
@@ -856,7 +889,6 @@ enable_bbr() {
         sleep 3; return
     fi
 
-    # 检查当前拥塞控制算法
     local _cur_cc
     _cur_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     echo -e "  当前拥塞控制: ${YELLOW}${_cur_cc:-未知}${PLAIN}"
@@ -864,7 +896,6 @@ enable_bbr() {
     # 选择 BBR 版本
     local _cc="bbr"
     if [ "$_kmaj" -gt 5 ] || { [ "$_kmaj" -eq 5 ] && [ "$_kmin" -ge 15 ]; }; then
-        # 尝试 BBRv3（部分发行版内核已包含）
         if modprobe tcp_bbr3 >/dev/null 2>&1 || \
            grep -q "bbr3" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
             _cc="bbr3"
@@ -872,11 +903,8 @@ enable_bbr() {
     fi
 
     echo -e "${YELLOW}将启用 ${_cc} + FQ 队列调度...${PLAIN}"
-
-    # 加载模块
     modprobe tcp_bbr 2>/dev/null || true
 
-    # 写入 sysctl 配置（持久化）
     local _sysctl_conf="/etc/sysctl.d/99-hysteria-bbr.conf"
     cat > "$_sysctl_conf" <<EOF
 # Hysteria2 脚本写入 - BBR 优化
@@ -891,15 +919,14 @@ EOF
 
     sysctl -p "$_sysctl_conf" >/dev/null 2>&1
 
-    # 验证
     local _result
     _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     if [ "$_result" = "$_cc" ]; then
         echo -e "${GREEN}✓ BBR (${_cc}) 已成功启用${PLAIN}"
         echo -e "${GREEN}✓ 队列调度: $(sysctl -n net.core.default_qdisc 2>/dev/null)${PLAIN}"
-        echo -e "${GREEN}✓ 配置已写入 ${_sysctl_conf}，重启后生效${PLAIN}"
+        echo -e "${GREEN}✓ 配置已写入 ${_sysctl_conf}，重启后持续生效${PLAIN}"
     else
-        echo -e "${YELLOW}⚠ 当前内核可能不包含 ${_cc} 模块，回落至 bbr${PLAIN}"
+        echo -e "${YELLOW}⚠ ${_cc} 模块不可用，回落至 bbr${PLAIN}"
         sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1
         sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1
         _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
@@ -909,7 +936,6 @@ EOF
             echo -e "${RED}✗ BBR 启用失败，请手动检查内核模块${PLAIN}"
         fi
     fi
-
     sleep 3
 }
 
@@ -917,26 +943,22 @@ check_bbr_status() {
     local _cc _qdisc
     _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    local _avail
+    _avail=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
 
     echo -e "  拥塞控制算法: ${YELLOW}${_cc:-未知}${PLAIN}"
     echo -e "  队列调度算法: ${YELLOW}${_qdisc:-未知}${PLAIN}"
+    echo -e "  可用算法    : ${SKYBLUE}${_avail}${PLAIN}"
 
     if echo "${_cc:-}" | grep -qi "bbr"; then
-        echo -e "  BBR 状态: ${GREEN}已启用${PLAIN}"
+        echo -e "  BBR 状态    : ${GREEN}已启用${PLAIN}"
     else
-        echo -e "  BBR 状态: ${RED}未启用${PLAIN}"
+        echo -e "  BBR 状态    : ${RED}未启用${PLAIN}"
     fi
-
-    # 可用的拥塞控制算法
-    local _avail
-    _avail=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
-    echo -e "  可用算法: ${SKYBLUE}${_avail}${PLAIN}"
 }
 
 # ============================================================
-# ★ 新增：自动更新 Hysteria2
-# 实现方式：写入独立脚本 + cron job（每天 03:00 执行）
-# 支持 systemd / openrc 系统
+# 定时自动更新（cron，每天凌晨 3 点）
 # ============================================================
 
 install_auto_update() {
@@ -947,7 +969,6 @@ install_auto_update() {
         sleep 2; return
     fi
 
-    # 写入更新脚本
     cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
 #!/bin/bash
 # Hysteria2 自动更新脚本（由 hy2.sh 生成）
@@ -956,11 +977,11 @@ LOG="/var/log/hy2-autoupdate.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 get_latest() {
-    local _ver
-    _ver=$(curl -Ls --max-time 15 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
+    local _raw _ver
+    _raw=$(curl -Ls --max-time 15 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
-    _ver="${_ver#app/}"
-    echo "$_ver"
+    # 返回完整 tag 和剥离后版本号，以 "|" 分隔
+    printf '%s|%s' "$_raw" "${_raw#app/}"
 }
 
 get_current() {
@@ -969,12 +990,12 @@ get_current() {
 
 detect_arch() {
     case $(uname -m) in
-        x86_64)        echo "amd64"  ;;
-        aarch64|arm64) echo "arm64"  ;;
-        armv7l|armv7)  echo "armv7"  ;;
-        s390x)         echo "s390x"  ;;
+        x86_64)        echo "amd64"   ;;
+        aarch64|arm64) echo "arm64"   ;;
+        armv7l|armv7)  echo "armv7"   ;;
+        s390x)         echo "s390x"   ;;
         loongarch64)   echo "loong64" ;;
-        *) echo ""; ;;
+        *) echo "" ;;
     esac
 }
 
@@ -987,8 +1008,10 @@ restart_service() {
 }
 
 main() {
-    local _latest _current _arch _url
-    _latest=$(get_latest)
+    local _info _tag _latest _current _arch
+    _info=$(get_latest)
+    _tag="${_info%%|*}"
+    _latest="${_info##*|}"
     _current=$(get_current)
     _arch=$(detect_arch)
 
@@ -1004,7 +1027,8 @@ main() {
 
     echo "[$TIMESTAMP] 发现新版本: $_current → $_latest，开始更新..." >> "$LOG"
 
-    _url="https://github.com/apernet/hysteria/releases/download/${_latest}/hysteria-linux-${_arch}"
+    # 使用完整 tag 构造下载 URL
+    local _url="https://github.com/apernet/hysteria/releases/download/${_tag}/hysteria-linux-${_arch}"
     pkill -f "hysteria server" 2>/dev/null
     sleep 1
     rm -f "$HY_BIN"
@@ -1013,20 +1037,17 @@ main() {
         chmod +x "$HY_BIN"
         restart_service
         sleep 2
-        local _new
-        _new=$(get_current)
-        echo "[$TIMESTAMP] 更新成功，当前版本: $_new" >> "$LOG"
+        echo "[$TIMESTAMP] 更新成功，当前版本: $(get_current)" >> "$LOG"
     else
-        echo "[$TIMESTAMP] 下载失败，尝试备用镜像..." >> "$LOG"
-        _url="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
-        if wget -q --timeout=60 -O "$HY_BIN" "$_url" 2>/dev/null; then
+        echo "[$TIMESTAMP] GitHub 下载失败，尝试备用镜像..." >> "$LOG"
+        local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
+        if wget -q --timeout=60 -O "$HY_BIN" "$_url_mirror" 2>/dev/null; then
             chmod +x "$HY_BIN"
             restart_service
             sleep 2
-            local _new
-            _new=$(get_current)
-            echo "[$TIMESTAMP] 更新成功（备用源），当前版本: $_new" >> "$LOG"
+            echo "[$TIMESTAMP] 更新成功（备用源），当前版本: $(get_current)" >> "$LOG"
         else
+            rm -f "$HY_BIN"
             echo "[$TIMESTAMP] 更新失败，请手动检查" >> "$LOG"
         fi
     fi
@@ -1040,7 +1061,7 @@ AUTOUPDATE_EOF
 
     chmod +x "$AUTO_UPDATE_SCRIPT"
 
-    # 安装 cron
+    # 安装 cron（如未安装）
     if ! command -v crontab >/dev/null 2>&1; then
         echo -e "${YELLOW}正在安装 cron...${PLAIN}"
         case "$RELEASE" in
@@ -1089,8 +1110,8 @@ check_auto_update_status() {
 }
 
 view_auto_update_log() {
+    echo -e "\n${SKYBLUE}--- 自动更新日志（最近 30 条）---${PLAIN}"
     if [ -f "$AUTO_UPDATE_LOG" ]; then
-        echo -e "\n${SKYBLUE}--- 自动更新日志（最近 30 条）---${PLAIN}"
         tail -n 30 "$AUTO_UPDATE_LOG"
     else
         echo -e "${YELLOW}暂无更新日志${PLAIN}"
@@ -1100,59 +1121,46 @@ view_auto_update_log() {
 }
 
 # ============================================================
-# ★ 新增：系统信息
+# 系统信息
 # ============================================================
 
 show_system_info() {
     echo -e "\n${SKYBLUE}--- 系统信息 ---${PLAIN}"
-    echo -e "  系统: ${YELLOW}$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2 || uname -s)${PLAIN}"
-    echo -e "  内核: ${YELLOW}$(uname -r)${PLAIN}"
-    echo -e "  架构: ${YELLOW}$(uname -m)${PLAIN}"
 
-    # CPU
-    local _cpu_model _cpu_cores
+    local _os _kernel _arch _cpu_model _cpu_cores
+    local _mem_total _mem_free _mem_used _disk _load _uptime_str
+
+    _os=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)
+    _kernel=$(uname -r)
+    _arch=$(uname -m)
     _cpu_model=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs)
     _cpu_cores=$(nproc 2>/dev/null || grep -c "processor" /proc/cpuinfo 2>/dev/null)
-    echo -e "  CPU: ${YELLOW}${_cpu_model:-未知} × ${_cpu_cores:-?}${PLAIN}"
-
-    # 内存
-    local _mem_total _mem_free _mem_used
-    _mem_total=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
-    _mem_free=$(awk '/MemAvailable/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
+    _mem_total=$(awk '/MemTotal/     {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
+    _mem_free=$(awk  '/MemAvailable/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
     _mem_used=$(( ${_mem_total:-0} - ${_mem_free:-0} ))
-    echo -e "  内存: ${YELLOW}${_mem_used}MB / ${_mem_total}MB${PLAIN}"
-
-    # 磁盘
-    local _disk
     _disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')
-    echo -e "  磁盘: ${YELLOW}${_disk:-未知}${PLAIN}"
-
-    # 负载
-    local _load
     _load=$(uptime 2>/dev/null | awk -F'load average:' '{print $2}' | xargs)
-    echo -e "  负载: ${YELLOW}${_load:-未知}${PLAIN}"
+    _uptime_str=$(uptime -p 2>/dev/null || uptime 2>/dev/null | awk -F'up ' '{print $2}' | cut -d, -f1-2)
 
-    # 运行时间
-    local _uptime
-    _uptime=$(uptime -p 2>/dev/null || uptime 2>/dev/null | awk -F'up ' '{print $2}' | cut -d, -f1-2)
-    echo -e "  运行时间: ${YELLOW}${_uptime:-未知}${PLAIN}"
-
+    echo -e "  系统    : ${YELLOW}${_os}${PLAIN}"
+    echo -e "  内核    : ${YELLOW}${_kernel}${PLAIN}"
+    echo -e "  架构    : ${YELLOW}${_arch}${PLAIN}"
+    echo -e "  CPU     : ${YELLOW}${_cpu_model:-未知} × ${_cpu_cores:-?}${PLAIN}"
+    echo -e "  内存    : ${YELLOW}${_mem_used}MB / ${_mem_total}MB${PLAIN}"
+    echo -e "  磁盘    : ${YELLOW}${_disk:-未知}${PLAIN}"
+    echo -e "  负载    : ${YELLOW}${_load:-未知}${PLAIN}"
+    echo -e "  运行时间: ${YELLOW}${_uptime_str:-未知}${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # BBR 状态
     check_bbr_status
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # 自动更新状态
     check_auto_update_status
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo ""
     read -r -p "按回车返回..." _tmp
 }
 
 # ============================================================
-# ★ 新增：服务器工具子菜单
+# 服务器工具子菜单
 # ============================================================
 
 server_tools_menu() {
@@ -1203,7 +1211,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.2${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.3.3-dev${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
