@@ -57,10 +57,14 @@ show_menu() {
     show_banner
     # 检测状态
     local hy2_status warp_status ipv4_status
+    local hy2_ver=""
+    if [ -f "$HY2_BIN" ]; then
+        hy2_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    fi
     if systemctl is-active --quiet hysteria-server 2>/dev/null; then
-        hy2_status="${GREEN}● 运行中${NC}"
+        hy2_status="${GREEN}● 运行中${NC}${DIM} ${hy2_ver}${NC}"
     elif [ -f "$HY2_BIN" ]; then
-        hy2_status="${YELLOW}● 已安装/未运行${NC}"
+        hy2_status="${YELLOW}● 已安装/未运行${NC}${DIM} ${hy2_ver}${NC}"
     else
         hy2_status="${RED}● 未安装${NC}"
     fi
@@ -91,6 +95,8 @@ show_menu() {
     echo -e "  ${GREEN}4.${NC} 启动 / 停止 / 重启服务"
     echo -e "  ${GREEN}5.${NC} 查看运行日志"
     echo -e "  ${GREEN}6.${NC} 修改配置（端口 / 密码 / 伪装域名）"
+    echo -e "  ${GREEN}7.${NC} 升级 Hysteria2"
+    echo -e "  ${GREEN}8.${NC} 系统工具（BBR / 系统信息）"
     echo ""
     echo -e "  ${WHITE}${BOLD}━━━ IPv4 出口（Warp）━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${MAGENTA}W.${NC} 调用 F大 Warp 脚本（fscarmen/warp）"
@@ -99,7 +105,7 @@ show_menu() {
     echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${YELLOW}0.${NC} 退出脚本"
     echo ""
-    echo -ne "  ${WHITE}请输入选项 [0-6/W]:${NC} "
+    echo -ne "  ${WHITE}请输入选项 [0-8/W]:${NC} "
 }
 
 # =============================================
@@ -760,6 +766,213 @@ EOF
 # =============================================
 #  调用 F大 Warp 脚本
 # =============================================
+#  升级 Hysteria2
+# =============================================
+do_upgrade() {
+    show_banner
+    echo -e "  ${WHITE}${BOLD}升级 Hysteria2${NC}"
+    echo ""
+
+    if [ ! -f "$HY2_BIN" ]; then
+        error "未检测到 Hysteria2，请先安装"
+        read -rp "  按 Enter 返回..." _
+        return
+    fi
+
+    local cur_ver
+    cur_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    info "当前版本: ${cur_ver:-未知}"
+
+    # 获取最新版本
+    get_latest_version
+    local new_ver="${HY2_VERSION#app/}"
+    info "最新版本: ${new_ver}"
+
+    if [ "$cur_ver" = "$new_ver" ]; then
+        success "已是最新版本，无需升级"
+        read -rp "  按 Enter 返回..." _
+        return
+    fi
+
+    echo ""
+    echo -ne "  ${YELLOW}确认升级 ${cur_ver} → ${new_ver}？[y/N]:${NC} "
+    read -r confirm
+    [ "${confirm,,}" != "y" ] && { info "已取消"; read -rp "  按 Enter 返回..." _; return; }
+
+    # 停止服务
+    step "停止服务..."
+    systemctl stop hysteria-server 2>/dev/null
+
+    # 备份旧版本
+    cp "$HY2_BIN" "${HY2_BIN}.bak" 2>/dev/null
+    info "旧版本已备份至 ${HY2_BIN}.bak"
+
+    # 下载新版本
+    install_hysteria2_binary
+
+    if [ $? -eq 0 ]; then
+        systemctl start hysteria-server
+        sleep 1
+        if systemctl is-active --quiet hysteria-server; then
+            local updated_ver
+            updated_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            success "升级成功！当前版本: ${updated_ver}"
+            rm -f "${HY2_BIN}.bak"
+        else
+            error "服务启动失败，正在回滚..."
+            mv "${HY2_BIN}.bak" "$HY2_BIN"
+            systemctl start hysteria-server
+            warn "已回滚至旧版本 ${cur_ver}"
+        fi
+    else
+        error "下载失败，正在回滚..."
+        mv "${HY2_BIN}.bak" "$HY2_BIN"
+        systemctl start hysteria-server
+        warn "已回滚至旧版本 ${cur_ver}"
+    fi
+
+    echo ""
+    read -rp "  按 Enter 返回..." _
+}
+
+# =============================================
+#  系统工具
+# =============================================
+system_tools() {
+    while true; do
+        show_banner
+        echo -e "  ${WHITE}${BOLD}系统工具${NC}"
+        echo ""
+
+        # 检测 BBR 状态
+        local bbr_status cc_algo
+        cc_algo=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+        local qdisc
+        qdisc=$(sysctl net.core.default_qdisc 2>/dev/null | awk '{print $3}')
+        if [ "$cc_algo" = "bbr" ]; then
+            bbr_status="${GREEN}● 已启用 (${cc_algo} + ${qdisc})${NC}"
+        else
+            bbr_status="${YELLOW}● 未启用 (当前: ${cc_algo})${NC}"
+        fi
+
+        echo -e "  ${DIM}┌─────────────────────────────────────────────┐${NC}"
+        echo -e "  ${DIM}│${NC}  BBR 状态: $(echo -e $bbr_status)"
+        echo -e "  ${DIM}│${NC}  内核版本: ${CYAN}$(uname -r)${NC}"
+        echo -e "  ${DIM}│${NC}  系统负载: ${CYAN}$(uptime | grep -oP 'load average:.*')${NC}"
+        echo -e "  ${DIM}│${NC}  内存使用: ${CYAN}$(free -h | awk '/Mem/{print $3"/"$2}')${NC}"
+        echo -e "  ${DIM}│${NC}  磁盘使用: ${CYAN}$(df -h / | awk 'NR==2{print $3"/"$2" ("$5")"}')${NC}"
+        echo -e "  ${DIM}└─────────────────────────────────────────────┘${NC}"
+        echo ""
+        echo -e "  ${WHITE}${BOLD}━━━ BBR 加速 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${GREEN}1.${NC} 开启 BBR（bbr + fq）"
+        echo -e "  ${GREEN}2.${NC} 开启 BBR v3（需内核 ≥ 6.x）"
+        echo -e "  ${GREEN}3.${NC} 查看当前拥塞控制算法"
+        echo ""
+        echo -e "  ${WHITE}${BOLD}━━━ 系统信息 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${GREEN}4.${NC} 查看详细系统信息"
+        echo -e "  ${GREEN}5.${NC} 网络连通性测试（IPv4 / IPv6）"
+        echo -e "  ${GREEN}6.${NC} 查看端口占用"
+        echo ""
+        echo -e "  ${YELLOW}0.${NC} 返回主菜单"
+        echo ""
+        echo -ne "  ${WHITE}选项 [0-6]:${NC} "
+        read -r opt
+
+        case "$opt" in
+            1)
+                step "开启 BBR + fq..."
+                # 写入 sysctl
+                sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
+                sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
+                echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
+                echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+                sysctl -p >> "$LOG_FILE" 2>&1
+                local result
+                result=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+                if [ "$result" = "bbr" ]; then
+                    success "BBR 已成功开启！"
+                else
+                    # 尝试加载模块
+                    modprobe tcp_bbr 2>/dev/null
+                    sysctl -p >> "$LOG_FILE" 2>&1
+                    result=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+                    [ "$result" = "bbr" ] && success "BBR 已成功开启！" || error "BBR 开启失败，内核可能不支持"
+                fi
+                echo ""
+                read -rp "  按 Enter 继续..." _
+                ;;
+            2)
+                local kver
+                kver=$(uname -r | cut -d. -f1)
+                if [ "$kver" -lt 6 ]; then
+                    warn "当前内核 $(uname -r) 低于 6.x，BBRv3 可能不可用"
+                    echo -ne "  ${YELLOW}仍要尝试？[y/N]:${NC} "
+                    read -r fc
+                    [ "${fc,,}" != "y" ] && continue
+                fi
+                step "开启 BBR v3 + fq_codel..."
+                sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
+                sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
+                echo "net.core.default_qdisc = fq_codel" >> /etc/sysctl.conf
+                echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+                sysctl -p >> "$LOG_FILE" 2>&1
+                success "已应用 BBRv3 配置（需内核原生支持 v3）"
+                echo ""
+                read -rp "  按 Enter 继续..." _
+                ;;
+            3)
+                echo ""
+                echo -e "  ${CYAN}拥塞控制算法:${NC} $(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')"
+                echo -e "  ${CYAN}队列调度算法:${NC} $(sysctl net.core.default_qdisc 2>/dev/null | awk '{print $3}')"
+                echo -e "  ${CYAN}可用算法列表:${NC} $(sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | cut -d= -f2)"
+                echo ""
+                read -rp "  按 Enter 继续..." _
+                ;;
+            4)
+                echo ""
+                echo -e "  ${WHITE}${BOLD}━━━ 系统详情 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "  ${CYAN}主机名:${NC}     $(hostname)"
+                echo -e "  ${CYAN}系统:${NC}       $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"')"
+                echo -e "  ${CYAN}内核:${NC}       $(uname -r)"
+                echo -e "  ${CYAN}架构:${NC}       $(uname -m)"
+                echo -e "  ${CYAN}运行时间:${NC}   $(uptime -p 2>/dev/null || uptime)"
+                echo -e "  ${CYAN}CPU:${NC}        $(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs)"
+                echo -e "  ${CYAN}CPU核心:${NC}    $(nproc) 核"
+                echo -e "  ${CYAN}内存:${NC}       $(free -h | awk '/Mem/{print $2" 总 / "$3" 已用 / "$4" 空闲"}')"
+                echo -e "  ${CYAN}磁盘:${NC}       $(df -h / | awk 'NR==2{print $2" 总 / "$3" 已用 / "$4" 空闲 ("$5")"}')"
+                echo -e "  ${CYAN}IPv6:${NC}       $(ip -6 addr show scope global | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)"
+                echo ""
+                read -rp "  按 Enter 继续..." _
+                ;;
+            5)
+                echo ""
+                echo -e "  ${WHITE}${BOLD}━━━ 网络连通性测试 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -ne "  IPv4 (ip.sb):   "
+                curl -4 -s --max-time 5 ip.sb 2>/dev/null && echo "" || echo -e "${RED}不通${NC}"
+                echo -ne "  IPv6 (ip.sb):   "
+                curl -6 -s --max-time 5 ip.sb 2>/dev/null && echo "" || echo -e "${RED}不通${NC}"
+                echo -ne "  Google IPv6:    "
+                curl -6 -s --max-time 5 https://ipv6.google.com -o /dev/null && echo -e "${GREEN}通${NC}" || echo -e "${RED}不通${NC}"
+                echo -ne "  GitHub:         "
+                curl -s --max-time 8 https://github.com -o /dev/null && echo -e "${GREEN}通${NC}" || echo -e "${RED}不通${NC}"
+                echo ""
+                read -rp "  按 Enter 继续..." _
+                ;;
+            6)
+                echo ""
+                echo -e "  ${WHITE}${BOLD}━━━ 端口占用（UDP/TCP Top20）━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo ""
+                ss -tulnp 2>/dev/null | head -25 || netstat -tulnp 2>/dev/null | head -25
+                echo ""
+                read -rp "  按 Enter 继续..." _
+                ;;
+            0) return ;;
+            *) warn "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+# =============================================
 run_warp_script() {
     show_banner
     echo -e "  ${MAGENTA}${BOLD}F大 Warp 脚本（fscarmen/warp）${NC}"
@@ -859,6 +1072,8 @@ main() {
             4) manage_service ;;
             5) show_logs ;;
             6) modify_config ;;
+            7) do_upgrade ;;
+            8) system_tools ;;
             w) run_warp_script ;;
             0|q|quit|exit)
                 echo ""
