@@ -4,7 +4,6 @@
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
 #  版本: v1.0.0
-#  更新时间: 2026-05-13
 # ============================================================
 
 # ---- 颜色定义 ----
@@ -507,7 +506,7 @@ show_node_info() {
 
     echo -e "  ${YELLOW}${BOLD}━━━ Clash Meta / Mihomo 单行配置 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    local clash_line="  - {name: '🇩🇪德国Euserv V6', type: hysteria2, server: '${ipv6_raw}', port: ${port}, up: 200, down: 1000, password: ${password}, sni: ${NODE_DOMAIN:-bing.com}, skip-cert-verify: true}"
+    local clash_line="  - {name: 'EUserv-HY2', type: hysteria2, server: '${ipv6_raw}', port: ${port}, password: ${password}, sni: ${NODE_DOMAIN:-bing.com}, skip-cert-verify: true, fast-open: true}"
     echo -e "${WHITE}${clash_line}${NC}"
     echo ""
     echo -e "  ${DIM}⚠ 注意: EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
