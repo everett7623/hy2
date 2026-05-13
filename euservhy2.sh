@@ -174,21 +174,30 @@ init_system() {
 # =============================================
 get_latest_version() {
     step "获取 Hysteria2 最新版本..."
-    # 优先通过 IPv6 访问 GitHub API
-    HY2_VERSION=$(curl -6 -s --max-time 15 \
+
+    # 方式1: IPv6 直连 GitHub API
+    HY2_VERSION=$(curl -6 -s --max-time 10 \
         "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
 
-    # fallback IPv4
+    # 方式2: IPv4 直连 GitHub API（Warp 环境）
     if [ -z "$HY2_VERSION" ]; then
-        HY2_VERSION=$(curl -4 -s --max-time 15 \
+        HY2_VERSION=$(curl -4 -s --max-time 10 \
             "https://api.github.com/repos/apernet/hysteria/releases/latest" \
             2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     fi
 
+    # 方式3: ghproxy 镜像获取版本
     if [ -z "$HY2_VERSION" ]; then
-        warn "无法获取最新版本，使用默认版本 app/v2.6.0"
-        HY2_VERSION="app/v2.6.0"
+        HY2_VERSION=$(curl -s --max-time 10 \
+            "https://ghproxy.net/https://api.github.com/repos/apernet/hysteria/releases/latest" \
+            2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+    fi
+
+    # 兜底：内置已知最新稳定版
+    if [ -z "$HY2_VERSION" ]; then
+        warn "无法获取最新版本，使用内置默认版本 app/v2.6.1"
+        HY2_VERSION="app/v2.6.1"
     fi
     success "Hysteria2 版本: ${HY2_VERSION}"
 }
@@ -218,48 +227,46 @@ install_hysteria2_binary() {
     info "下载地址: ${download_url}"
     info "架构: linux-${ARCH}"
 
-    # 尝试下载（先 IPv6，再 IPv4）
+    # 尝试多种方式下载
     local tmp_bin="/tmp/hysteria_tmp"
     local downloaded=false
 
-    # 方式1: 直连 GitHub（IPv6）
-    if curl -6 -L --max-time 120 --progress-bar "$download_url" -o "$tmp_bin" 2>/dev/null; then
-        if [ -s "$tmp_bin" ]; then
-            downloaded=true
-            info "通过 IPv6 直连 GitHub 下载成功"
-        fi
-    fi
+    local mirrors=(
+        "${download_url}"
+        "https://ghproxy.net/${download_url}"
+        "https://gh.con.sh/${download_url}"
+        "https://mirror.ghproxy.com/${download_url}"
+        "https://ghproxy.cc/${download_url}"
+        "https://github.moeyy.xyz/${download_url}"
+    )
 
-    # 方式2: 直连 GitHub（IPv4，Warp 环境）
-    if [ "$downloaded" = false ]; then
-        if curl -4 -L --max-time 120 --progress-bar "$download_url" -o "$tmp_bin" 2>/dev/null; then
-            if [ -s "$tmp_bin" ]; then
+    for mirror in "${mirrors[@]}"; do
+        info "尝试: ${mirror}"
+        rm -f "$tmp_bin"
+        if curl -L --max-time 120 --progress-bar "$mirror" -o "$tmp_bin" 2>/dev/null && [ -s "$tmp_bin" ]; then
+            # 验证是 ELF 二进制而非 HTML 错误页
+            if file "$tmp_bin" 2>/dev/null | grep -qiE "ELF|executable"; then
                 downloaded=true
-                info "通过 IPv4 (Warp) 直连 GitHub 下载成功"
-            fi
-        fi
-    fi
-
-    # 方式3: GitHub 代理镜像
-    if [ "$downloaded" = false ]; then
-        local mirrors=(
-            "https://gh.idayer.com/${download_url#https://}"
-            "https://ghproxy.com/${download_url}"
-            "https://hub.fastgit.xyz/${download_url#https://github.com/}"
-        )
-        for mirror in "${mirrors[@]}"; do
-            info "尝试镜像: ${mirror}"
-            if curl -L --max-time 120 --progress-bar "$mirror" -o "$tmp_bin" 2>/dev/null && [ -s "$tmp_bin" ]; then
-                downloaded=true
-                info "通过镜像下载成功"
+                info "下载成功"
                 break
+            else
+                warn "内容异常（非二进制），跳过"
             fi
-        done
+        fi
+    done
+
+    # 最终方案：官方一键安装脚本
+    if [ "$downloaded" = false ]; then
+        info "尝试官方安装脚本 get.hy2.sh ..."
+        if bash <(curl -fsSL https://get.hy2.sh/) 2>/dev/null && [ -f "$HY2_BIN" ]; then
+            success "通过官方脚本安装成功"
+            return 0
+        fi
     fi
 
     if [ "$downloaded" = false ]; then
-        error "下载 Hysteria2 失败，请检查网络连接或手动安装"
-        error "手动下载地址: ${download_url}"
+        error "所有下载方式均失败，请检查网络或手动安装"
+        error "手动下载: ${download_url}"
         return 1
     fi
 
