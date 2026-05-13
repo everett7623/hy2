@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v1.0.0
+#  版本: v2.0.0
 #  更新时间: 2026-05-13
 # ============================================================
 
@@ -26,17 +26,79 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="2.0.0"
+
+# NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
+NAT64_DNS1="2001:67c:2b0::4"
+NAT64_DNS2="2001:67c:2b0::6"
+NAT64_DNS_BACKUP="2a00:1098:2b::1"
+DNS_PATCHED=0
 
 # ---- 工具函数 ----
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
-info()    { echo -e "${GREEN}[INFO]${NC} $*"; log "INFO: $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; log "WARN: $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*"; log "ERROR: $*"; }
-success() { echo -e "${GREEN}[✓]${NC} $*"; log "SUCCESS: $*"; }
-step()    { echo -e "${CYAN}[STEP]${NC} $*"; log "STEP: $*"; }
+log()     { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
+info()    { echo -e "${GREEN}[INFO]${NC} $*";    log "INFO: $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC} $*";   log "WARN: $*"; }
+error()   { echo -e "${RED}[ERROR]${NC} $*";    log "ERROR: $*"; }
+success() { echo -e "${GREEN}[✓]${NC} $*";       log "SUCCESS: $*"; }
+step()    { echo -e "${CYAN}[STEP]${NC} $*";     log "STEP: $*"; }
 
-# ---- Banner ----
+# ============================================================
+#  获取 hostname 作为节点名称
+#  hostname为空时回退到 EUserv-HY2
+# ============================================================
+get_node_name() {
+    local hn
+    hn=$(hostname 2>/dev/null | tr -d '\n\r')
+    if [[ -z "${hn// /}" ]]; then
+        hn="EUserv-HY2"
+    fi
+    echo "$hn"
+}
+
+# ============================================================
+#  WARP 状态检测
+#  检测 warp0 / wgcf / cloudflare-warp 网卡 + warp-cli
+# ============================================================
+check_warp_status() {
+    if ip link show warp0 &>/dev/null 2>&1 \
+    || ip link show wgcf &>/dev/null 2>&1 \
+    || ip link show cloudflare-warp &>/dev/null 2>&1 \
+    || command -v warp-cli &>/dev/null; then
+        echo "installed"
+    else
+        echo "none"
+    fi
+}
+
+# ============================================================
+#  NAT64 DNS 临时启用 / 恢复
+# ============================================================
+enable_nat64_dns() {
+    [[ $DNS_PATCHED -eq 1 ]] && return
+    step "临时启用 NAT64 DNS（用于访问 IPv4 资源）..."
+    cp /etc/resolv.conf /etc/resolv.conf.hy2bak 2>/dev/null || true
+    cat > /etc/resolv.conf <<EOF
+# euservhy2.sh NAT64 临时配置，安装后自动恢复
+nameserver ${NAT64_DNS1}
+nameserver ${NAT64_DNS2}
+nameserver ${NAT64_DNS_BACKUP}
+EOF
+    DNS_PATCHED=1
+    success "NAT64 DNS 已启用（安装完成后自动恢复）"
+    sleep 1
+}
+
+restore_dns() {
+    if [[ $DNS_PATCHED -eq 1 ]] && [[ -f /etc/resolv.conf.hy2bak ]]; then
+        cp /etc/resolv.conf.hy2bak /etc/resolv.conf
+        DNS_PATCHED=0
+        success "DNS 已恢复原始配置"
+    fi
+}
+
+# ============================================================
+#  Banner
+# ============================================================
 show_banner() {
     clear
     echo -e "${CYAN}"
@@ -53,11 +115,15 @@ show_banner() {
     echo ""
 }
 
-# ---- 主菜单 ----
+# ============================================================
+#  主菜单
+#  修复：WARP状态实时检测；节点名显示hostname；菜单重新排序
+# ============================================================
 show_menu() {
     show_banner
-    # 检测状态
-    local hy2_status warp_status ipv4_status
+
+    # ---- 实时状态检测 ----
+    local hy2_status warp_status
     local hy2_ver=""
     if [ -f "$HY2_BIN" ]; then
         hy2_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
@@ -70,115 +136,118 @@ show_menu() {
         hy2_status="${RED}● 未安装${NC}"
     fi
 
-    if command -v warp-cli &>/dev/null || ip link show warp0 &>/dev/null || ip link show cloudflare-warp &>/dev/null 2>/dev/null; then
+    # 修复：用 check_warp_status() 统一检测，每次进菜单实时刷新
+    if [ "$(check_warp_status)" = "installed" ]; then
         warp_status="${GREEN}● 已安装${NC}"
     else
         warp_status="${RED}● 未安装${NC}"
     fi
 
-    local ipv4_addr
-    ipv4_addr=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || echo "无IPv4")
-    local ipv6_addr
-    ipv6_addr=$(curl -6 -s --max-time 3 ip.sb 2>/dev/null || ip -6 addr show scope global | grep -oP '(?<=inet6 )[\da-f:]+' | grep -v '^fe80' | head -1 || echo "获取失败")
+    # 修复：IPv4 不写死，实时获取（Warp装好后立即显示）
+    local ipv4_addr ipv6_addr
+    ipv4_addr=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || echo "无 IPv4")
+    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
+        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1 \
+        || echo "获取失败")
+
+    # 修复：节点名实时读取 hostname
+    local node_name
+    node_name=$(get_node_name)
 
     echo -e "  ${WHITE}${BOLD}系统状态${NC}"
     echo -e "  ${DIM}┌─────────────────────────────────────────────┐${NC}"
-    echo -e "  ${DIM}│${NC}  Hysteria2 状态: $(echo -e $hy2_status)"
-    echo -e "  ${DIM}│${NC}  Warp 状态:      $(echo -e $warp_status)"
-    echo -e "  ${DIM}│${NC}  IPv6 地址:      ${CYAN}${ipv6_addr}${NC}"
-    echo -e "  ${DIM}│${NC}  IPv4(Warp):    ${CYAN}${ipv4_addr}${NC}"
+    echo -e "  ${DIM}│${NC}  节点名称:      ${CYAN}${node_name}${NC}"
+    echo -e "  ${DIM}│${NC}  Hysteria2:     $(echo -e "$hy2_status")"
+    echo -e "  ${DIM}│${NC}  WARP:          $(echo -e "$warp_status")"
+    echo -e "  ${DIM}│${NC}  IPv6:          ${CYAN}${ipv6_addr}${NC}"
+    echo -e "  ${DIM}│${NC}  IPv4 (WARP):   ${CYAN}${ipv4_addr}${NC}"
     echo -e "  ${DIM}└─────────────────────────────────────────────┘${NC}"
     echo ""
+
+    # ---- 菜单选项（重新排序）----
     echo -e "  ${WHITE}${BOLD}━━━ Hysteria2 管理 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}1.${NC} 安装 Hysteria2（自动适配 IPv6 + 自签证书）"
-    echo -e "  ${GREEN}2.${NC} 卸载 Hysteria2"
-    echo -e "  ${GREEN}3.${NC} 查看配置 / 节点链接"
-    echo -e "  ${GREEN}4.${NC} 启动 / 停止 / 重启服务"
-    echo -e "  ${GREEN}5.${NC} 查看运行日志"
-    echo -e "  ${GREEN}6.${NC} 修改配置（端口 / 密码 / 伪装域名）"
-    echo -e "  ${GREEN}7.${NC} 升级 Hysteria2"
-    echo -e "  ${GREEN}8.${NC} 系统工具（BBR / 系统信息）"
+    echo -e "  ${GREEN}1.${NC} 安装 / 重装 Hysteria2"
+    echo -e "  ${GREEN}2.${NC} 查看节点信息 / 链接"
+    echo -e "  ${GREEN}3.${NC} 修改配置（端口 / 密码 / 伪装域名）"
+    echo -e "  ${GREEN}4.${NC} 升级 Hysteria2"
+    echo -e "  ${GREEN}5.${NC} 服务管理（启动 / 停止 / 重启）"
+    echo -e "  ${GREEN}6.${NC} 查看运行日志"
+    echo -e "  ${GREEN}7.${NC} 卸载 Hysteria2"
     echo ""
-    echo -e "  ${WHITE}${BOLD}━━━ IPv4 出口（Warp）━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${MAGENTA}W.${NC} 调用 F大 Warp 脚本（fscarmen/warp）"
-    echo -e "  ${DIM}     为 IPv6-only VPS 添加 IPv4/双栈出口${NC}"
+    echo -e "  ${WHITE}${BOLD}━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${MAGENTA}8.${NC} WARP（fscarmen大佬 脚本）— IPv6-only 补全 IPv4"
+    echo -e "  ${BLUE}9.${NC} 系统工具（BBR / 系统信息 / 网络测试）"
     echo ""
     echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${YELLOW}0.${NC} 退出脚本"
+    echo -e "  ${YELLOW}0.${NC} 退出"
     echo ""
-    echo -ne "  ${WHITE}请输入选项 [0-8/W]:${NC} "
+    echo -ne "  ${WHITE}请输入选项 [0-9]:${NC} "
 }
 
-# =============================================
+# ============================================================
 #  网络检测
-# =============================================
+# ============================================================
 check_network() {
     step "检测网络环境..."
 
-    # 检测 IPv6
     local ipv6_addr
-    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
+    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
+        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
     if [ -z "$ipv6_addr" ]; then
-        error "未检测到全局 IPv6 地址，请确认 EUserv VPS 网络配置正常"
+        error "未检测到全局 IPv6 地址，请确认 EUserv VPS 网络正常"
         return 1
     fi
-    success "检测到 IPv6 地址: ${ipv6_addr}"
+    success "IPv6 地址: ${ipv6_addr}"
 
-    # 检测 IPv4（EUserv 应无 IPv4）
     local ipv4_test
     ipv4_test=$(curl -4 -s --max-time 5 ip.sb 2>/dev/null)
     if [ -n "$ipv4_test" ]; then
-        warn "检测到 IPv4 地址: ${ipv4_test}（EUserv 标准为纯 IPv6，如有 IPv4 属正常）"
+        warn "检测到 IPv4: ${ipv4_test}（EUserv 标准为纯 IPv6）"
     else
         info "纯 IPv6 环境确认（EUserv 标准配置）"
     fi
 
-    # IPv6 连通性测试
-    if curl -6 -s --max-time 8 https://ipv6.google.com -o /dev/null; then
-        success "IPv6 互联网连通性正常"
+    if curl -6 -s --max-time 8 https://ipv6.google.com -o /dev/null 2>/dev/null; then
+        success "IPv6 互联网连通正常"
     else
-        warn "IPv6 连接测试超时，可能影响证书申请，请检查防火墙"
+        warn "IPv6 连接测试超时，请检查防火墙配置"
     fi
-
     return 0
 }
 
-# =============================================
+# ============================================================
 #  系统初始化
-# =============================================
+# ============================================================
 init_system() {
     step "初始化系统环境..."
 
-    # 检测系统
     if [ -f /etc/debian_version ]; then
-        OS="debian"
-        PKG_MGR="apt-get"
+        OS="debian"; PKG_MGR="apt-get"
     elif [ -f /etc/redhat-release ]; then
-        OS="redhat"
-        PKG_MGR="yum"
+        OS="redhat"; PKG_MGR="yum"
     else
-        error "不支持的操作系统"
-        exit 1
+        error "不支持的操作系统"; exit 1
     fi
-
     info "系统类型: ${OS}"
 
-    # 更新并安装依赖
     step "安装必要依赖..."
     if [ "$OS" = "debian" ]; then
         apt-get update -y >> "$LOG_FILE" 2>&1
-        apt-get install -y curl wget openssl qrencode net-tools uuid-runtime >> "$LOG_FILE" 2>&1 || \
-        apt-get install -y curl wget openssl net-tools >> "$LOG_FILE" 2>&1
+        # 修复：加入 file 包（用于验证二进制ELF格式，防Segfault）
+        apt-get install -y curl wget openssl qrencode net-tools uuid-runtime file \
+            >> "$LOG_FILE" 2>&1 || \
+        apt-get install -y curl wget openssl net-tools file >> "$LOG_FILE" 2>&1
     else
         yum update -y >> "$LOG_FILE" 2>&1
-        yum install -y curl wget openssl qrencode net-tools util-linux >> "$LOG_FILE" 2>&1
+        yum install -y curl wget openssl qrencode net-tools util-linux file \
+            >> "$LOG_FILE" 2>&1
     fi
     success "依赖安装完成"
 }
 
-# =============================================
-#  获取 Hysteria2 最新版本
-# =============================================
+# ============================================================
+#  获取最新版本号
+# ============================================================
 get_latest_version() {
     step "获取 Hysteria2 最新版本..."
 
@@ -187,168 +256,181 @@ get_latest_version() {
         "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
 
-    # 方式2: IPv4 直连 GitHub API（Warp 环境）
+    # 方式2: IPv4（Warp 环境）
     if [ -z "$HY2_VERSION" ]; then
         HY2_VERSION=$(curl -4 -s --max-time 10 \
             "https://api.github.com/repos/apernet/hysteria/releases/latest" \
             2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     fi
 
-    # 方式3: ghproxy 镜像获取版本
+    # 方式3: ghproxy
     if [ -z "$HY2_VERSION" ]; then
         HY2_VERSION=$(curl -s --max-time 10 \
             "https://ghproxy.net/https://api.github.com/repos/apernet/hysteria/releases/latest" \
             2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     fi
 
-    # 兜底：内置已知最新稳定版
     if [ -z "$HY2_VERSION" ]; then
-        warn "无法获取最新版本，使用内置默认版本 app/v2.6.1"
-        HY2_VERSION="app/v2.6.1"
+        warn "无法获取最新版本，使用内置版本 app/v2.9.1"
+        HY2_VERSION="app/v2.9.1"
     fi
-    success "Hysteria2 版本: ${HY2_VERSION}"
+    success "目标版本: ${HY2_VERSION}"
 }
 
-# =============================================
+# ============================================================
 #  下载并安装 Hysteria2 二进制
-# =============================================
+#  修复：官方 download.hysteria.network（CF/AAAA）最优先；
+#        file命令预检ELF防Segfault；NAT64 DNS兜底
+# ============================================================
 install_hysteria2_binary() {
-    step "下载 Hysteria2 二进制文件..."
+    step "下载 Hysteria2 二进制..."
 
     local arch
-    arch=$(uname -m)
-    case "$arch" in
-        x86_64)  ARCH="amd64" ;;
-        aarch64) ARCH="arm64" ;;
-        armv7l)  ARCH="armv7" ;;
-        *)
-            error "不支持的架构: ${arch}"
-            exit 1
-            ;;
+    case $(uname -m) in
+        x86_64)  arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+        armv7l)  arch="armv7" ;;
+        *)       error "不支持架构: $(uname -m)"; return 1 ;;
     esac
+    info "架构: linux-${arch}"
 
-    # 从版本号提取纯版本（去掉 app/ 前缀）
-    local ver_num="${HY2_VERSION#app/}"
-    local download_url="https://github.com/apernet/hysteria/releases/download/${HY2_VERSION}/hysteria-linux-${ARCH}"
-
-    info "下载地址: ${download_url}"
-    info "架构: linux-${ARCH}"
-
-    # 尝试多种方式下载
     local tmp_bin="/tmp/hysteria_tmp"
-    local downloaded=false
+    local ver_tag="${HY2_VERSION}"   # 格式: app/v2.x.x
+    local gh_url="https://github.com/apernet/hysteria/releases/download/${ver_tag}/hysteria-linux-${arch}"
 
-    local mirrors=(
-        "${download_url}"
-        "https://ghproxy.net/${download_url}"
-        "https://gh.con.sh/${download_url}"
-        "https://mirror.ghproxy.com/${download_url}"
-        "https://ghproxy.cc/${download_url}"
-        "https://github.moeyy.xyz/${download_url}"
-    )
+    # 修复：验证函数预检ELF格式，避免损坏文件执行产生Segfault
+    __verify_bin() {
+        local f="$1"
+        [ -s "$f" ] || return 1
+        if command -v file &>/dev/null; then
+            file "$f" 2>/dev/null | grep -qiE "ELF|executable" || return 1
+        fi
+        chmod +x "$f"
+        "$f" version &>/dev/null || return 1
+        return 0
+    }
 
-    for mirror in "${mirrors[@]}"; do
-        info "尝试: ${mirror}"
+    __try_url() {
+        local desc="$1" url="$2"
+        info "尝试 [${desc}]: ${url}"
         rm -f "$tmp_bin"
-        if curl -L --max-time 120 --progress-bar "$mirror" -o "$tmp_bin" 2>/dev/null && [ -s "$tmp_bin" ]; then
-            # 验证是 ELF 二进制而非 HTML 错误页
-            if file "$tmp_bin" 2>/dev/null | grep -qiE "ELF|executable"; then
-                downloaded=true
-                info "下载成功"
-                break
+        if curl -fL --progress-bar --connect-timeout 15 --max-time 120 \
+            -o "$tmp_bin" "$url" 2>>"$LOG_FILE"; then
+            if __verify_bin "$tmp_bin"; then
+                return 0
             else
-                warn "内容异常（非二进制），跳过"
+                warn "[${desc}] 文件无效（非ELF或无法执行）"
+                rm -f "$tmp_bin"
             fi
+        else
+            warn "[${desc}] 下载失败"
+            rm -f "$tmp_bin"
         fi
-    done
-
-    # 最终方案：官方一键安装脚本
-    if [ "$downloaded" = false ]; then
-        info "尝试官方安装脚本 get.hy2.sh ..."
-        if bash <(curl -fsSL https://get.hy2.sh/) 2>/dev/null && [ -f "$HY2_BIN" ]; then
-            success "通过官方脚本安装成功"
-            return 0
-        fi
-    fi
-
-    if [ "$downloaded" = false ]; then
-        error "所有下载方式均失败，请检查网络或手动安装"
-        error "手动下载: ${download_url}"
         return 1
-    fi
+    }
 
-    # 安装
-    chmod +x "$tmp_bin"
-    mv "$tmp_bin" "$HY2_BIN"
-    success "Hysteria2 二进制安装完成: ${HY2_BIN}"
+    # ── 方案1：官方 download.hysteria.network（CF托管，有AAAA，最优先）
+    __try_url "官方CDN" \
+        "https://download.hysteria.network/app/latest/hysteria-linux-${arch}" \
+        && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（官方CDN）"; return 0; }
 
-    # 验证
-    if "$HY2_BIN" version &>/dev/null; then
-        local installed_ver
-        installed_ver=$("$HY2_BIN" version 2>/dev/null | head -1)
-        success "版本验证通过: ${installed_ver}"
-    else
-        error "Hysteria2 二进制验证失败"
-        return 1
+    # ── 方案2：官方安装脚本 get.hy2.dev（CF托管，有AAAA）
+    #   修复：用子shell隔离，防止脚本内部 exit 影响当前脚本
+    info "尝试 [官方安装脚本 get.hy2.dev]..."
+    ( curl -fsSL --connect-timeout 15 --max-time 60 https://get.hy2.dev/ 2>>"$LOG_FILE" \
+        | bash -s -- --version latest >> "$LOG_FILE" 2>&1 ) || true
+    if [ -f "$HY2_BIN" ] && __verify_bin "$HY2_BIN"; then
+        success "下载成功（官方安装脚本）"
+        return 0
     fi
+    warn "[官方安装脚本] 失败"
+
+    # ── 方案3：IPv6 直连 GitHub
+    __try_url "IPv6直连GitHub" "$gh_url" \
+        && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（GitHub直连）"; return 0; }
+
+    # ── 方案4：临时 NAT64 DNS + GitHub
+    info "启用 NAT64 DNS 后重试 GitHub..."
+    enable_nat64_dns; sleep 2
+    __try_url "NAT64+GitHub" "$gh_url" \
+        && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（NAT64+GitHub）"; return 0; }
+
+    # ── 方案5：ghproxy.net 镜像
+    __try_url "ghproxy.net" \
+        "https://ghproxy.net/${gh_url}" \
+        && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（ghproxy.net）"; return 0; }
+
+    # ── 方案6：mirror.ghproxy.com
+    __try_url "mirror.ghproxy.com" \
+        "https://mirror.ghproxy.com/${gh_url}" \
+        && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（mirror.ghproxy）"; return 0; }
+
+    # ── 方案7：gh-proxy.com
+    __try_url "gh-proxy.com" \
+        "https://gh-proxy.com/${gh_url}" \
+        && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（gh-proxy.com）"; return 0; }
+
+    error "所有下载方案均失败！"
+    error "手动方法：在其他机器下载后 scp 传入："
+    error "  https://download.hysteria.network/app/latest/hysteria-linux-${arch}"
+    error "  scp hysteria root@[IPv6地址]:${HY2_BIN} && chmod +x ${HY2_BIN}"
+    return 1
 }
 
-# =============================================
-#  生成自签证书（适配 IPv6）
-# =============================================
+# ============================================================
+#  生成自签证书
+# ============================================================
 generate_self_signed_cert() {
     local domain="$1"
     step "生成自签 TLS 证书..."
-
     mkdir -p "$CERT_DIR"
 
-    # 获取本机 IPv6
     local ipv6_addr
-    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
+    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
+        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
 
-    # 生成证书，SAN 包含域名（如有）和 IPv6
+    # 修复：-addext 在 Debian 10 老版 openssl 不支持，加版本判断
+    local openssl_ver
+    openssl_ver=$(openssl version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+' | head -1 | tr -d '.')
     local san="DNS:${domain}"
-    if [ -n "$ipv6_addr" ]; then
-        san="${san},IP:${ipv6_addr}"
-    fi
+    [ -n "$ipv6_addr" ] && san="${san},IP:${ipv6_addr}"
 
-    openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-        -keyout "${CERT_DIR}/private.key" \
-        -out "${CERT_DIR}/cert.crt" \
-        -days 36500 \
-        -subj "/CN=${domain}" \
-        -addext "subjectAltName=${san}" \
-        >> "$LOG_FILE" 2>&1
+    if [ "${openssl_ver:-0}" -ge 111 ]; then
+        # openssl >= 1.1.1 支持 -addext
+        openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+            -keyout "${CERT_DIR}/private.key" \
+            -out    "${CERT_DIR}/cert.crt" \
+            -days 36500 -subj "/CN=${domain}" \
+            -addext "subjectAltName=${san}" \
+            >> "$LOG_FILE" 2>&1
+    else
+        # 旧版 openssl 不加 -addext
+        openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+            -keyout "${CERT_DIR}/private.key" \
+            -out    "${CERT_DIR}/cert.crt" \
+            -days 36500 -subj "/CN=${domain}" \
+            >> "$LOG_FILE" 2>&1
+    fi
 
     if [ $? -eq 0 ]; then
         chmod 600 "${CERT_DIR}/private.key"
         success "自签证书生成成功（有效期100年）"
-        info "证书路径: ${CERT_DIR}/cert.crt"
-        info "私钥路径: ${CERT_DIR}/private.key"
-        if [ -n "$ipv6_addr" ]; then
-            info "SAN IPv6: ${ipv6_addr}"
-        fi
+        [ -n "$ipv6_addr" ] && info "SAN IPv6: ${ipv6_addr}"
     else
-        error "证书生成失败"
-        return 1
+        error "证书生成失败"; return 1
     fi
 }
 
-# =============================================
+# ============================================================
 #  生成配置文件
-# =============================================
+# ============================================================
 generate_config() {
-    local port="$1"
-    local password="$2"
-    local masquerade_domain="$3"
-    local domain="$4"
-
+    local port="$1" password="$2" masquerade_domain="$3" domain="$4"
     step "生成 Hysteria2 配置文件..."
     mkdir -p "$HY2_CONFIG_DIR"
 
-    cat > "${HY2_CONFIG_DIR}/config.yaml" << EOF
-# Hysteria2 配置文件
-# EUserv IPv6-only 专用配置
+    cat > "${HY2_CONFIG_DIR}/config.yaml" <<EOF
+# Hysteria2 配置 — EUserv IPv6-only
 # 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 
 listen: :${port}
@@ -367,12 +449,10 @@ masquerade:
     url: https://${masquerade_domain}
     rewriteHost: true
 
-# 带宽限制（可根据 EUserv 实际带宽调整）
 bandwidth:
   up: 100 mbps
   down: 100 mbps
 
-# QUIC 参数优化（IPv6 环境）
 quic:
   initStreamReceiveWindow: 26843545
   maxStreamReceiveWindow: 26843545
@@ -382,21 +462,18 @@ quic:
   keepAlivePeriod: 10s
   disablePathMTUDiscovery: false
 
-# 日志
 log:
   level: warn
 EOF
-
     success "配置文件已生成: ${HY2_CONFIG_DIR}/config.yaml"
 }
 
-# =============================================
+# ============================================================
 #  创建 systemd 服务
-# =============================================
+# ============================================================
 create_service() {
     step "创建 systemd 服务..."
-
-    cat > "$HY2_SERVICE" << 'EOF'
+    cat > "$HY2_SERVICE" <<'EOF'
 [Unit]
 Description=Hysteria2 Server (EUserv IPv6)
 Documentation=https://v2.hysteria.network/
@@ -418,99 +495,94 @@ SyslogIdentifier=hysteria-server
 [Install]
 WantedBy=multi-user.target
 EOF
-
     systemctl daemon-reload
     systemctl enable hysteria-server >> "$LOG_FILE" 2>&1
     success "systemd 服务创建完成"
 }
 
-# =============================================
-#  防火墙配置（针对 IPv6）
-# =============================================
+# ============================================================
+#  防火墙（ip6tables 优先）
+# ============================================================
 configure_firewall() {
     local port="$1"
-    step "配置防火墙规则（IPv6 UDP ${port}）..."
+    step "配置防火墙（IPv6 UDP/TCP ${port}）..."
 
-    # UFW
-    if command -v ufw &>/dev/null; then
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
         ufw allow "${port}/udp" >> "$LOG_FILE" 2>&1
         ufw allow "${port}/tcp" >> "$LOG_FILE" 2>&1
-        # IPv6 UFW 规则
-        ufw allow in on all to any port "${port}" proto udp >> "$LOG_FILE" 2>&1
         info "UFW 规则已添加"
     fi
 
-    # ip6tables（EUserv 重点）
     if command -v ip6tables &>/dev/null; then
-        ip6tables -I INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null
-        ip6tables -I INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null
-
-        # 持久化
-        if command -v ip6tables-save &>/dev/null; then
-            ip6tables-save > /etc/ip6tables.rules 2>/dev/null
-        fi
-        if command -v netfilter-persistent &>/dev/null; then
-            netfilter-persistent save >> "$LOG_FILE" 2>&1
-        fi
+        ip6tables -C INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null \
+            || ip6tables -I INPUT -p udp --dport "${port}" -j ACCEPT
+        ip6tables -C INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null \
+            || ip6tables -I INPUT -p tcp --dport "${port}" -j ACCEPT
+        mkdir -p /etc/iptables
+        ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
+        command -v netfilter-persistent &>/dev/null \
+            && netfilter-persistent save >> "$LOG_FILE" 2>&1 || true
         info "ip6tables 规则已添加"
     fi
 
-    # iptables（备用）
     if command -v iptables &>/dev/null; then
-        iptables -I INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null
-        iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null
+        iptables -I INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null || true
+        iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null || true
     fi
 
-    success "防火墙配置完成（端口 ${port} UDP/TCP 已放行）"
+    success "防火墙配置完成（端口 ${port} UDP/TCP）"
 }
 
-# =============================================
-#  生成节点信息
-# =============================================
+# ============================================================
+#  显示节点信息
+#  修复：name 全部使用 hostname；URI/Clash配置同步更新
+# ============================================================
 show_node_info() {
-    local port password domain
-
-    # 读取配置
-    if [ -f "${HY2_CONFIG_DIR}/config.yaml" ]; then
-        port=$(grep -oP '(?<=listen: :)\d+' "${HY2_CONFIG_DIR}/config.yaml" 2>/dev/null)
-        password=$(grep -oP '(?<=password: ).*' "${HY2_CONFIG_DIR}/config.yaml" 2>/dev/null)
-        domain=$(grep -oP '(?<=cert: .*/)[^/]+(?=\.crt)' "${HY2_CONFIG_DIR}/config.yaml" 2>/dev/null || \
-                 openssl x509 -in "${CERT_DIR}/cert.crt" -noout -subject 2>/dev/null | grep -oP '(?<=CN = ).*' | head -1)
+    if [ ! -f "${HY2_CONFIG_DIR}/node.conf" ]; then
+        warn "未找到节点配置，请先安装 Hysteria2（选项 1）"
+        return
     fi
+    source "${HY2_CONFIG_DIR}/node.conf" 2>/dev/null
 
-    [ -z "$port" ] && port="$(grep -r 'port' "${HY2_CONFIG_DIR}/node.conf" 2>/dev/null | awk -F= '{print $2}')"
+    # 修复：name 从 hostname 实时读取，不用 node.conf 里的固定值
+    local node_name
+    node_name=$(get_node_name)
 
-    # 获取 IPv6 地址（方括号格式）
     local ipv6_raw ipv6_bracket
-    ipv6_raw=$(ip -6 addr show scope global 2>/dev/null | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
+    ipv6_raw=$(ip -6 addr show scope global 2>/dev/null \
+        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
     ipv6_bracket="[${ipv6_raw}]"
 
-    # 读取 node.conf（安装时保存）
-    local node_conf="${HY2_CONFIG_DIR}/node.conf"
-    if [ -f "$node_conf" ]; then
-        source "$node_conf" 2>/dev/null
-    fi
+    local port="${NODE_PORT}"
+    local password="${NODE_PASSWORD}"
+    local sni="${NODE_DOMAIN:-bing.com}"
 
-    local hy2_link="hysteria2://${password}@${ipv6_bracket}:${port}/?insecure=1&sni=${NODE_DOMAIN:-bing.com}#EUserv-HY2"
+    # URI 的 # 备注也用 hostname，特殊字符 URL encode
+    local name_encoded
+    name_encoded=$(python3 -c \
+        "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" \
+        "$node_name" 2>/dev/null || echo "$node_name")
+
+    local hy2_link="hysteria2://${password}@${ipv6_bracket}:${port}/?insecure=1&sni=${sni}#${name_encoded}"
 
     echo ""
     echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "  ${GREEN}${BOLD}          🎉 Hysteria2 节点信息 (EUserv IPv6)${NC}"
     echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+    echo -e "  ${CYAN}节点名称:${NC}     ${node_name}"
     echo -e "  ${CYAN}服务器 IPv6:${NC}  ${ipv6_raw}"
     echo -e "  ${CYAN}端口:${NC}         ${port}"
     echo -e "  ${CYAN}密码:${NC}         ${password}"
-    echo -e "  ${CYAN}SNI:${NC}          ${NODE_DOMAIN:-bing.com}"
+    echo -e "  ${CYAN}SNI:${NC}          ${sni}"
     echo -e "  ${CYAN}跳过证书验证:${NC} true（自签证书）"
     echo -e "  ${CYAN}协议:${NC}         UDP / QUIC"
     echo ""
-    echo -e "  ${YELLOW}${BOLD}━━━ 节点链接 (复制到客户端) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${YELLOW}${BOLD}━━━ 节点链接 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo -e "  ${WHITE}${hy2_link}${NC}"
     echo ""
 
-    # 二维码
     if command -v qrencode &>/dev/null; then
         echo -e "  ${YELLOW}━━━ 扫码导入 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
@@ -518,37 +590,40 @@ show_node_info() {
         echo ""
     fi
 
-    echo -e "  ${YELLOW}${BOLD}━━━ Clash Meta / Mihomo 单行配置 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${YELLOW}${BOLD}━━━ Clash Meta / Mihomo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    local clash_line="  - {name: 'EUserv-HY2', type: hysteria2, server: '${ipv6_raw}', port: ${port}, password: ${password}, sni: ${NODE_DOMAIN:-bing.com}, skip-cert-verify: true, fast-open: true}"
-    echo -e "${WHITE}${clash_line}${NC}"
+    # 修复：name 字段使用 hostname
+    cat <<EOF
+  proxies:
+    - name: "${node_name}"
+      type: hysteria2
+      server: ${ipv6_raw}
+      port: ${port}
+      password: "${password}"
+      sni: ${sni}
+      skip-cert-verify: true
+      fast-open: true
+      udp: true
+EOF
     echo ""
-    echo -e "  ${DIM}⚠ 注意: EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
-    echo -e "  ${DIM}⚠ 若客户端无 IPv6，请先配置 Warp 或使用支持 IPv6 的客户端网络${NC}"
+    echo -e "  ${DIM}⚠ EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
+    echo -e "  ${DIM}⚠ 国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
     echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }
 
-# =============================================
+# ============================================================
 #  主安装流程
-# =============================================
+# ============================================================
 do_install() {
     show_banner
-    echo -e "  ${WHITE}${BOLD}开始安装 Hysteria2（EUserv IPv6-only 专用）${NC}"
+    echo -e "  ${WHITE}${BOLD}安装 Hysteria2（EUserv IPv6-only 专用）${NC}"
     echo -e "  ${DIM}─────────────────────────────────────────────${NC}"
     echo ""
 
-    # 检测 root
-    if [ "$EUID" -ne 0 ]; then
-        error "请以 root 权限运行此脚本"
-        exit 1
-    fi
-
-    # 初始化日志
-    mkdir -p "$(dirname $LOG_FILE)"
+    mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
 
-    # 检测是否已安装
     if [ -f "$HY2_BIN" ] && systemctl is-active --quiet hysteria-server 2>/dev/null; then
         warn "Hysteria2 已在运行中"
         echo -ne "  ${YELLOW}是否重新安装？[y/N]:${NC} "
@@ -557,13 +632,9 @@ do_install() {
         systemctl stop hysteria-server 2>/dev/null
     fi
 
-    # 检测网络
-    check_network || exit 1
-
-    # 系统初始化
+    check_network || { read -rp "  按 Enter 返回..." _; return; }
     init_system
 
-    # ---- 用户配置输入 ----
     echo ""
     echo -e "  ${WHITE}${BOLD}━━━ 配置参数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
@@ -576,7 +647,7 @@ do_install() {
     elif [[ "$input_port" =~ ^[0-9]+$ ]] && [ "$input_port" -ge 1 ] && [ "$input_port" -le 65535 ]; then
         PORT="$input_port"
     else
-        error "无效端口，使用随机端口"
+        warn "无效端口，使用随机端口"
         PORT=$((RANDOM % 50000 + 10000))
     fi
 
@@ -587,7 +658,7 @@ do_install() {
         if command -v uuidgen &>/dev/null; then
             PASSWORD=$(uuidgen | tr -d '-')
         else
-            PASSWORD=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' || openssl rand -hex 16)
+            PASSWORD=$(openssl rand -hex 16)
         fi
         info "随机密码: ${PASSWORD}"
     else
@@ -599,27 +670,29 @@ do_install() {
     read -r input_domain
     MASQUERADE_DOMAIN="${input_domain:-bing.com}"
 
-    # SNI（用于节点链接）
+    # SNI
     echo -ne "  ${CYAN}SNI 域名${NC} ${DIM}[默认: bing.com]${NC}: "
     read -r input_sni
     NODE_DOMAIN="${input_sni:-bing.com}"
 
     echo ""
     echo -e "  ${DIM}─────────────────────────────────────────────${NC}"
-    echo -e "  端口: ${WHITE}${PORT}${NC}  密码: ${WHITE}${PASSWORD}${NC}  伪装: ${WHITE}${MASQUERADE_DOMAIN}${NC}"
+    echo -e "  端口: ${WHITE}${PORT}${NC}  密码: ${WHITE}${PASSWORD}${NC}"
+    echo -e "  伪装: ${WHITE}${MASQUERADE_DOMAIN}${NC}  SNI: ${WHITE}${NODE_DOMAIN}${NC}"
     echo -e "  ${DIM}─────────────────────────────────────────────${NC}"
     echo ""
 
-    # ---- 开始安装 ----
     get_latest_version
-    install_hysteria2_binary || exit 1
-    generate_self_signed_cert "$NODE_DOMAIN" || exit 1
+    install_hysteria2_binary || { restore_dns; read -rp "  按 Enter 返回..." _; return; }
+    restore_dns  # 安装完立即恢复DNS（如果改过）
+
+    generate_self_signed_cert "$NODE_DOMAIN" || { read -rp "  按 Enter 返回..." _; return; }
     generate_config "$PORT" "$PASSWORD" "$MASQUERADE_DOMAIN" "$NODE_DOMAIN"
     create_service
     configure_firewall "$PORT"
 
-    # 保存节点信息
-    cat > "${HY2_CONFIG_DIR}/node.conf" << EOF
+    # 保存节点配置
+    cat > "${HY2_CONFIG_DIR}/node.conf" <<EOF
 NODE_PORT=${PORT}
 NODE_PASSWORD=${PASSWORD}
 NODE_DOMAIN=${NODE_DOMAIN}
@@ -627,126 +700,83 @@ NODE_MASQUERADE=${MASQUERADE_DOMAIN}
 INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 EOF
 
-    # 启动服务
     step "启动 Hysteria2 服务..."
     systemctl start hysteria-server
-
     sleep 2
+
     if systemctl is-active --quiet hysteria-server; then
         success "Hysteria2 服务启动成功！"
     else
-        error "服务启动失败，查看日志:"
+        error "服务启动失败，日志如下:"
         journalctl -u hysteria-server -n 20 --no-pager
-        return 1
+        read -rp "  按 Enter 返回..." _
+        return
     fi
 
-    # 显示节点信息
     show_node_info
     read -rp "  按 Enter 返回主菜单..." _
 }
 
-# =============================================
-#  卸载 Hysteria2
-# =============================================
+# ============================================================
+#  卸载
+# ============================================================
 do_uninstall() {
     show_banner
     echo -e "  ${RED}${BOLD}卸载 Hysteria2${NC}"
     echo ""
-    echo -ne "  ${YELLOW}确认卸载？这将删除所有配置文件 [y/N]:${NC} "
+    echo -ne "  ${YELLOW}确认卸载？将删除所有配置文件 [y/N]:${NC} "
     read -r confirm
-    [ "${confirm,,}" != "y" ] && { info "已取消"; return; }
+    [ "${confirm,,}" != "y" ] && { info "已取消"; read -rp "  按 Enter 返回..." _; return; }
 
-    step "停止服务..."
     systemctl stop hysteria-server 2>/dev/null
     systemctl disable hysteria-server 2>/dev/null
-
-    step "删除文件..."
-    rm -f "$HY2_SERVICE"
-    rm -f "$HY2_BIN"
+    rm -f "$HY2_SERVICE" "$HY2_BIN"
     rm -rf "$HY2_CONFIG_DIR"
+    rm -f /etc/sysctl.d/99-hy2.conf
     systemctl daemon-reload
-
     success "Hysteria2 已完全卸载"
-}
-
-# =============================================
-#  服务管理
-# =============================================
-manage_service() {
-    show_banner
-    echo -e "  ${WHITE}${BOLD}服务管理${NC}"
-    echo ""
-    echo -e "  ${GREEN}1.${NC} 启动"
-    echo -e "  ${GREEN}2.${NC} 停止"
-    echo -e "  ${GREEN}3.${NC} 重启"
-    echo -e "  ${GREEN}4.${NC} 查看状态"
-    echo -e "  ${GREEN}0.${NC} 返回"
-    echo ""
-    echo -ne "  ${WHITE}选项:${NC} "
-    read -r opt
-    case "$opt" in
-        1) systemctl start hysteria-server && success "已启动" ;;
-        2) systemctl stop hysteria-server && success "已停止" ;;
-        3) systemctl restart hysteria-server && success "已重启" ;;
-        4) systemctl status hysteria-server ;;
-        0) return ;;
-    esac
-    echo ""
     read -rp "  按 Enter 返回..." _
 }
 
-# =============================================
-#  查看日志
-# =============================================
-show_logs() {
-    show_banner
-    echo -e "  ${WHITE}${BOLD}Hysteria2 运行日志（最近 50 行）${NC}"
-    echo -e "  ${DIM}按 Ctrl+C 退出实时查看${NC}"
-    echo ""
-    journalctl -u hysteria-server -n 50 -f
-}
-
-# =============================================
+# ============================================================
 #  修改配置
-# =============================================
+# ============================================================
 modify_config() {
     show_banner
     echo -e "  ${WHITE}${BOLD}修改配置${NC}"
     echo ""
 
     if [ ! -f "${HY2_CONFIG_DIR}/node.conf" ]; then
-        error "未找到节点配置，请先安装"
-        read -rp "  按 Enter 返回..." _
-        return
+        error "未找到节点配置，请先安装（选项 1）"
+        read -rp "  按 Enter 返回..." _; return
     fi
-
     source "${HY2_CONFIG_DIR}/node.conf" 2>/dev/null
 
     echo -e "  当前端口: ${CYAN}${NODE_PORT}${NC}"
-    echo -ne "  新端口 ${DIM}[留空保持不变]${NC}: "
+    echo -ne "  新端口 ${DIM}[留空保持]${NC}: "
     read -r new_port
     [ -n "$new_port" ] && NODE_PORT="$new_port"
 
     echo -e "  当前密码: ${CYAN}${NODE_PASSWORD}${NC}"
-    echo -ne "  新密码 ${DIM}[留空保持不变]${NC}: "
+    echo -ne "  新密码 ${DIM}[留空保持]${NC}: "
     read -r new_pass
     [ -n "$new_pass" ] && NODE_PASSWORD="$new_pass"
 
     echo -e "  当前伪装域名: ${CYAN}${NODE_MASQUERADE}${NC}"
-    echo -ne "  新伪装域名 ${DIM}[留空保持不变]${NC}: "
+    echo -ne "  新伪装域名 ${DIM}[留空保持]${NC}: "
     read -r new_masq
     [ -n "$new_masq" ] && NODE_MASQUERADE="$new_masq"
 
-    # 重新生成配置
     generate_config "$NODE_PORT" "$NODE_PASSWORD" "$NODE_MASQUERADE" "$NODE_DOMAIN"
 
-    # 更新 node.conf
-    cat > "${HY2_CONFIG_DIR}/node.conf" << EOF
+    local prev_date
+    prev_date=$(grep "INSTALL_DATE" "${HY2_CONFIG_DIR}/node.conf" | cut -d= -f2-)
+    cat > "${HY2_CONFIG_DIR}/node.conf" <<EOF
 NODE_PORT=${NODE_PORT}
 NODE_PASSWORD=${NODE_PASSWORD}
 NODE_DOMAIN=${NODE_DOMAIN}
 NODE_MASQUERADE=${NODE_MASQUERADE}
-INSTALL_DATE=$(grep INSTALL_DATE "${HY2_CONFIG_DIR}/node.conf" | cut -d= -f2-)
+INSTALL_DATE=${prev_date}
 MODIFY_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 EOF
 
@@ -755,44 +785,39 @@ EOF
     sleep 1
 
     if systemctl is-active --quiet hysteria-server; then
-        success "配置已更新并重启服务"
+        success "配置已更新，服务已重启"
     else
-        error "服务重启失败"
+        error "服务重启失败，请查看日志（选项 6）"
     fi
 
     show_node_info
     read -rp "  按 Enter 返回..." _
 }
 
-# =============================================
-#  调用 F大 Warp 脚本
-# =============================================
-#  升级 Hysteria2
-# =============================================
+# ============================================================
+#  升级
+# ============================================================
 do_upgrade() {
     show_banner
     echo -e "  ${WHITE}${BOLD}升级 Hysteria2${NC}"
     echo ""
 
     if [ ! -f "$HY2_BIN" ]; then
-        error "未检测到 Hysteria2，请先安装"
-        read -rp "  按 Enter 返回..." _
-        return
+        error "未检测到 Hysteria2，请先安装（选项 1）"
+        read -rp "  按 Enter 返回..." _; return
     fi
 
     local cur_ver
     cur_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     info "当前版本: ${cur_ver:-未知}"
 
-    # 获取最新版本
     get_latest_version
     local new_ver="${HY2_VERSION#app/}"
     info "最新版本: ${new_ver}"
 
     if [ "$cur_ver" = "$new_ver" ]; then
         success "已是最新版本，无需升级"
-        read -rp "  按 Enter 返回..." _
-        return
+        read -rp "  按 Enter 返回..." _; return
     fi
 
     echo ""
@@ -800,33 +825,27 @@ do_upgrade() {
     read -r confirm
     [ "${confirm,,}" != "y" ] && { info "已取消"; read -rp "  按 Enter 返回..." _; return; }
 
-    # 停止服务
-    step "停止服务..."
     systemctl stop hysteria-server 2>/dev/null
-
-    # 备份旧版本
     cp "$HY2_BIN" "${HY2_BIN}.bak" 2>/dev/null
     info "旧版本已备份至 ${HY2_BIN}.bak"
 
-    # 下载新版本
-    install_hysteria2_binary
-
-    if [ $? -eq 0 ]; then
-        systemctl start hysteria-server
-        sleep 1
+    if install_hysteria2_binary; then
+        restore_dns
+        systemctl start hysteria-server; sleep 1
         if systemctl is-active --quiet hysteria-server; then
             local updated_ver
             updated_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             success "升级成功！当前版本: ${updated_ver}"
             rm -f "${HY2_BIN}.bak"
         else
-            error "服务启动失败，正在回滚..."
+            error "升级后服务启动失败，回滚中..."
             mv "${HY2_BIN}.bak" "$HY2_BIN"
             systemctl start hysteria-server
             warn "已回滚至旧版本 ${cur_ver}"
         fi
     else
-        error "下载失败，正在回滚..."
+        restore_dns
+        error "下载失败，回滚中..."
         mv "${HY2_BIN}.bak" "$HY2_BIN"
         systemctl start hysteria-server
         warn "已回滚至旧版本 ${cur_ver}"
@@ -836,19 +855,130 @@ do_upgrade() {
     read -rp "  按 Enter 返回..." _
 }
 
-# =============================================
+# ============================================================
+#  服务管理
+# ============================================================
+manage_service() {
+    show_banner
+    echo -e "  ${WHITE}${BOLD}服务管理${NC}"
+    echo ""
+    # 显示当前状态
+    if systemctl is-active --quiet hysteria-server 2>/dev/null; then
+        echo -e "  当前状态: ${GREEN}● 运行中${NC}"
+    else
+        echo -e "  当前状态: ${RED}● 未运行${NC}"
+    fi
+    echo ""
+    echo -e "  ${GREEN}1.${NC} 启动"
+    echo -e "  ${GREEN}2.${NC} 停止"
+    echo -e "  ${GREEN}3.${NC} 重启"
+    echo -e "  ${GREEN}4.${NC} 查看详细状态"
+    echo -e "  ${GREEN}0.${NC} 返回"
+    echo ""
+    echo -ne "  ${WHITE}选项:${NC} "
+    read -r opt
+    case "$opt" in
+        1) systemctl start hysteria-server   && success "已启动" || error "启动失败" ;;
+        2) systemctl stop hysteria-server    && success "已停止" || error "停止失败" ;;
+        3) systemctl restart hysteria-server && success "已重启" || error "重启失败" ;;
+        4) systemctl status hysteria-server --no-pager ;;
+        0) return ;;
+        *) warn "无效选项" ;;
+    esac
+    echo ""
+    read -rp "  按 Enter 返回..." _
+}
+
+# ============================================================
+#  查看日志
+# ============================================================
+show_logs() {
+    show_banner
+    echo -e "  ${WHITE}${BOLD}Hysteria2 运行日志（最近 50 行，Ctrl+C 退出）${NC}"
+    echo ""
+    journalctl -u hysteria-server -n 50 -f
+}
+
+# ============================================================
+#  WARP（F大 fscarmen 脚本）
+#  修复：执行完后立即重新检测WARP状态并输出，不依赖菜单刷新
+# ============================================================
+run_warp_script() {
+    while true; do
+        show_banner
+        echo -e "  ${MAGENTA}${BOLD}WARP（F大 fscarmen/warp 脚本）${NC}"
+        echo -e "  ${DIM}为 EUserv IPv6-only VPS 添加 IPv4 出口${NC}"
+        echo ""
+
+        # 修复：进入WARP菜单也实时显示当前状态
+        if [ "$(check_warp_status)" = "installed" ]; then
+            echo -e "  WARP 状态: ${GREEN}● 已安装${NC}"
+        else
+            echo -e "  WARP 状态: ${RED}● 未安装${NC}"
+        fi
+        echo ""
+
+        echo -e "  ${WHITE}${BOLD}━━━ 选择安装模式 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${GREEN}1.${NC} 交互式菜单（推荐，自行选择模式）"
+        echo -e "  ${GREEN}2.${NC} 直接安装 WireGuard 双栈（IPv4+IPv6）"
+        echo -e "  ${GREEN}3.${NC} ${YELLOW}直接安装 IPv4 单栈（EUserv 首选，补全 IPv4）${NC}"
+        echo -e "  ${GREEN}4.${NC} 直接安装 SOCKS5 代理模式（127.0.0.1:40000）"
+        echo -e "  ${GREEN}0.${NC} 返回主菜单"
+        echo ""
+        echo -ne "  ${WHITE}选项 [0-4]:${NC} "
+        read -r warp_opt
+
+        [ "$warp_opt" = "0" ] && return
+
+        # 修复：用 mktemp 避免 /tmp/menu.sh 冲突；wget失败给出明确提示
+        local warp_script
+        warp_script=$(mktemp /tmp/warp_XXXXXX.sh)
+        info "下载 fscarmen WARP 脚本..."
+        if ! wget -q --timeout=30 \
+            "https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh" \
+            -O "$warp_script" 2>>"$LOG_FILE"; then
+            rm -f "$warp_script"
+            error "WARP 脚本下载失败（GitLab 是否可达？）"
+            read -rp "  按 Enter 返回..." _
+            continue
+        fi
+        chmod +x "$warp_script"
+
+        echo ""
+        case "$warp_opt" in
+            1) bash "$warp_script" ;;
+            2) bash "$warp_script" -d ;;
+            3) bash "$warp_script" -4 ;;
+            4) bash "$warp_script" -s5 ;;
+            *) warn "无效选项"; rm -f "$warp_script"; continue ;;
+        esac
+        rm -f "$warp_script"
+
+        echo ""
+        # 修复：操作完成后立即重新检测并输出WARP状态，不再显示"未安装"
+        sleep 2
+        if [ "$(check_warp_status)" = "installed" ]; then
+            success "WARP 已成功安装并运行 ✓"
+            info "验证 IPv4 出口: curl -4 ip.sb"
+        else
+            warn "WARP 网卡未检测到，可能安装未完成或已卸载"
+        fi
+        echo ""
+        read -rp "  按 Enter 继续..." _
+    done
+}
+
+# ============================================================
 #  系统工具
-# =============================================
+# ============================================================
 system_tools() {
     while true; do
         show_banner
         echo -e "  ${WHITE}${BOLD}系统工具${NC}"
         echo ""
 
-        # 检测 BBR 状态
-        local bbr_status cc_algo
+        local cc_algo qdisc bbr_status
         cc_algo=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
-        local qdisc
         qdisc=$(sysctl net.core.default_qdisc 2>/dev/null | awk '{print $3}')
         if [ "$cc_algo" = "bbr" ]; then
             bbr_status="${GREEN}● 已启用 (${cc_algo} + ${qdisc})${NC}"
@@ -857,115 +987,81 @@ system_tools() {
         fi
 
         echo -e "  ${DIM}┌─────────────────────────────────────────────┐${NC}"
-        echo -e "  ${DIM}│${NC}  BBR 状态: $(echo -e $bbr_status)"
-        echo -e "  ${DIM}│${NC}  内核版本: ${CYAN}$(uname -r)${NC}"
-        echo -e "  ${DIM}│${NC}  系统负载: ${CYAN}$(uptime | grep -oP 'load average:.*')${NC}"
-        echo -e "  ${DIM}│${NC}  内存使用: ${CYAN}$(free -h | awk '/Mem/{print $3"/"$2}')${NC}"
-        echo -e "  ${DIM}│${NC}  磁盘使用: ${CYAN}$(df -h / | awk 'NR==2{print $3"/"$2" ("$5")"}')${NC}"
+        echo -e "  ${DIM}│${NC}  BBR 状态:  $(echo -e "$bbr_status")"
+        echo -e "  ${DIM}│${NC}  内核版本:  ${CYAN}$(uname -r)${NC}"
+        echo -e "  ${DIM}│${NC}  系统负载:  ${CYAN}$(uptime | grep -oP 'load average:.*')${NC}"
+        echo -e "  ${DIM}│${NC}  内存使用:  ${CYAN}$(free -h | awk '/Mem/{print $3"/"$2}')${NC}"
+        echo -e "  ${DIM}│${NC}  磁盘使用:  ${CYAN}$(df -h / | awk 'NR==2{print $3"/"$2" ("$5")"}')${NC}"
         echo -e "  ${DIM}└─────────────────────────────────────────────┘${NC}"
         echo ""
-        echo -e "  ${WHITE}${BOLD}━━━ BBR 加速 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "  ${GREEN}1.${NC} 开启 BBR（bbr + fq）"
-        echo -e "  ${GREEN}2.${NC} 开启 BBR v3（需内核 ≥ 6.x）"
-        echo -e "  ${GREEN}3.${NC} 查看当前拥塞控制算法"
+        echo -e "  ${WHITE}${BOLD}━━━ BBR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${GREEN}1.${NC} 开启 BBR + fq"
+        echo -e "  ${GREEN}2.${NC} 查看当前拥塞控制算法"
         echo ""
-        echo -e "  ${WHITE}${BOLD}━━━ 系统信息 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "  ${GREEN}4.${NC} 查看详细系统信息"
-        echo -e "  ${GREEN}5.${NC} 网络连通性测试（IPv4 / IPv6）"
-        echo -e "  ${GREEN}6.${NC} 查看端口占用"
+        echo -e "  ${WHITE}${BOLD}━━━ 系统信息 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${GREEN}3.${NC} 查看详细系统信息"
+        echo -e "  ${GREEN}4.${NC} 网络连通性测试（IPv4 / IPv6）"
+        echo -e "  ${GREEN}5.${NC} 查看端口占用"
         echo ""
         echo -e "  ${YELLOW}0.${NC} 返回主菜单"
         echo ""
-        echo -ne "  ${WHITE}选项 [0-6]:${NC} "
+        echo -ne "  ${WHITE}选项 [0-5]:${NC} "
         read -r opt
 
         case "$opt" in
             1)
                 step "开启 BBR + fq..."
-                # 写入 sysctl
-                sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-                sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
+                sed -i '/net.core.default_qdisc/d;/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
                 echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
                 echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+                modprobe tcp_bbr 2>/dev/null || true
                 sysctl -p >> "$LOG_FILE" 2>&1
-                local result
-                result=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
-                if [ "$result" = "bbr" ]; then
-                    success "BBR 已成功开启！"
-                else
-                    # 尝试加载模块
-                    modprobe tcp_bbr 2>/dev/null
-                    sysctl -p >> "$LOG_FILE" 2>&1
-                    result=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
-                    [ "$result" = "bbr" ] && success "BBR 已成功开启！" || error "BBR 开启失败，内核可能不支持"
-                fi
-                echo ""
-                read -rp "  按 Enter 继续..." _
+                local r; r=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+                [ "$r" = "bbr" ] && success "BBR 已开启！" || error "BBR 开启失败，内核可能不支持"
+                echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             2)
-                local kver
-                kver=$(uname -r | cut -d. -f1)
-                if [ "$kver" -lt 6 ]; then
-                    warn "当前内核 $(uname -r) 低于 6.x，BBRv3 可能不可用"
-                    echo -ne "  ${YELLOW}仍要尝试？[y/N]:${NC} "
-                    read -r fc
-                    [ "${fc,,}" != "y" ] && continue
-                fi
-                step "开启 BBR v3 + fq_codel..."
-                sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-                sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-                echo "net.core.default_qdisc = fq_codel" >> /etc/sysctl.conf
-                echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
-                sysctl -p >> "$LOG_FILE" 2>&1
-                success "已应用 BBRv3 配置（需内核原生支持 v3）"
                 echo ""
-                read -rp "  按 Enter 继续..." _
+                echo -e "  ${CYAN}拥塞算法:${NC} $(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')"
+                echo -e "  ${CYAN}队列算法:${NC} $(sysctl net.core.default_qdisc 2>/dev/null | awk '{print $3}')"
+                echo -e "  ${CYAN}可用列表:${NC} $(sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | cut -d= -f2)"
+                echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             3)
                 echo ""
-                echo -e "  ${CYAN}拥塞控制算法:${NC} $(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')"
-                echo -e "  ${CYAN}队列调度算法:${NC} $(sysctl net.core.default_qdisc 2>/dev/null | awk '{print $3}')"
-                echo -e "  ${CYAN}可用算法列表:${NC} $(sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | cut -d= -f2)"
-                echo ""
-                read -rp "  按 Enter 继续..." _
+                echo -e "  ${WHITE}${BOLD}━━━ 系统详情 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "  ${CYAN}主机名:${NC}   $(hostname)"
+                echo -e "  ${CYAN}系统:${NC}     $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"')"
+                echo -e "  ${CYAN}内核:${NC}     $(uname -r)"
+                echo -e "  ${CYAN}架构:${NC}     $(uname -m)"
+                echo -e "  ${CYAN}运行时间:${NC} $(uptime -p 2>/dev/null || uptime)"
+                echo -e "  ${CYAN}CPU:${NC}      $(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs) ($(nproc)核)"
+                echo -e "  ${CYAN}内存:${NC}     $(free -h | awk '/Mem/{print $2" 总 / "$3" 已用 / "$4" 空闲"}')"
+                echo -e "  ${CYAN}磁盘:${NC}     $(df -h / | awk 'NR==2{print $2" 总 / "$3" 已用 / "$4" 空闲 ("$5")"}')"
+                echo -e "  ${CYAN}IPv6:${NC}     $(ip -6 addr show scope global | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)"
+                echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             4)
                 echo ""
-                echo -e "  ${WHITE}${BOLD}━━━ 系统详情 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "  ${CYAN}主机名:${NC}     $(hostname)"
-                echo -e "  ${CYAN}系统:${NC}       $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"')"
-                echo -e "  ${CYAN}内核:${NC}       $(uname -r)"
-                echo -e "  ${CYAN}架构:${NC}       $(uname -m)"
-                echo -e "  ${CYAN}运行时间:${NC}   $(uptime -p 2>/dev/null || uptime)"
-                echo -e "  ${CYAN}CPU:${NC}        $(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs)"
-                echo -e "  ${CYAN}CPU核心:${NC}    $(nproc) 核"
-                echo -e "  ${CYAN}内存:${NC}       $(free -h | awk '/Mem/{print $2" 总 / "$3" 已用 / "$4" 空闲"}')"
-                echo -e "  ${CYAN}磁盘:${NC}       $(df -h / | awk 'NR==2{print $2" 总 / "$3" 已用 / "$4" 空闲 ("$5")"}')"
-                echo -e "  ${CYAN}IPv6:${NC}       $(ip -6 addr show scope global | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)"
-                echo ""
-                read -rp "  按 Enter 继续..." _
+                echo -e "  ${WHITE}${BOLD}━━━ 网络连通性测试 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -ne "  IPv4 (ip.sb):    "
+                curl -4 -s --max-time 5 ip.sb 2>/dev/null && echo "" || echo -e "${RED}不通${NC}"
+                echo -ne "  IPv6 (ip.sb):    "
+                curl -6 -s --max-time 5 ip.sb 2>/dev/null && echo "" || echo -e "${RED}不通${NC}"
+                echo -ne "  Google IPv6:     "
+                curl -6 -s --max-time 5 https://ipv6.google.com -o /dev/null \
+                    && echo -e "${GREEN}通${NC}" || echo -e "${RED}不通${NC}"
+                echo -ne "  GitHub:          "
+                curl -s --max-time 8 https://github.com -o /dev/null \
+                    && echo -e "${GREEN}通${NC}" || echo -e "${RED}不通${NC}"
+                echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             5)
                 echo ""
-                echo -e "  ${WHITE}${BOLD}━━━ 网络连通性测试 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -ne "  IPv4 (ip.sb):   "
-                curl -4 -s --max-time 5 ip.sb 2>/dev/null && echo "" || echo -e "${RED}不通${NC}"
-                echo -ne "  IPv6 (ip.sb):   "
-                curl -6 -s --max-time 5 ip.sb 2>/dev/null && echo "" || echo -e "${RED}不通${NC}"
-                echo -ne "  Google IPv6:    "
-                curl -6 -s --max-time 5 https://ipv6.google.com -o /dev/null && echo -e "${GREEN}通${NC}" || echo -e "${RED}不通${NC}"
-                echo -ne "  GitHub:         "
-                curl -s --max-time 8 https://github.com -o /dev/null && echo -e "${GREEN}通${NC}" || echo -e "${RED}不通${NC}"
-                echo ""
-                read -rp "  按 Enter 继续..." _
-                ;;
-            6)
-                echo ""
-                echo -e "  ${WHITE}${BOLD}━━━ 端口占用（UDP/TCP Top20）━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "  ${WHITE}${BOLD}━━━ 端口占用 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
                 echo ""
                 ss -tulnp 2>/dev/null | head -25 || netstat -tulnp 2>/dev/null | head -25
-                echo ""
-                read -rp "  按 Enter 继续..." _
+                echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             0) return ;;
             *) warn "无效选项"; sleep 1 ;;
@@ -973,88 +1069,16 @@ system_tools() {
     done
 }
 
-# =============================================
-run_warp_script() {
-    show_banner
-    echo -e "  ${MAGENTA}${BOLD}F大 Warp 脚本（fscarmen/warp）${NC}"
-    echo -e "  ${DIM}为 EUserv IPv6-only VPS 添加 IPv4 出口${NC}"
-    echo ""
-    echo -e "  ${WHITE}此脚本将为您：${NC}"
-    echo -e "  ${GREEN}•${NC} 安装 Cloudflare Warp"
-    echo -e "  ${GREEN}•${NC} 为纯 IPv6 VPS 获得 IPv4 出口能力"
-    echo -e "  ${GREEN}•${NC} 支持 WireGuard / Socks5 等多种模式"
-    echo ""
-    echo -e "  ${YELLOW}${BOLD}━━━ 选择 Warp 安装模式 ━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo -e "  ${GREEN}1.${NC} 交互式菜单（推荐，自行选择模式）"
-    echo -e "  ${GREEN}2.${NC} 直接安装 Warp WireGuard 双栈（IPv4+IPv6）"
-    echo -e "  ${GREEN}3.${NC} 直接安装 Warp IPv4 单栈（为 IPv6-only 补全 IPv4）"
-    echo -e "  ${GREEN}4.${NC} 直接安装 Warp SOCKS5 代理模式"
-    echo -e "  ${DIM}   （SOCKS5 运行在 127.0.0.1:40000）${NC}"
-    echo -e "  ${GREEN}0.${NC} 返回主菜单"
-    echo ""
-    echo -ne "  ${WHITE}选项 [0-4]:${NC} "
-    read -r warp_opt
-
-    local warp_cmd="wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh && bash menu.sh"
-
-    case "$warp_opt" in
-        0) return ;;
-        1)
-            echo ""
-            info "启动 Warp 交互式菜单..."
-            echo ""
-            eval "$warp_cmd"
-            ;;
-        2)
-            echo ""
-            info "安装 Warp WireGuard 双栈模式..."
-            echo ""
-            eval "$warp_cmd d"
-            ;;
-        3)
-            echo ""
-            info "安装 Warp IPv4 单栈（补全 EUserv IPv4 出口）..."
-            echo ""
-            eval "$warp_cmd 4"
-            ;;
-        4)
-            echo ""
-            info "安装 Warp SOCKS5 代理模式..."
-            echo ""
-            eval "$warp_cmd s5"
-            ;;
-        *)
-            warn "无效选项"
-            sleep 1
-            run_warp_script
-            return
-            ;;
-    esac
-
-    echo ""
-    echo -e "  ${GREEN}${BOLD}Warp 脚本执行完毕${NC}"
-    echo ""
-    echo -e "  ${DIM}如安装成功，可通过以下命令验证 IPv4：${NC}"
-    echo -e "  ${CYAN}curl -4 ip.sb${NC}"
-    echo ""
-    read -rp "  按 Enter 返回主菜单..." _
-}
-
-# =============================================
+# ============================================================
 #  主入口
-# =============================================
+# ============================================================
 main() {
-    # 检测 root
-    if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}[ERROR]${NC} 请以 root 权限运行: sudo bash $0"
-        exit 1
-    fi
+    [ "$EUID" -ne 0 ] && { echo -e "${RED}[ERROR]${NC} 请以 root 运行: sudo bash $0"; exit 1; }
 
-    # 检测系统架构
-    local kernel
-    kernel=$(uname -r)
-    if [[ "$kernel" == *"OpenVZ"* ]] || [ -f /proc/vz/version ]; then
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE"
+
+    if [[ "$(uname -r)" == *"OpenVZ"* ]] || [ -f /proc/vz/version ]; then
         warn "检测到 OpenVZ 容器环境，UDP 可能受限"
     fi
 
@@ -1064,28 +1088,21 @@ main() {
 
         case "${choice,,}" in
             1) do_install ;;
-            2) do_uninstall ;;
-            3)
-                show_banner
-                show_node_info
-                read -rp "  按 Enter 返回..." _
-                ;;
-            4) manage_service ;;
-            5) show_logs ;;
-            6) modify_config ;;
-            7) do_upgrade ;;
-            8) system_tools ;;
-            w) run_warp_script ;;
+            2) show_banner; show_node_info; read -rp "  按 Enter 返回..." _ ;;
+            3) modify_config ;;
+            4) do_upgrade ;;
+            5) manage_service ;;
+            6) show_logs ;;
+            7) do_uninstall ;;
+            8) run_warp_script ;;
+            9) system_tools ;;
             0|q|quit|exit)
                 echo ""
                 echo -e "  ${DIM}感谢使用 EUserv Hysteria2 脚本${NC}"
                 echo ""
                 exit 0
                 ;;
-            *)
-                warn "无效选项: ${choice}"
-                sleep 1
-                ;;
+            *) warn "无效选项: ${choice}"; sleep 1 ;;
         esac
     done
 }
