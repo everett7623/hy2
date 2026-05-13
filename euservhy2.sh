@@ -505,19 +505,10 @@ show_node_info() {
         echo ""
     fi
 
-    echo -e "  ${YELLOW}${BOLD}━━━ 客户端配置参考 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${YELLOW}${BOLD}━━━ Clash Meta / Mihomo 单行配置 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    cat << CLIENTEOF
-  # Clash Meta / Mihomo 配置片段
-  - name: EUserv-HY2
-    type: hysteria2
-    server: ${ipv6_raw}
-    port: ${port}
-    password: ${password}
-    sni: ${NODE_DOMAIN:-bing.com}
-    skip-cert-verify: true
-    fast-open: true
-CLIENTEOF
+    local clash_line="  - {name: '🇩🇪德国Euserv V6', type: hysteria2, server: '${ipv6_raw}', port: ${port}, up: 200, down: 1000, password: ${password}, sni: ${NODE_DOMAIN:-bing.com}, skip-cert-verify: true}"
+    echo -e "${WHITE}${clash_line}${NC}"
     echo ""
     echo -e "  ${DIM}⚠ 注意: EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
     echo -e "  ${DIM}⚠ 若客户端无 IPv6，请先配置 Warp 或使用支持 IPv6 的客户端网络${NC}"
