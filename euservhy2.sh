@@ -3,8 +3,8 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.0
-#  更新时间: 2026-05-13
+#  版本: v2.0.1
+#  更新时间: 2026-05-14
 # ============================================================
 
 # ---- 颜色定义 ----
@@ -26,7 +26,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.0.1"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -57,17 +57,30 @@ get_node_name() {
 
 # ============================================================
 #  WARP 状态检测
-#  检测 warp0 / wgcf / cloudflare-warp 网卡 + warp-cli
+#  fscarmen WARP 装完后网卡名不固定（warp0/wgcf/wg0/utun等），
+#  最可靠的方式是直接 curl -4 看能否拿到 IPv4 地址。
+#  网卡检测作为辅助（离线判断用）。
+#  返回 "installed" 或 "none"
 # ============================================================
 check_warp_status() {
-    if ip link show warp0 &>/dev/null 2>&1 \
-    || ip link show wgcf &>/dev/null 2>&1 \
-    || ip link show cloudflare-warp &>/dev/null 2>&1 \
-    || command -v warp-cli &>/dev/null; then
+    # 主判断：能拿到 IPv4 说明 WARP/NAT64 出口生效
+    local ipv4
+    ipv4=$(curl -4 -s --max-time 4 ip.sb 2>/dev/null \
+        || curl -4 -s --max-time 4 ifconfig.me 2>/dev/null || true)
+    if [ -n "$ipv4" ]; then
         echo "installed"
-    else
-        echo "none"
+        return
     fi
+    # 辅助判断：检测常见 WARP 网卡名（无网络时也能判断）
+    if ip link show warp0       &>/dev/null 2>&1 \
+    || ip link show wgcf        &>/dev/null 2>&1 \
+    || ip link show wg0         &>/dev/null 2>&1 \
+    || ip link show cloudflare-warp &>/dev/null 2>&1 \
+    || command -v warp-cli      &>/dev/null; then
+        echo "installed"
+        return
+    fi
+    echo "none"
 }
 
 # ============================================================
@@ -175,7 +188,7 @@ show_menu() {
     echo -e "  ${GREEN}7.${NC} 卸载 Hysteria2"
     echo ""
     echo -e "  ${WHITE}${BOLD}━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${MAGENTA}8.${NC} WARP（fscarmen大佬 脚本）— IPv6-only 补全 IPv4"
+    echo -e "  ${MAGENTA}8.${NC} WARP（F大 fscarmen 脚本）— IPv6-only 补全 IPv4"
     echo -e "  ${BLUE}9.${NC} 系统工具（BBR / 系统信息 / 网络测试）"
     echo ""
     echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -590,21 +603,10 @@ show_node_info() {
         echo ""
     fi
 
-    echo -e "  ${YELLOW}${BOLD}━━━ Clash Meta / Mihomo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${YELLOW}${BOLD}━━━ Clash Meta / Mihomo 单行格式 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    # 修复：name 字段使用 hostname
-    cat <<EOF
-  proxies:
-    - name: "${node_name}"
-      type: hysteria2
-      server: ${ipv6_raw}
-      port: ${port}
-      password: "${password}"
-      sni: ${sni}
-      skip-cert-verify: true
-      fast-open: true
-      udp: true
-EOF
+    # 单行 {} 格式，方便直接粘贴到 Clash 配置
+    echo -e "  ${WHITE}- {name: \"${node_name}\", type: hysteria2, server: ${ipv6_raw}, port: ${port}, password: \"${password}\", sni: ${sni}, skip-cert-verify: true, fast-open: true, udp: true}${NC}"
     echo ""
     echo -e "  ${DIM}⚠ EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
     echo -e "  ${DIM}⚠ 国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
