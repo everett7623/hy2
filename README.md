@@ -69,6 +69,67 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ssdev.s
 
 ---
 
+## 🆓 EUserv IPv6-only VPS 专用脚本
+
+> 专为 **EUserv 免费 IPv6-only VPS** 设计，深度适配纯 IPv6 网络环境，内置 WARP 一键安装补全 IPv4 出口。
+
+### 适用场景
+
+EUserv 提供的免费 VPS 为**纯 IPv6 单栈**环境，标准脚本无法直接访问 IPv4 资源，本脚本针对此场景做了全套适配：
+
+- 自动通过 NAT64 DNS 拉取 GitHub 二进制，无需手动解决 IPv4 依赖
+- 内置 fscarmen WARP 一键集成，装完即获得 IPv4 出口
+- 节点链接自动使用 IPv6 格式（`[::]:port`），兼容所有主流客户端
+- 自签证书 + SNI 伪装，零门槛无需域名
+
+### 一键安装
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
+```
+
+### 功能菜单
+
+```
+━━━ Hysteria2 管理 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 1. 安装 / 重装 Hysteria2
+ 2. 查看节点信息 / 链接
+ 3. 修改配置（端口 / 密码 / 伪装域名）
+ 4. 升级 Hysteria2
+ 5. 服务管理（启动 / 停止 / 重启）
+ 6. 查看运行日志
+ 7. 卸载 Hysteria2
+
+━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 8. WARP（F大 fscarmen 脚本）— IPv6-only 补全 IPv4
+ 9. 系统工具（BBR / 系统信息 / 网络测试）
+```
+
+### EUserv 专属特性
+
+| 特性 | 说明 |
+| --- | --- |
+| **NAT64 DNS 自动切换** | 安装时临时启用 NAT64 DNS 拉取 IPv4 资源，完成后自动恢复原始配置 |
+| **多下载源自动降级** | 官方 CDN → 官方安装脚本 → IPv6 直连 GitHub → NAT64+GitHub → ghproxy 镜像，逐级兜底 |
+| **ELF 格式预检** | 下载完成后校验二进制有效性，防止损坏文件执行导致 Segfault |
+| **WARP 状态实时检测** | 主菜单每次刷新均实时探测 IPv4 可达性，装完 WARP 立即反映 |
+| **节点名动态读取** | 节点名称取自服务器 `hostname`，多机管理时一目了然 |
+| **ip6tables 优先** | 防火墙配置优先使用 ip6tables，确保 UDP 端口在纯 IPv6 环境下正确放行 |
+| **旧版 OpenSSL 兼容** | 自签证书生成自动检测 OpenSSL 版本，Debian 10 等老系统无 `-addext` 问题 |
+
+### 使用前提
+
+| 条件 | 要求 |
+| --- | --- |
+| 系统 | Debian 10/11/12（EUserv 默认镜像） |
+| 权限 | root |
+| 网络 | EUserv IPv6-only VPS（全局 IPv6 地址可达） |
+| 客户端访问 | 需本地支持 IPv6（国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 须先在客户端侧安装 WARP） |
+
+> **⚠️ 纯 IPv4 客户端用户**：若本地网络无 IPv6，可在脚本中选择选项 **8** 为服务器安装 WARP 后，将节点转换为通过 WARP IPv4 中转访问——但此方案延迟较高，建议优先解决客户端 IPv6 连接问题。
+
+---
+
 ## 📋 功能菜单对照
 
 ### Hysteria 2 菜单
@@ -128,6 +189,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ssdev.s
 
 #### Shadowsocks 安装示例
 <img width="1186" height="1367" alt="ssdev" src="https://github.com/user-attachments/assets/f4440535-4880-48ab-bf5e-3c163817bee7" />
+
+#### Euserv ipv6 only Hysteria 2 安装示例
+<img width="1186" height="1735" alt="euserv hy2-install 2" src="https://github.com/user-attachments/assets/78492236-d611-4b29-8e92-29ab73ab10f6" />
+<img width="701" height="625" alt="euserv hy2-install 1" src="https://github.com/user-attachments/assets/59bc7560-b09f-4aab-84fb-d32a56ce4659" />
+
 ---
 
 ## 🔗 关于作者
