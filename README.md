@@ -191,8 +191,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 <img width="1186" height="1367" alt="ssdev" src="https://github.com/user-attachments/assets/f4440535-4880-48ab-bf5e-3c163817bee7" />
 
 #### Euserv ipv6 only Hysteria 2 安装示例
-<img width="1186" height="1735" alt="euserv hy2-install 2" src="https://github.com/user-attachments/assets/78492236-d611-4b29-8e92-29ab73ab10f6" />
+
 <img width="701" height="625" alt="euserv hy2-install 1" src="https://github.com/user-attachments/assets/59bc7560-b09f-4aab-84fb-d32a56ce4659" />
+<img width="1186" height="1735" alt="euserv hy2-install 2" src="https://github.com/user-attachments/assets/78492236-d611-4b29-8e92-29ab73ab10f6" />
 
 ---
 
