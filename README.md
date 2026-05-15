@@ -135,7 +135,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
   6. 查看运行日志
   7. 卸载 Hysteria2
 
-  ━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   8. WARP（F大 fscarmen 脚本）— IPv6-only 补全 IPv4
   9. 系统工具（BBR / 系统信息 / 网络测试）
 ```
