@@ -2,26 +2,29 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v3.1.0-dev (+ Upgrade & Server Tools)
+# 版本：v3.2.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-11
+# 更新日期: 2026-05-14
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
 #
-# 更新日志 v3.1.0-dev:
-#   + 新增：升级功能（保留配置，仅替换二进制）
-#   + 新增：服务器工具子菜单（BBR / 自动更新 / 系统信息）
-#   + 新增：一键开启 BBR 拥塞控制
-#   + 新增：定时自动更新（cron，每天凌晨3点检查）
-#   + 新增：防火墙自动放行端口（ufw / firewalld / iptables 三套兼容）
-#   - 去除 Sing-box 输出格式（易出错，已移除）
-#   - uri_encode() 优先使用 python3，降级纯 bash
-#   - open_ports() 修复 ufw 判断逻辑
-#   - manage_ss() 补全"启动服务"选项，改为循环菜单
+# 更新日志 v3.2.0（ss.sh + ssdev.sh 合并版）:
+#   + 合并升级功能（保留配置，仅替换二进制）
+#   + 合并服务器工具子菜单（BBR / 自动更新 / 系统信息）
+#   + 二维码：新增终端内直接渲染（qrencode -t ANSIUTF8），URL 链接保留作备用
+#   + 新增：修改配置（端口 / 密码 / 加密方式），无需重装
+#   + 新增：连接测试（从服务器本机验证端口是否监听）
+#   + 新增：启动服务 选项补全进管理子菜单
+#   + uri_encode() 优先使用 python3，降级纯 bash
+#   + open_ports() 修复 ufw / firewalld 判断逻辑
+#   + service_logs() 日志条数提升至 50 行
+#   + BBR 支持 bbr3 自动检测，写入独立 sysctl.d 文件
+#   + check_sys() 发行版检测（cron 安装按发行版分支）
+#   + 主菜单显示已安装版本号
 #====================================================================================
 
 # ============================================================
@@ -173,6 +176,7 @@ open_ports() {
     local _port=$1
     echo -e "${YELLOW}正在自动放行 Linux 系统防火墙端口 ${_port}...${PLAIN}"
 
+    # firewalld：用 --state 判断运行状态（比 is-active 更可靠）
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1
         firewall-cmd --permanent --add-port="${_port}/udp" >/dev/null 2>&1
@@ -180,6 +184,7 @@ open_ports() {
         echo -e "  ${GREEN}✓ firewalld 已放行 tcp+udp/${_port}${PLAIN}"
     fi
 
+    # ufw：用 ufw status 判断 active（比 is-active 更可靠）
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
         ufw allow "${_port}/tcp" >/dev/null 2>&1
         ufw allow "${_port}/udp" >/dev/null 2>&1
@@ -314,22 +319,21 @@ EOF
 install_dependencies() {
     echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
 
-    if command -v setenforce >/dev/null 2>&1; then
-        setenforce 0 2>/dev/null
-    fi
+    command -v setenforce >/dev/null 2>&1 && setenforce 0 2>/dev/null
 
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -qq >/dev/null 2>&1
-        apt-get install -y -qq curl wget openssl tar xz-utils >/dev/null 2>&1
+        # qrencode 用于终端内渲染二维码
+        apt-get install -y -qq curl wget openssl tar xz-utils qrencode >/dev/null 2>&1
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y curl wget openssl tar xz >/dev/null 2>&1
+        dnf install -y curl wget openssl tar xz qrencode >/dev/null 2>&1
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y curl wget openssl tar xz >/dev/null 2>&1
+        yum install -y curl wget openssl tar xz qrencode >/dev/null 2>&1
     elif command -v pacman >/dev/null 2>&1; then
-        pacman -Sy --noconfirm curl wget openssl tar xz >/dev/null 2>&1
+        pacman -Sy --noconfirm curl wget openssl tar xz qrencode >/dev/null 2>&1
     elif command -v apk >/dev/null 2>&1; then
         apk update -q >/dev/null 2>&1
-        apk add --no-cache bash curl wget openssl tar xz >/dev/null 2>&1
+        apk add --no-cache bash curl wget openssl tar xz libqrencode >/dev/null 2>&1
     fi
 
     local _missing=0
@@ -411,47 +415,9 @@ install_ss() {
         EXT_PORT="$LISTEN_PORT"
     fi
 
-    echo -e "\n${YELLOW}请选择要使用的加密协议：${PLAIN}"
-    echo -e " 1. ${GREEN}aes-256-gcm${PLAIN} (经典原版协议，100% 兼容全平台，【默认推荐】)"
-    echo -e " 2. ${RED}2022-blake3-aes-256-gcm${PLAIN} (SS-2022 协议，强抗封锁，但要求时间极其准确)"
-    read -r -p "请输入选项 [1 或 2，默认 1]: " _cipher_opt
-
-    if [ "$_cipher_opt" = "2" ]; then
-        METHOD="2022-blake3-aes-256-gcm"
-        PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
-        echo -e "${YELLOW}已启用 SS-2022，系统已自动生成 32 字节规范密钥 -> ${PASSWORD}${PLAIN}"
-        echo -e "${YELLOW}正在尝试同步服务器时间以防连接超时...${PLAIN}"
-        command -v timedatectl >/dev/null 2>&1 && timedatectl set-ntp true >/dev/null 2>&1
-    else
-        METHOD="aes-256-gcm"
-        read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
-        if [[ -z "$PASSWORD" ]]; then
-            PASSWORD=$(openssl rand -base64 16 | tr -d ' \n\r')
-        fi
-        echo -e "${GREEN}已启用经典 aes-256-gcm 协议，保证最高连通率！${PLAIN}"
-    fi
-
-    local LISTEN_ADDR="0.0.0.0"
-    [ "$HAS_IPV6" = "1" ] && LISTEN_ADDR="::"
-
-    cat > "$SS_CONFIG" <<EOF
-{
-    "server": "$LISTEN_ADDR",
-    "server_port": $LISTEN_PORT,
-    "password": "$PASSWORD",
-    "method": "$METHOD",
-    "mode": "tcp_and_udp",
-    "timeout": 300
-}
-EOF
-
-    echo "$NAT_MODE"    > "$SS_META/nat_mode"
-    echo "$EXT_PORT"    > "$SS_META/ext_port"
-    echo "$LISTEN_PORT" > "$SS_META/listen_port"
-    echo "$PASSWORD"    > "$SS_META/password"
-    echo "$METHOD"      > "$SS_META/method"
-    [ -n "$PUBLIC_IP"   ] && echo "$PUBLIC_IP"   > "$SS_META/public_ip"
-    [ -n "$PUBLIC_IPV6" ] && echo "$PUBLIC_IPV6" > "$SS_META/public_ipv6"
+    _select_cipher
+    _write_config
+    _save_meta
 
     open_ports "$LISTEN_PORT"
 
@@ -475,6 +441,55 @@ EOF
     show_config
 }
 
+# 协议选择（安装 & 修改配置 共用）
+_select_cipher() {
+    echo -e "\n${YELLOW}请选择要使用的加密协议：${PLAIN}"
+    echo -e " 1. ${GREEN}aes-256-gcm${PLAIN} (经典原版协议，100% 兼容全平台，【默认推荐】)"
+    echo -e " 2. ${RED}2022-blake3-aes-256-gcm${PLAIN} (SS-2022 协议，强抗封锁，但要求时间极其准确)"
+    read -r -p "请输入选项 [1 或 2，默认 1]: " _cipher_opt
+
+    if [ "$_cipher_opt" = "2" ]; then
+        METHOD="2022-blake3-aes-256-gcm"
+        PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
+        echo -e "${YELLOW}已启用 SS-2022，系统已自动生成 32 字节规范密钥 -> ${PASSWORD}${PLAIN}"
+        echo -e "${YELLOW}正在尝试同步服务器时间以防连接超时...${PLAIN}"
+        command -v timedatectl >/dev/null 2>&1 && timedatectl set-ntp true >/dev/null 2>&1
+    else
+        METHOD="aes-256-gcm"
+        read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
+        [[ -z "$PASSWORD" ]] && PASSWORD=$(openssl rand -base64 16 | tr -d ' \n\r')
+        echo -e "${GREEN}已启用经典 aes-256-gcm 协议，保证最高连通率！${PLAIN}"
+    fi
+}
+
+# 写入 config.json
+_write_config() {
+    local LISTEN_ADDR="0.0.0.0"
+    [ "$HAS_IPV6" = "1" ] && LISTEN_ADDR="::"
+
+    cat > "$SS_CONFIG" <<EOF
+{
+    "server": "$LISTEN_ADDR",
+    "server_port": $LISTEN_PORT,
+    "password": "$PASSWORD",
+    "method": "$METHOD",
+    "mode": "tcp_and_udp",
+    "timeout": 300
+}
+EOF
+}
+
+# 写入 meta 目录
+_save_meta() {
+    echo "$NAT_MODE"    > "$SS_META/nat_mode"
+    echo "$EXT_PORT"    > "$SS_META/ext_port"
+    echo "$LISTEN_PORT" > "$SS_META/listen_port"
+    echo "$PASSWORD"    > "$SS_META/password"
+    echo "$METHOD"      > "$SS_META/method"
+    [ -n "$PUBLIC_IP"   ] && echo "$PUBLIC_IP"   > "$SS_META/public_ip"
+    [ -n "$PUBLIC_IPV6" ] && echo "$PUBLIC_IPV6" > "$SS_META/public_ipv6"
+}
+
 # ============================================================
 # 升级（保留配置，仅替换二进制）
 # ============================================================
@@ -485,7 +500,6 @@ upgrade_ss() {
         sleep 2; return
     fi
 
-    # ssserver --version 输出格式: "shadowsocks 1.24.0"（无 v 前缀）
     local _cur_raw _cur_ver=""
     _cur_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     [ -n "$_cur_raw" ] && _cur_ver="v${_cur_raw}"
@@ -516,7 +530,78 @@ upgrade_ss() {
 }
 
 # ============================================================
-# URL 编码
+# 修改配置（端口 / 密码 / 加密方式）
+# ============================================================
+
+modify_config() {
+    read_config_vars
+    if [ -z "$EXT_PORT" ]; then
+        echo -e "${RED}未找到有效配置，请先安装${PLAIN}"
+        sleep 2; return
+    fi
+
+    echo -e "\n${SKYBLUE}--- 修改配置 ---${PLAIN}"
+    echo -e "  当前端口: ${YELLOW}${EXT_PORT}${PLAIN}  密码: ${YELLOW}${PASSWORD}${PLAIN}  加密: ${YELLOW}${METHOD}${PLAIN}"
+    echo ""
+    echo -e " 1. 修改端口"
+    echo -e " 2. 修改密码"
+    echo -e " 3. 修改加密方式（重新选择协议）"
+    echo -e " 0. 返回"
+    read -r -p "请选择: " _mod_opt
+
+    case "$_mod_opt" in
+        1)
+            if [ "$NAT_MODE" = "1" ]; then
+                read -r -p "请输入新的本机监听端口: " LISTEN_PORT
+                read -r -p "请输入新的对外转发端口 [留空=同监听端口]: " EXT_PORT
+                [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
+            else
+                read -r -p "请输入新端口: " LISTEN_PORT
+                [[ -z "$LISTEN_PORT" ]] && { echo -e "${RED}端口不能为空${PLAIN}"; sleep 1; return; }
+                EXT_PORT="$LISTEN_PORT"
+            fi
+            open_ports "$LISTEN_PORT"
+            ;;
+        2)
+            if echo "$METHOD" | grep -q "2022"; then
+                echo -e "${YELLOW}SS-2022 协议需要 32 字节规范密钥，将自动生成${PLAIN}"
+                PASSWORD=$(openssl rand -base64 32 | tr -d ' \n\r')
+                echo -e "  新密钥: ${GREEN}${PASSWORD}${PLAIN}"
+            else
+                read -r -p "请输入新密码 [留空自动生成]: " PASSWORD
+                [[ -z "$PASSWORD" ]] && PASSWORD=$(openssl rand -base64 16 | tr -d ' \n\r')
+                echo -e "  新密码: ${GREEN}${PASSWORD}${PLAIN}"
+            fi
+            ;;
+        3)
+            # 重新检测网络以确定 HAS_IPV6
+            local _tmp_ipv6
+            _tmp_ipv6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
+            echo "$_tmp_ipv6" | grep -q ':' && HAS_IPV6=1 || HAS_IPV6=0
+            _select_cipher
+            ;;
+        0) return ;;
+        *) echo -e "${RED}输入错误${PLAIN}"; sleep 1; return ;;
+    esac
+
+    _write_config
+    _save_meta
+    service_restart
+    sleep 1
+
+    if service_is_active; then
+        echo -e "${GREEN}✓ 配置已更新，服务已重启${PLAIN}"
+        sleep 1
+        show_config
+    else
+        echo -e "${RED}✗ 服务重启失败，请查看日志${PLAIN}"
+        service_logs
+        read -r -p "按回车继续..." _tmp
+    fi
+}
+
+# ============================================================
+# URL 编码（python3 优先，纯 bash 降级）
 # ============================================================
 
 uri_encode() {
@@ -572,7 +657,7 @@ read_config_vars() {
 }
 
 # ============================================================
-# 展示单个节点
+# 展示单个节点（含终端二维码）
 # ============================================================
 
 show_node() {
@@ -589,16 +674,23 @@ show_node() {
 
     local _encoded
     _encoded=$(uri_encode "$_link")
-    local _qr="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
+    local _qr_url="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
 
     # ---- 分享链接 ----
     echo -e "${GREEN} 分享链接 (SIP002 标准):${PLAIN}"
     echo -e "  ${_link}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # ---- 二维码 ----
-    echo -e "${GREEN} 二维码链接:${PLAIN}"
-    echo -e "  ${_qr}"
+    # ---- 终端二维码（优先）----
+    if command -v qrencode >/dev/null 2>&1; then
+        echo -e "${GREEN} 扫码导入（终端二维码）:${PLAIN}"
+        qrencode -t ANSIUTF8 -m 2 "${_link}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    # ---- 二维码图片链接（备用）----
+    echo -e "${GREEN} 二维码图片链接（无法扫描时用浏览器打开）:${PLAIN}"
+    echo -e "  ${_qr_url}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- Clash Meta / Stash / Clash Verge ----
@@ -671,6 +763,69 @@ show_config() {
 }
 
 # ============================================================
+# 连接测试（本机端口监听验证）
+# ============================================================
+
+test_connection() {
+    read_config_vars
+    if [ -z "$LISTEN_PORT" ]; then
+        echo -e "${RED}未找到配置，请先安装${PLAIN}"
+        read -r -p "按回车继续..." _tmp; return
+    fi
+
+    echo -e "\n${SKYBLUE}--- 连接测试 ---${PLAIN}"
+
+    # 服务状态
+    echo -ne "  服务状态: "
+    if service_is_active; then
+        echo -e "${GREEN}运行中${PLAIN}"
+    else
+        echo -e "${RED}未运行${PLAIN}"
+        read -r -p "按回车继续..." _tmp; return
+    fi
+
+    # 端口监听检测
+    echo -ne "  端口监听 (TCP ${LISTEN_PORT}): "
+    if command -v ss >/dev/null 2>&1; then
+        ss -tlnp 2>/dev/null | grep -q ":${LISTEN_PORT} " \
+            && echo -e "${GREEN}正常${PLAIN}" || echo -e "${RED}未检测到${PLAIN}"
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -tlnp 2>/dev/null | grep -q ":${LISTEN_PORT} " \
+            && echo -e "${GREEN}正常${PLAIN}" || echo -e "${RED}未检测到${PLAIN}"
+    else
+        echo -e "${YELLOW}无法检测（ss/netstat 未安装）${PLAIN}"
+    fi
+
+    echo -ne "  端口监听 (UDP ${LISTEN_PORT}): "
+    if command -v ss >/dev/null 2>&1; then
+        ss -ulnp 2>/dev/null | grep -q ":${LISTEN_PORT} " \
+            && echo -e "${GREEN}正常${PLAIN}" || echo -e "${RED}未检测到${PLAIN}"
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -ulnp 2>/dev/null | grep -q ":${LISTEN_PORT} " \
+            && echo -e "${GREEN}正常${PLAIN}" || echo -e "${RED}未检测到${PLAIN}"
+    else
+        echo -e "${YELLOW}无法检测${PLAIN}"
+    fi
+
+    # 本机回环测试
+    echo -ne "  本机回环连通 (TCP 127.0.0.1:${LISTEN_PORT}): "
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w3 127.0.0.1 "$LISTEN_PORT" 2>/dev/null \
+            && echo -e "${GREEN}通${PLAIN}" || echo -e "${RED}不通${PLAIN}"
+    elif command -v bash >/dev/null 2>&1; then
+        (echo >/dev/tcp/127.0.0.1/"$LISTEN_PORT") 2>/dev/null \
+            && echo -e "${GREEN}通${PLAIN}" || echo -e "${RED}不通${PLAIN}"
+    else
+        echo -e "${YELLOW}无法检测${PLAIN}"
+    fi
+
+    echo ""
+    echo -e "${YELLOW}提示：若本机检测正常但客户端无法连接，请检查云服务商安全组/防火墙是否放行端口 ${LISTEN_PORT}${PLAIN}"
+    echo ""
+    read -r -p "按回车继续..." _tmp
+}
+
+# ============================================================
 # 管理子菜单
 # ============================================================
 
@@ -683,6 +838,8 @@ manage_ss() {
         echo -e "3. 停止服务"
         echo -e "4. 启动服务"
         echo -e "5. 查看日志"
+        echo -e "6. 修改配置（端口 / 密码 / 加密）"
+        echo -e "7. 连接测试"
         echo -e "0. 返回"
         read -r -p "请选择: " opt
         case $opt in
@@ -691,6 +848,8 @@ manage_ss() {
             3) service_stop    && echo -e "${YELLOW}服务已停止${PLAIN}" && sleep 1 ;;
             4) service_start   && echo -e "${GREEN}服务已启动${PLAIN}" && sleep 1 ;;
             5) service_logs; read -r -p "按回车继续..." _tmp ;;
+            6) modify_config ;;
+            7) test_connection ;;
             0) return ;;
             *) echo -e "${RED}输入错误${PLAIN}"; sleep 1 ;;
         esac
@@ -715,7 +874,7 @@ uninstall_ss() {
 }
 
 # ============================================================
-# ★ 一键开启 BBR（与 hy2 脚本完全一致）
+# BBR
 # ============================================================
 
 enable_bbr() {
@@ -802,7 +961,7 @@ check_bbr_status() {
 }
 
 # ============================================================
-# ★ 自动更新（与 hy2 脚本逻辑一致，适配 ss 路径）
+# 自动更新
 # ============================================================
 
 install_auto_update() {
@@ -815,17 +974,15 @@ install_auto_update() {
 
     cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
 #!/bin/bash
-# Shadowsocks-Rust 自动更新脚本（由 ssdev.sh 生成）
+# Shadowsocks-Rust 自动更新脚本（由 ss.sh 生成）
 SS_BIN="/usr/local/bin/ssserver"
 LOG="/var/log/ss-autoupdate.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 get_latest() {
-    local _ver
-    _ver=$(curl -Ls --max-time 15 \
+    curl -Ls --max-time 15 \
         "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
-    echo "$_ver"
+        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1
 }
 
 get_current() {
@@ -880,9 +1037,7 @@ main() {
         rm -f /tmp/ss-rust.tar.xz
         restart_service
         sleep 2
-        local _new
-        _new=$(get_current)
-        echo "[$TIMESTAMP] 更新成功，当前版本: $_new" >> "$LOG"
+        echo "[$TIMESTAMP] 更新成功，当前版本: $(get_current)" >> "$LOG"
     else
         echo "[$TIMESTAMP] 更新失败，请手动检查" >> "$LOG"
     fi
@@ -954,12 +1109,12 @@ view_auto_update_log() {
 }
 
 # ============================================================
-# ★ 系统信息
+# 系统信息
 # ============================================================
 
 show_system_info() {
     echo -e "\n${SKYBLUE}--- 系统信息 ---${PLAIN}"
-    echo -e "  系统: ${YELLOW}$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2 || uname -s)${PLAIN}"
+    echo -e "  系统: ${YELLOW}$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)${PLAIN}"
     echo -e "  内核: ${YELLOW}$(uname -r)${PLAIN}"
     echo -e "  架构: ${YELLOW}$(uname -m)${PLAIN}"
 
@@ -997,7 +1152,7 @@ show_system_info() {
 }
 
 # ============================================================
-# ★ 服务器工具子菜单
+# 服务器工具子菜单
 # ============================================================
 
 server_tools_menu() {
@@ -1048,7 +1203,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.1.0-dev${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.2.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -1060,7 +1215,7 @@ main_menu() {
         echo -e " 当前状态: $STATUS${_ver_line}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 安装 Shadowsocks 服务"
-        echo -e " 2. 管理 Shadowsocks 配置 (查看节点)"
+        echo -e " 2. 管理 Shadowsocks 配置 (查看节点 / 修改 / 测试)"
         echo -e " 3. 升级 Shadowsocks 服务"
         echo -e " 4. 卸载 Shadowsocks 服务"
         echo -e " 5. 服务器工具  (BBR / 自动更新 / 系统信息)"
