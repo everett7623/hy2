@@ -1226,7 +1226,7 @@ main_menu() {
         echo -e " 2. 管理 Hysteria2"
         echo -e " 3. 升级 Hysteria2"
         echo -e " 4. 卸载 Hysteria2"
-        echo -e " 5. 服务器工具  (BBR / 自动更新 / 系统信息)"
+        echo -e " 5. 服务器工具 (BBR / 自动更新 / 系统信息)"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
 
