@@ -107,20 +107,20 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 ```
  1. 安装 Hysteria2
- 2. 管理 Hysteria2    → 查看配置 / 启动 / 停止 / 重启 / 日志 / 改密码 / 改带宽
+ 2. 管理 Hysteria2
  3. 升级 Hysteria2
  4. 卸载 Hysteria2
- 5. 服务器工具        → BBR / 自动更新 / 系统信息
+ 5. 服务器工具  (BBR / 自动更新 / 系统信息)
 ```
 
 ### Shadowsocks 菜单
 
 ```
- 1. 安装 Shadowsocks 服务
- 2. 管理 Shadowsocks 配置  → 查看配置 / 启动 / 停止 / 重启 / 日志
- 3. 升级 Shadowsocks 服务  （DEV 版）
- 4. 卸载 Shadowsocks 服务
- 5. 服务器工具              → BBR / 自动更新 / 系统信息（DEV 版）
+ 1. 安装 Shadowsocks
+ 2. 管理 Shadowsocks
+ 3. 升级 Shadowsocks
+ 4. 卸载 Shadowsocks
+ 5. 服务器工具  (BBR / 自动更新 / 系统信息)
 ```
 
 ### EUserv Hysteria 2 菜单
