@@ -17,6 +17,7 @@
 | --- | --- | --- |
 | **Hysteria 2** | UDP 超速 · 自签证书 · 无需域名 | 主力节点，绝大多数网络环境 |
 | **Shadowsocks** | 支持 SS-2022 · musl 静态编译 · 全平台兼容 | 备用节点，IPv6 / 双栈环境尤佳 |
+| **EUserv Hysteria 2** | IPv6-only 专属 · 自动适配 · Warp 集成 | EUserv 免费德鸡专用 |
 
 ---
 
@@ -67,42 +68,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ssdev.s
 
 > **⚠️ SS-2022 特别提醒**：SS-2022 协议具有严格的时间防重放机制。若配置无误但仍提示超时，请务必确保手机 / 电脑本地时间与世界标准时间分秒一致。
 
----
+### EUserv 免费德鸡专用（IPv6-only）
 
-## 🆓 EUserv IPv6-only VPS 专用脚本
-
-> 专为 **EUserv 免费 IPv6-only VPS** 设计，深度适配纯 IPv6 网络环境，内置 WARP 一键安装补全 IPv4 出口。
-
-### 适用场景
-
-EUserv 提供的免费 VPS 为**纯 IPv6 单栈**环境，标准脚本无法直接访问 IPv4 资源，本脚本针对此场景做了全套适配：
-
-- 自动通过 NAT64 DNS 拉取 GitHub 二进制，无需手动解决 IPv4 依赖
-- 内置 fscarmen WARP 一键集成，装完即获得 IPv4 出口
-- 节点链接自动使用 IPv6 格式（`[::]:port`），兼容所有主流客户端
-- 自签证书 + SNI 伪装，零门槛无需域名
-
-### 一键安装
+专为 **EUserv 免费 IPv6-only VPS** 深度定制，自动处理纯 IPv6 环境下的证书、防火墙、节点生成等所有细节，并集成 Warp 一键添加 IPv4 出口。
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
-```
-
-### 功能菜单
-
-```
-━━━ Hysteria2 管理 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 1. 安装 / 重装 Hysteria2
- 2. 查看节点信息 / 链接
- 3. 修改配置（端口 / 密码 / 伪装域名）
- 4. 升级 Hysteria2
- 5. 服务管理（启动 / 停止 / 重启）
- 6. 查看运行日志
- 7. 卸载 Hysteria2
-
-━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 8. WARP（F大 fscarmen 脚本）— IPv6-only 补全 IPv4
- 9. 系统工具（BBR / 系统信息 / 网络测试）
 ```
 
 ### EUserv 专属特性
@@ -152,6 +123,23 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
  5. 服务器工具              → BBR / 自动更新 / 系统信息（DEV 版）
 ```
 
+### EUserv Hysteria 2 菜单
+
+```
+━━━ Hysteria2 管理 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. 安装 / 重装 Hysteria2
+  2. 查看节点信息 / 链接
+  3. 修改配置（端口 / 密码 / 伪装域名）
+  4. 升级 Hysteria2
+  5. 服务管理（启动 / 停止 / 重启）
+  6. 查看运行日志
+  7. 卸载 Hysteria2
+
+  ━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  8. WARP（F大 fscarmen 脚本）— IPv6-only 补全 IPv4
+  9. 系统工具（BBR / 系统信息 / 网络测试）
+```
+
 ---
 
 ## 📱 客户端兼容性
@@ -179,6 +167,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 | Alpine Linux | 3.x |
 
 > 支持 标准 VPS · NAT 机器 · IPv6 单栈 / 双栈 · 低配 VPS（≥ 128MB RAM）
+>
+> EUserv 专用脚本额外支持：纯 IPv6-only 环境 · Debian 系统优先适配
 
 ---
 
