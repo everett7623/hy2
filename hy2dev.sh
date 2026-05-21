@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.3-dev
+# 版本：v2.3.4-dev
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-12
+# 更新日期: 2026-05-21
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -25,7 +25,7 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# 更新日志 v2.3.3（基于 v2.2.4 稳定版重构 dev 分支）:
+# 更新日志 v2.3.4（基于 v2.3.4 稳定版 dev 分支）:
 #   fix: download_hy2() URL 修复 —— 下载时恢复 app/ 前缀，升级对比使用剥离后版本号
 #   fix: 密码自动生成改为两步法，避免管道截断导致空密码
 #   fix: change_bandwidth() sed 改用 awk 重写配置，兼容任意缩进格式
@@ -35,6 +35,7 @@
 #   + 新增：定时自动更新（cron，每天凌晨 3 点检查）
 #   + 新增：服务器工具子菜单（BBR / 自动更新 / 防火墙 / 系统信息）
 #   + 新增：管理菜单增加修改带宽选项
+#   + 新增：订阅增加显示二维码扫码
 #   + 日志显示行数提升至 50 行
 #====================================================================================
 
@@ -305,11 +306,11 @@ detect_network() {
 install_dependencies() {
     echo -e "${YELLOW}正在安装依赖...${PLAIN}"
     case "$RELEASE" in
-        alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl >/dev/null 2>&1 ;;
-        centos)       yum  install -y curl wget openssl >/dev/null 2>&1 ;;
-        fedora|rocky) dnf  install -y curl wget openssl >/dev/null 2>&1 ;;
-        arch)         pacman -Sy --noconfirm curl wget openssl >/dev/null 2>&1 ;;
-        *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl >/dev/null 2>&1 ;;
+        alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl qrencode >/dev/null 2>&1 ;;
+        centos)       yum  install -y curl wget openssl qrencode >/dev/null 2>&1 ;;
+        fedora|rocky) dnf  install -y curl wget openssl qrencode >/dev/null 2>&1 ;;
+        arch)         pacman -Sy --noconfirm curl wget openssl qrencode >/dev/null 2>&1 ;;
+        *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl qrencode >/dev/null 2>&1 ;;
     esac
 }
 
@@ -686,8 +687,15 @@ show_node() {
     echo -e "  ${_link}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # ---- 二维码 ----
-    echo -e "${GREEN} 二维码链接:${PLAIN}"
+    # ---- 终端二维码（优先）----
+    if command -v qrencode >/dev/null 2>&1; then
+        echo -e "${GREEN} 扫码导入（终端二维码）:${PLAIN}"
+        qrencode -t ANSIUTF8 -m 2 "${_link}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    # ---- 二维码图片链接（备用）----
+    echo -e "${GREEN} 二维码图片链接（无法扫描时用浏览器打开）:${PLAIN}"
     echo -e "  ${_qr}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -1211,7 +1219,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.3-dev${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.3.4-dev${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
