@@ -12,7 +12,7 @@
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
 #
-# 更新日志 v3.2.0（ss.sh + ssdev.sh 合并版）:
+# 更新日志 v3.2.1（ss.sh + ssdev.sh 合并版）:
 #   + 合并升级功能（保留配置，仅替换二进制）
 #   + 合并服务器工具子菜单（BBR / 自动更新 / 系统信息）
 #   + 二维码：新增终端内直接渲染（qrencode -t ANSIUTF8），URL 链接保留作备用
