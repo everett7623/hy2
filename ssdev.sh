@@ -2,17 +2,17 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v3.2.1
+# 版本：v3.2.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-21
+# 更新日期: 2026-05-14
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
 #
-# 更新日志 v3.2.1（ss.sh + ssdev.sh 合并版）:
+# 更新日志 v3.2.0（ss.sh + ssdev.sh 合并版）:
 #   + 合并升级功能（保留配置，仅替换二进制）
 #   + 合并服务器工具子菜单（BBR / 自动更新 / 系统信息）
 #   + 二维码：新增终端内直接渲染（qrencode -t ANSIUTF8），URL 链接保留作备用
@@ -333,7 +333,7 @@ install_dependencies() {
         pacman -Sy --noconfirm curl wget openssl tar xz qrencode >/dev/null 2>&1
     elif command -v apk >/dev/null 2>&1; then
         apk update -q >/dev/null 2>&1
-        apk add --no-cache bash curl wget openssl tar xz qrencode >/dev/null 2>&1
+        apk add --no-cache bash curl wget openssl tar xz libqrencode >/dev/null 2>&1
     fi
 
     local _missing=0
@@ -1203,7 +1203,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.2.1${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.2.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
