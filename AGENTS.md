@@ -3,9 +3,9 @@
 ## Script relationships
 
 - `install.sh` is a **remote launcher** — it downloads scripts from `https://raw.githubusercontent.com/everett7623/hy2/main/` and pipes to bash. It does **not** use local files. Bug fixes in local scripts won't take effect until pushed to GitHub.
-- Stable/dev pairs **share most code**. When fixing a bug in `hy2.sh`, also fix `hy2dev.sh` (and vice versa). Same for `ss.sh` / `ssdev.sh`.
-- Dev versions (`hy2dev.sh`, `ssdev.sh`) add features on top of stable: BBR, auto-update (cron), firewall rules, modify bandwidth/config, qrencode terminal QR. New features always go into dev first.
-- `euservhy2.sh` is standalone — does not share code with the hy2 scripts despite overlapping functionality.
+- `hy2.sh` — Hysteria 2 management (install/upgrade/uninstall, BBR, auto-update, firewall, QR, server tools).
+- `ss.sh` — Shadowsocks-Rust management (install/upgrade/uninstall, BBR, auto-update, QR, connection test, IPv4/IPv6 switch).
+- `euservhy2.sh` — Standalone EUserv IPv6-only script. Does not share code with hy2.sh.
 
 ## Version management
 
@@ -38,16 +38,18 @@
 | Systemd service | `/etc/systemd/system/hysteria-server.service` |
 | OpenRC service | `/etc/init.d/hysteria-server` |
 
-## Key differences between stable and dev
+## Feature matrix
 
-| Feature | hy2.sh | hy2dev.sh | ss.sh | ssdev.sh |
-|---------|--------|-----------|-------|----------|
-| BBR/tcp tuning | ❌ | ✅ | ❌ | ✅ |
-| Auto-update (cron) | ❌ | ✅ | ❌ | ✅ |
-| Firewall auto-ports | ❌ | ✅ | ❌ | ✅ |
-| Modify bandwidth/config | ❌ | ✅ | ❌ | ✅ |
-| Terminal QR code | ❌ | ✅ | ❌ | ✅ |
-| Upgrade sub-command | ✅ | ✅ | ✅ | ✅ |
+| Feature | hy2.sh | ss.sh |
+|---------|--------|-------|
+| BBR/tcp tuning | ✅ | ✅ |
+| Auto-update (cron) | ✅ | ✅ |
+| Firewall auto-ports | ✅ | ✅ |
+| Modify bandwidth/config | ✅ | ✅ |
+| Terminal QR code | ✅ | ✅ |
+| Upgrade sub-command | ✅ | ✅ |
+| IPv4/IPv6 switch | — | ✅ |
+| Connection test | — | ✅ |
 
 ## SS-2022 caveat
 

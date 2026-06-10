@@ -43,9 +43,6 @@
 ```bash
 # 稳定版
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
-
-# DEV 测试版（含最新功能）
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2dev.sh)
 ```
 
 - 默认端口：`18888`（支持 NAT 自定义外网端口）
@@ -58,9 +55,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2dev.
 ```bash
 # 稳定版
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
-
-# DEV 测试版（含升级 / 服务器工具菜单）
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ssdev.sh)
 ```
 
 - 默认端口：`28888`（支持 NAT 自定义外网端口）

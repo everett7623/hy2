@@ -9,17 +9,15 @@ A collection of bash scripts for one-click deployment and management of Hysteria
 ## Script relationships
 
 - **`install.sh`** — Remote launcher/menu. Downloads sub-scripts from the GitHub `main` branch and pipes to bash. Does NOT use local files. Bug fixes in local scripts won't take effect until pushed.
-- **`hy2.sh` / `hy2dev.sh`** — Stable and dev Hysteria 2 management scripts. **Share most code.** When fixing a bug in one, fix the other.
-- **`ss.sh` / `ssdev.sh`** — Stable and dev Shadowsocks management scripts. **Share most code.** Fixes must go into both.
-- **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with the hy2 pair.
+- **`hy2.sh`** — Hysteria 2 management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, firewall auto-ports, modify bandwidth/config, terminal QR codes, server tools.
+- **`ss.sh`** — Shadowsocks-Rust management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, modify config, terminal QR codes, connection test, server tools. IPv6-first detection with WARP filtering.
+- **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with hy2.sh.
 
-Dev versions (`hy2dev.sh`, `ssdev.sh`) add features on top of stable: BBR tuning, auto-update cron, firewall auto-ports, config modification, terminal QR codes. New features always go into dev first.
+## `install.sh` references
 
-## `install.sh` knows about dev versions only
+`install.sh` points to `hy2.sh` and `ss.sh` on the GitHub `main` branch.
 
-`install.sh` points to `hy2dev.sh` and `ssdev.sh` (not the stable ones). The stable scripts are referenced only from the README for direct `curl | bash` invocations.
-
-`install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2dev.sh`) rather than going through `install.sh`.
+`install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2.sh`) rather than going through `install.sh`.
 
 ## No shared library
 
@@ -32,27 +30,29 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 3. **TTY fix**: `[ ! -t 0 ] && [ -c /dev/tty ] && exec < /dev/tty` — required when piped via `curl | bash`.
 4. **No `grep -oP` anywhere** — all extraction uses `awk`/`cut` for busybox grep compatibility.
 5. **No `${var,,}` bash4+ syntax** — use `tr '[:upper:]' '[:lower:]'` or dual-condition checks for bash 3.x compatibility.
-6. **`check_root()`** — every script exits if not running as root. Present in all six scripts.
+6. **`check_root()`** — every script exits if not running as root.
 7. **`change_password()` / config mutation** — never use bare `sed -i 's|password:.*|...|'` for config edits. Always scope with `awk` using block-detection (`/^auth:/` → `in_auth=1`, `/^[^[:space:]]/` → `in_auth=0`) to avoid corrupting other sections that may add password fields in future Hysteria versions.
 8. **`service_restart()` must dispatch on `$INIT_SYS`** — use `systemctl restart` / `rc-service restart` when available instead of stop+sleep+start. The sleep-based approach is racy on slow VPS.
 9. **NAT detection requires `command -v ip` guard** — without it, missing `iproute2` causes false NAT positives.
 10. **`head -c` is non-POSIX** — use `dd bs=N count=1 2>/dev/null` for portable byte-limited reads.
 11. **`euservhy2.sh` must keep its bash bootstrap** — it was missing until v2.0.2. Don't let it regress.
 
-## Feature matrix (stable vs dev)
+## Feature matrix
 
-| Feature | hy2.sh | hy2dev.sh | ss.sh | ssdev.sh |
-|---------|--------|-----------|-------|----------|
-| Install / upgrade / uninstall | ✅ | ✅ | ✅ | ✅ |
-| Service management (start/stop/restart) | ✅ | ✅ | ✅ | ✅ |
-| View logs | ✅ | ✅ | ✅ | ✅ |
-| Node info / share links | ✅ | ✅ | ✅ | ✅ |
-| BBR tuning | ❌ | ✅ | ❌ | ✅ |
-| Auto-update (cron @ 03:00) | ❌ | ✅ | ❌ | ✅ |
-| Firewall auto-ports | ❌ | ✅ | ❌ | ✅ |
-| Modify bandwidth/config | ❌ | ✅ | ❌ | ✅ |
-| Terminal QR code (qrencode) | ❌ | ✅ | ❌ | ✅ |
-| Server tools sub-menu | ❌ | ✅ | ❌ | ✅ |
+| Feature | hy2.sh | ss.sh |
+|---------|--------|-------|
+| Install / upgrade / uninstall | ✅ | ✅ |
+| Service management (start/stop/restart) | ✅ | ✅ |
+| View logs | ✅ | ✅ |
+| Node info / share links | ✅ | ✅ |
+| BBR tuning | ✅ | ✅ |
+| Auto-update (cron @ 03:00) | ✅ | ✅ |
+| Firewall auto-ports | ✅ | ✅ |
+| Modify bandwidth/config | ✅ | ✅ |
+| Terminal QR code (qrencode) | ✅ | ✅ |
+| Server tools sub-menu | ✅ | ✅ |
+| IPv4/IPv6 switch | — | ✅ |
+| Connection test | — | ✅ |
 
 ## Default ports
 
@@ -86,8 +86,8 @@ Each script carries its own version in the header comment block. No shared versi
 | Hysteria 2 metadata | `/etc/hysteria/meta/` |
 | SS binary | `/usr/local/bin/ssserver` |
 | SS config | `/etc/shadowsocks.json` or `/etc/shadowsocks-rust/config.json` |
-| SS auto-update script (dev only) | `/usr/local/bin/ss-autoupdate.sh` |
-| SS auto-update log (dev only) | `/var/log/ss-autoupdate.log` |
+| SS auto-update script | `/usr/local/bin/ss-autoupdate.sh` |
+| SS auto-update log | `/var/log/ss-autoupdate.log` |
 | Systemd service | `/etc/systemd/system/hysteria-server.service` |
 | OpenRC service | `/etc/init.d/hysteria-server` |
 

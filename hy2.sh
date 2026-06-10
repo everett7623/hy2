@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.6
+# 版本：v2.3.7
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-06-10
+# 更新日期: 2026-06-11
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -24,6 +24,8 @@
 #   NAT 机器（内外端口不同）
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
+#
+# v2.3.7: 合并 dev 版本，含 BBR/自动更新/防火墙/QR/修改配置/服务工具
 #====================================================================================
 
 # ============================================================
@@ -75,6 +77,8 @@ HY_CERT_DIR="/etc/hysteria/cert"
 HY_META="/etc/hysteria/meta"
 SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
 OPENRC_SERVICE="/etc/init.d/hysteria-server"
+AUTO_UPDATE_SCRIPT="/usr/local/bin/hy2-autoupdate.sh"
+AUTO_UPDATE_LOG="/var/log/hy2-autoupdate.log"
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -198,9 +202,9 @@ service_is_active() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u hysteria-server -n 30 --no-pager
+        journalctl -u hysteria-server -n 50 --no-pager
     else
-        tail -n 30 /var/log/hysteria.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
+        tail -n 50 /var/log/hysteria.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
 }
 
@@ -293,16 +297,16 @@ detect_network() {
 install_dependencies() {
     echo -e "${YELLOW}正在安装依赖...${PLAIN}"
     case "$RELEASE" in
-        alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl >/dev/null 2>&1 ;;
-        centos)       yum  install -y curl wget openssl >/dev/null 2>&1 ;;
-        fedora|rocky) dnf  install -y curl wget openssl >/dev/null 2>&1 ;;
-        arch)         pacman -Sy --noconfirm curl wget openssl >/dev/null 2>&1 ;;
-        *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl >/dev/null 2>&1 ;;
+        alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl qrencode >/dev/null 2>&1 ;;
+        centos)       yum  install -y curl wget openssl qrencode >/dev/null 2>&1 ;;
+        fedora|rocky) dnf  install -y curl wget openssl qrencode >/dev/null 2>&1 ;;
+        arch)         pacman -Sy --noconfirm curl wget openssl qrencode >/dev/null 2>&1 ;;
+        *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl qrencode >/dev/null 2>&1 ;;
     esac
 }
 
 # ============================================================
-# 获取版本 & 下载（带官方镜像 fallback，不依赖 jq）
+# 获取版本 & 下载
 #
 # 设计说明：
 #   Hysteria 官方 GitHub tag 格式为 "app/v2.x.x"
@@ -317,10 +321,12 @@ install_dependencies() {
 get_latest_version() {
     echo -e "${YELLOW}正在获取最新版本...${PLAIN}"
 
+    # 从 GitHub API 获取完整 tag（如 app/v2.6.1）
     local _raw_tag
     _raw_tag=$(curl -Ls --max-time 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
 
+    # 备用：跟随重定向取 URL 末段
     if [ -z "$_raw_tag" ]; then
         _raw_tag=$(curl -Ls --max-time 10 -o /dev/null -w "%{url_effective}" \
             "https://github.com/apernet/hysteria/releases/latest" | sed 's|.*/tag/||')
@@ -328,24 +334,28 @@ get_latest_version() {
 
     [ -z "$_raw_tag" ] && echo -e "${RED}获取版本失败，请检查网络（可能被 GitHub API 限频）${PLAIN}" && exit 1
 
+    # 保留完整 tag 用于下载 URL
     LAST_VERSION_TAG="$_raw_tag"
+    # 剥离 app/ 前缀用于版本对比和显示
     LAST_VERSION="${_raw_tag#app/}"
+
     echo -e "${GREEN}最新版本: ${LAST_VERSION}${PLAIN}"
 }
 
 download_hy2() {
     local _arch
     case $(uname -m) in
-        x86_64)          _arch="amd64"  ;;
-        aarch64|arm64)   _arch="arm64"  ;;
-        armv7l|armv7)    _arch="armv7"  ;;
-        s390x)           _arch="s390x"  ;;
+        x86_64)          _arch="amd64"   ;;
+        aarch64|arm64)   _arch="arm64"   ;;
+        armv7l|armv7)    _arch="armv7"   ;;
+        s390x)           _arch="s390x"   ;;
         loongarch64)     _arch="loong64" ;;
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
 
-    # 主源：GitHub Release（需完整 tag，含 app/ 前缀）；备用：官方永久镜像
+    # 主源使用完整 tag（含 app/ 前缀），确保 URL 正确
     local _url_github="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION_TAG}/hysteria-linux-${_arch}"
+    # 备用：官方永久镜像（始终指向最新版，无需 tag）
     local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
 
     # 杀旧进程 + 删旧二进制，避免 "Text file busy"
@@ -354,21 +364,17 @@ download_hy2() {
     rm -f "$HY_BIN"
 
     echo -e "${YELLOW}正在下载 hysteria-linux-${_arch}...${PLAIN}"
-    local _ok=0
 
-    # 先试 GitHub
     if wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_github" 2>/dev/null; then
-        _ok=1
+        chmod +x "$HY_BIN"
+        echo -e "${GREEN}下载完成（来源：GitHub）${PLAIN}"
+    elif wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_mirror" 2>/dev/null; then
+        chmod +x "$HY_BIN"
+        echo -e "${GREEN}下载完成（来源：官方镜像）${PLAIN}"
     else
-        echo -e "${YELLOW}GitHub 下载失败，切换官方镜像重试...${PLAIN}"
-        if wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_mirror" 2>/dev/null; then
-            _ok=1
-        fi
+        rm -f "$HY_BIN"
+        echo -e "${RED}下载失败，请检查网络${PLAIN}" && return 1
     fi
-
-    [ $_ok -eq 0 ] && echo -e "${RED}下载失败，请检查网络${PLAIN}" && rm -f "$HY_BIN" && return 1
-    chmod +x "$HY_BIN"
-    echo -e "${GREEN}下载完成${PLAIN}"
 }
 
 # ============================================================
@@ -397,12 +403,41 @@ configure_std_port() {
 }
 
 # ============================================================
-# 密码生成（循环保证长度充足，避免管道截断导致弱密码）
+# 防火墙放行端口（ufw / firewalld / iptables 三套兼容）
+# ============================================================
+
+open_firewall_port() {
+    local _port="$1"
+    local _proto="${2:-udp}"
+
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
+        ufw allow "${_port}/${_proto}" >/dev/null 2>&1
+        echo -e "  ${GREEN}✓ ufw 已放行 ${_proto}/${_port}${PLAIN}"
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port="${_port}/${_proto}" >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
+        echo -e "  ${GREEN}✓ firewalld 已放行 ${_proto}/${_port}${PLAIN}"
+    elif command -v iptables >/dev/null 2>&1; then
+        iptables -I INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null
+        # 尝试持久化
+        if [ -f /etc/iptables/rules.v4 ] && command -v iptables-save >/dev/null 2>&1; then
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null
+        fi
+        echo -e "  ${GREEN}✓ iptables 已放行 ${_proto}/${_port}${PLAIN}"
+    else
+        echo -e "  ${YELLOW}⚠ 未检测到防火墙工具，请手动放行 ${_proto}/${_port}${PLAIN}"
+    fi
+}
+
+# ============================================================
+# 密码生成（两步法，避免管道截断导致空密码）
 # ============================================================
 
 gen_password() {
     local _pass=""
     if command -v openssl >/dev/null 2>&1; then
+        # 生成足够长的随机串，tr 过滤后截取 20 位
+        # 用循环保证长度充足，避免极端情况下过滤后不足 20 位
         while [ ${#_pass} -lt 20 ]; do
             _pass="${_pass}$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9')"
         done
@@ -435,6 +470,10 @@ install_hy2() {
         configure_std_port
     fi
 
+    # 自动放行端口
+    echo -e "${YELLOW}正在配置防火墙...${PLAIN}"
+    open_firewall_port "$LISTEN_PORT" "udp"
+
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
     [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
 
@@ -451,7 +490,6 @@ install_hy2() {
         -subj "/CN=${SNI}" >/dev/null 2>&1
     chmod 600 "$HY_CERT_DIR/server.key"
 
-    # 带宽参数（保存到 meta 供 show_node 使用）
     BW_UP="50"
     BW_DOWN="100"
     echo ""
@@ -494,14 +532,12 @@ EOF
     [ -n "$PUBLIC_IP"   ] && echo "$PUBLIC_IP"   > "$HY_META/public_ip"
     [ -n "$PUBLIC_IPV6" ] && echo "$PUBLIC_IPV6" > "$HY_META/public_ipv6"
 
-    # 注册服务
     if   [ "$INIT_SYS" = "systemd" ]; then setup_systemd_service
     elif [ "$INIT_SYS" = "openrc"  ]; then setup_openrc_service
     fi
     service_enable
     service_start
 
-    # 启动验证
     sleep 2
     echo -e "${YELLOW}验证服务状态...${PLAIN}"
     if service_is_active; then
@@ -522,13 +558,13 @@ EOF
 
 # ============================================================
 # 升级（保留配置，仅替换二进制）
+# 版本对比使用剥离 app/ 前缀后的纯 vX.Y.Z 格式
 # ============================================================
 
 upgrade_hy2() {
     if [ ! -f "$HY_BIN" ]; then
         echo -e "${RED}未检测到已安装的 Hysteria2，请先安装${PLAIN}"
-        sleep 2
-        return
+        sleep 2; return
     fi
 
     local _cur_ver=""
@@ -536,11 +572,11 @@ upgrade_hy2() {
     echo -e "  当前版本: ${YELLOW}${_cur_ver:-未知}${PLAIN}"
 
     get_latest_version
+    # LAST_VERSION 已剥离 app/ 前缀（vX.Y.Z），可直接与 _cur_ver 对比
 
     if [ -n "$_cur_ver" ] && [ "$_cur_ver" = "$LAST_VERSION" ]; then
         echo -e "${GREEN}已是最新版本，无需升级${PLAIN}"
-        sleep 2
-        return
+        sleep 2; return
     fi
 
     echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
@@ -586,12 +622,12 @@ read_config_vars() {
     SNI="amd.com"
 
     if [ -d "$HY_META" ]; then
-        NAT_MODE=$(cat "$HY_META/nat_mode"   2>/dev/null); NAT_MODE=${NAT_MODE:-0}
-        EXT_PORT=$(cat "$HY_META/ext_port"   2>/dev/null)
-        PUBLIC_IP=$(cat "$HY_META/public_ip" 2>/dev/null)
+        NAT_MODE=$(cat "$HY_META/nat_mode"       2>/dev/null); NAT_MODE=${NAT_MODE:-0}
+        EXT_PORT=$(cat "$HY_META/ext_port"       2>/dev/null)
+        PUBLIC_IP=$(cat "$HY_META/public_ip"     2>/dev/null)
         PUBLIC_IPV6=$(cat "$HY_META/public_ipv6" 2>/dev/null)
-        BW_UP=$(cat "$HY_META/bw_up"         2>/dev/null); BW_UP=${BW_UP:-50}
-        BW_DOWN=$(cat "$HY_META/bw_down"     2>/dev/null); BW_DOWN=${BW_DOWN:-100}
+        BW_UP=$(cat "$HY_META/bw_up"             2>/dev/null); BW_UP=${BW_UP:-50}
+        BW_DOWN=$(cat "$HY_META/bw_down"         2>/dev/null); BW_DOWN=${BW_DOWN:-100}
     fi
 
     [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
@@ -606,8 +642,8 @@ read_config_vars() {
 
 # ============================================================
 # URL encode — 优先 python3，降级纯 bash 逐字节处理
-# 用于对密码等字段做百分号转义，safe='' 表示全转义
 # ============================================================
+
 uri_encode() {
     local _in="$1"
     if command -v python3 >/dev/null 2>&1; then
@@ -615,7 +651,6 @@ uri_encode() {
             "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')"
         return
     fi
-    # 降级：纯 bash 逐字节
     local _out="" _i=0 _c _hex _b
     local _len=${#_in}
     while [ $_i -lt $_len ]; do
@@ -647,6 +682,7 @@ show_node() {
     local _pass_encoded
     _pass_encoded=$(uri_encode "${PASSWORD}")
 
+    # insecure=1：自签名证书场景下客户端必须跳过证书验证
     local _link="hysteria2://${_pass_encoded}@${_host}:${_port}/?insecure=1&sni=${SNI}#${_node}"
     local _encoded
     _encoded=$(uri_encode "$_link")
@@ -657,8 +693,15 @@ show_node() {
     echo -e "  ${_link}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # ---- 二维码 ----
-    echo -e "${GREEN} 二维码链接:${PLAIN}"
+    # ---- 终端二维码（优先）----
+    if command -v qrencode >/dev/null 2>&1; then
+        echo -e "${GREEN} 扫码导入（终端二维码）:${PLAIN}"
+        qrencode -t ANSIUTF8 -m 2 "${_link}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    # ---- 二维码图片链接（备用）----
+    echo -e "${GREEN} 二维码图片链接（无法扫描时用浏览器打开）:${PLAIN}"
     echo -e "  ${_qr}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -735,8 +778,7 @@ show_config() {
 change_password() {
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件，请先安装${PLAIN}"
-        sleep 2
-        return
+        sleep 2; return
     fi
 
     read_config_vars
@@ -744,7 +786,7 @@ change_password() {
     read -r -p "请输入新密码 [留空自动生成]: " NEW_PASS
     [ -z "$NEW_PASS" ] && NEW_PASS=$(gen_password)
 
-    # 校验密码不含破坏 YAML/sed 的特殊字符
+    # 校验密码不含破坏 YAML 的特殊字符
     if echo "$NEW_PASS" | grep -qE '["\\$`]'; then
         echo -e "${RED}错误: 密码不能包含特殊字符 (\", \\, \$, \`)${PLAIN}"
         sleep 2
@@ -771,13 +813,53 @@ change_password() {
         trap - EXIT INT TERM
         echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
     else
-        # 回滚到旧配置
         mv "$_bak_cfg" "$HY_CONFIG"
         service_restart
         trap - EXIT INT TERM
         echo -e "${RED}服务重启失败，配置已回滚${PLAIN}"
         service_logs
     fi
+    sleep 2
+}
+
+# ============================================================
+# 修改带宽
+# 使用 awk 重写 bandwidth 块，兼容任意缩进格式
+# ============================================================
+
+change_bandwidth() {
+    if [ ! -f "$HY_CONFIG" ]; then
+        echo -e "${RED}未找到配置文件，请先安装${PLAIN}"
+        sleep 2; return
+    fi
+
+    read_config_vars
+    echo -e "  当前带宽: ${YELLOW}上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
+    read -r -p "请输入新的上行带宽 Mbps [留空保持 ${BW_UP}]: " _new_up
+    read -r -p "请输入新的下行带宽 Mbps [留空保持 ${BW_DOWN}]: " _new_dn
+    [[ -n "$_new_up" ]] && BW_UP="$_new_up"
+    [[ -n "$_new_dn" ]] && BW_DOWN="$_new_dn"
+
+    # 用 awk 精准替换 bandwidth 块下的 up/down 行，不依赖固定缩进
+    local _tmp_cfg
+    _tmp_cfg=$(mktemp)
+    trap 'rm -f "$_tmp_cfg"' EXIT INT TERM
+    awk -v up="${BW_UP}" -v dn="${BW_DOWN}" '
+        /^bandwidth:/ { in_bw=1; print; next }
+        in_bw && /^[^[:space:]]/ { in_bw=0 }
+        in_bw && /^[[:space:]]+up:/ { sub(/up:.*/, "up: " up " mbps"); }
+        in_bw && /^[[:space:]]+down:/ { sub(/down:.*/, "down: " dn " mbps"); }
+        { print }
+    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG" || { rm -f "$_tmp_cfg"; trap - EXIT INT TERM; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return; }
+    trap - EXIT INT TERM
+
+    # 更新元数据
+    echo "$BW_UP"   > "$HY_META/bw_up"
+    echo "$BW_DOWN" > "$HY_META/bw_down"
+
+    service_restart
+    sleep 1
+    echo -e "${GREEN}带宽已更新: 上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
     sleep 2
 }
 
@@ -795,6 +877,7 @@ manage_hy2() {
         echo -e "4. 启动服务"
         echo -e "5. 查看日志"
         echo -e "6. 修改密码"
+        echo -e "7. 修改带宽"
         echo -e "0. 返回"
         read -r -p "请选择: " opt
         case $opt in
@@ -804,6 +887,7 @@ manage_hy2() {
             4) service_start   && echo -e "${GREEN}服务已启动${PLAIN}" && sleep 1 ;;
             5) service_logs; read -r -p "按回车继续..." _tmp ;;
             6) change_password ;;
+            7) change_bandwidth ;;
             0) return ;;
             *) echo -e "${RED}输入错误${PLAIN}"; sleep 1 ;;
         esac
@@ -817,12 +901,336 @@ manage_hy2() {
 uninstall_hy2() {
     read -r -p "确定卸载 Hysteria2? [y/N]: " confirm
     [[ ! "$confirm" =~ ^[yY]$ ]] && return
+
     service_stop
     service_disable
     rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$HY_BIN"
     rm -rf /etc/hysteria
+
+    # 同时清理自动更新
+    remove_auto_update_quiet
+
     echo -e "${GREEN}已卸载完成${PLAIN}"
     sleep 1
+}
+
+# ============================================================
+# 一键开启 BBR 拥塞控制
+# 内核 < 4.9：不支持；4.9~5.14：BBR；>= 5.15：尝试 BBRv3
+# ============================================================
+
+enable_bbr() {
+    echo -e "\n${SKYBLUE}--- 一键开启 BBR ---${PLAIN}"
+
+    local _kver _kmaj _kmin
+    _kver=$(uname -r)
+    _kmaj=$(echo "$_kver" | cut -d. -f1)
+    _kmin=$(echo "$_kver" | cut -d. -f2)
+
+    echo -e "  当前内核: ${YELLOW}${_kver}${PLAIN}"
+
+    if [ "$_kmaj" -lt 4 ] || { [ "$_kmaj" -eq 4 ] && [ "$_kmin" -lt 9 ]; }; then
+        echo -e "${RED}内核版本过低（< 4.9），不支持 BBR，请升级内核后重试${PLAIN}"
+        sleep 3; return
+    fi
+
+    local _cur_cc
+    _cur_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    echo -e "  当前拥塞控制: ${YELLOW}${_cur_cc:-未知}${PLAIN}"
+
+    # 选择 BBR 版本
+    local _cc="bbr"
+    if [ "$_kmaj" -gt 5 ] || { [ "$_kmaj" -eq 5 ] && [ "$_kmin" -ge 15 ]; }; then
+        if modprobe tcp_bbr3 >/dev/null 2>&1 || \
+           grep -q "bbr3" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+            _cc="bbr3"
+        fi
+    fi
+
+    echo -e "${YELLOW}将启用 ${_cc} + FQ 队列调度...${PLAIN}"
+    modprobe tcp_bbr 2>/dev/null || true
+
+    local _sysctl_conf="/etc/sysctl.d/99-hysteria-bbr.conf"
+    cat > "$_sysctl_conf" <<EOF
+# Hysteria2 脚本写入 - BBR 优化
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = ${_cc}
+net.ipv4.tcp_fastopen = 3
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 16384 16777216
+EOF
+
+    sysctl -p "$_sysctl_conf" >/dev/null 2>&1
+
+    local _result
+    _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    if [ "$_result" = "$_cc" ]; then
+        echo -e "${GREEN}✓ BBR (${_cc}) 已成功启用${PLAIN}"
+        echo -e "${GREEN}✓ 队列调度: $(sysctl -n net.core.default_qdisc 2>/dev/null)${PLAIN}"
+        echo -e "${GREEN}✓ 配置已写入 ${_sysctl_conf}，重启后持续生效${PLAIN}"
+    else
+        echo -e "${YELLOW}⚠ ${_cc} 模块不可用，回落至 bbr${PLAIN}"
+        sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1
+        sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1
+        _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+        if [ "$_result" = "bbr" ]; then
+            echo -e "${GREEN}✓ BBR 已启用${PLAIN}"
+        else
+            echo -e "${RED}✗ BBR 启用失败，请手动检查内核模块${PLAIN}"
+        fi
+    fi
+    sleep 3
+}
+
+check_bbr_status() {
+    local _cc _qdisc
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    local _avail
+    _avail=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
+
+    echo -e "  拥塞控制算法: ${YELLOW}${_cc:-未知}${PLAIN}"
+    echo -e "  队列调度算法: ${YELLOW}${_qdisc:-未知}${PLAIN}"
+    echo -e "  可用算法    : ${SKYBLUE}${_avail}${PLAIN}"
+
+    if echo "${_cc:-}" | grep -qi "bbr"; then
+        echo -e "  BBR 状态    : ${GREEN}已启用${PLAIN}"
+    else
+        echo -e "  BBR 状态    : ${RED}未启用${PLAIN}"
+    fi
+}
+
+# ============================================================
+# 定时自动更新（cron，每天凌晨 3 点）
+# ============================================================
+
+install_auto_update() {
+    echo -e "\n${SKYBLUE}--- 配置自动更新 ---${PLAIN}"
+
+    if [ ! -f "$HY_BIN" ]; then
+        echo -e "${RED}未安装 Hysteria2，请先安装${PLAIN}"
+        sleep 2; return
+    fi
+
+    cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
+#!/bin/bash
+# Hysteria2 自动更新脚本（由 hy2.sh 生成）
+HY_BIN="/usr/local/bin/hysteria"
+LOG="/var/log/hy2-autoupdate.log"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+get_latest() {
+    local _raw _ver
+    _raw=$(curl -Ls --max-time 15 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
+        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+    # 返回完整 tag 和剥离后版本号，以 "|" 分隔
+    printf '%s|%s' "$_raw" "${_raw#app/}"
+}
+
+get_current() {
+    "$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_arch() {
+    case $(uname -m) in
+        x86_64)        echo "amd64"   ;;
+        aarch64|arm64) echo "arm64"   ;;
+        armv7l|armv7)  echo "armv7"   ;;
+        s390x)         echo "s390x"   ;;
+        loongarch64)   echo "loong64" ;;
+        *) echo "" ;;
+    esac
+}
+
+restart_service() {
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled hysteria-server >/dev/null 2>&1; then
+        systemctl restart hysteria-server
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service hysteria-server restart 2>/dev/null
+    fi
+}
+
+main() {
+    local _info _tag _latest _current _arch
+    _info=$(get_latest)
+    _tag="${_info%%|*}"
+    _latest="${_info##*|}"
+    _current=$(get_current)
+    _arch=$(detect_arch)
+
+    if [ -z "$_latest" ] || [ -z "$_arch" ]; then
+        echo "[$TIMESTAMP] 获取版本或架构失败，跳过更新" >> "$LOG"
+        return
+    fi
+
+    if [ "$_current" = "$_latest" ]; then
+        echo "[$TIMESTAMP] 已是最新版本 $_current，无需更新" >> "$LOG"
+        return
+    fi
+
+    echo "[$TIMESTAMP] 发现新版本: $_current → $_latest，开始更新..." >> "$LOG"
+
+    # 使用完整 tag 构造下载 URL
+    local _url="https://github.com/apernet/hysteria/releases/download/${_tag}/hysteria-linux-${_arch}"
+    pkill -f "hysteria server" 2>/dev/null
+    sleep 1
+    rm -f "$HY_BIN"
+
+    if wget -q --timeout=60 -O "$HY_BIN" "$_url" 2>/dev/null; then
+        chmod +x "$HY_BIN"
+        restart_service
+        sleep 2
+        echo "[$TIMESTAMP] 更新成功，当前版本: $(get_current)" >> "$LOG"
+    else
+        echo "[$TIMESTAMP] GitHub 下载失败，尝试备用镜像..." >> "$LOG"
+        local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
+        if wget -q --timeout=60 -O "$HY_BIN" "$_url_mirror" 2>/dev/null; then
+            chmod +x "$HY_BIN"
+            restart_service
+            sleep 2
+            echo "[$TIMESTAMP] 更新成功（备用源），当前版本: $(get_current)" >> "$LOG"
+        else
+            rm -f "$HY_BIN"
+            echo "[$TIMESTAMP] 更新失败，请手动检查" >> "$LOG"
+        fi
+    fi
+
+    # 保留最近 500 行日志
+    tail -n 500 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
+}
+
+main
+AUTOUPDATE_EOF
+
+    chmod +x "$AUTO_UPDATE_SCRIPT"
+
+    # 安装 cron（如未安装）
+    if ! command -v crontab >/dev/null 2>&1; then
+        echo -e "${YELLOW}正在安装 cron...${PLAIN}"
+        case "$RELEASE" in
+            alpine) apk add --no-cache dcron >/dev/null 2>&1; rc-update add dcron default >/dev/null 2>&1; rc-service dcron start >/dev/null 2>&1 ;;
+            arch)   pacman -Sy --noconfirm cronie >/dev/null 2>&1 ;;
+            centos|rocky|fedora) dnf install -y cronie >/dev/null 2>&1 || yum install -y cronie >/dev/null 2>&1 ;;
+            *)      apt-get install -y -qq cron >/dev/null 2>&1 ;;
+        esac
+    fi
+
+    # 写入 crontab（避免重复）
+    local _cron_entry="0 3 * * * /bin/bash ${AUTO_UPDATE_SCRIPT} >> ${AUTO_UPDATE_LOG} 2>&1"
+    ( crontab -l 2>/dev/null | grep -v "hy2-autoupdate"; echo "$_cron_entry" ) | crontab -
+
+    echo -e "${GREEN}✓ 自动更新已配置${PLAIN}"
+    echo -e "  执行时间: ${YELLOW}每天 03:00${PLAIN}"
+    echo -e "  更新日志: ${YELLOW}${AUTO_UPDATE_LOG}${PLAIN}"
+    echo -e "  更新脚本: ${YELLOW}${AUTO_UPDATE_SCRIPT}${PLAIN}"
+    sleep 3
+}
+
+remove_auto_update() {
+    remove_auto_update_quiet
+    echo -e "${GREEN}✓ 自动更新已移除${PLAIN}"
+    sleep 2
+}
+
+remove_auto_update_quiet() {
+    ( crontab -l 2>/dev/null | grep -v "hy2-autoupdate" ) | crontab - 2>/dev/null
+    rm -f "$AUTO_UPDATE_SCRIPT"
+}
+
+check_auto_update_status() {
+    if crontab -l 2>/dev/null | grep -q "hy2-autoupdate"; then
+        echo -e "  自动更新: ${GREEN}已启用（每天 03:00）${PLAIN}"
+    else
+        echo -e "  自动更新: ${RED}未启用${PLAIN}"
+    fi
+
+    if [ -f "$AUTO_UPDATE_LOG" ]; then
+        echo -e "\n  ${SKYBLUE}最近更新记录（最后5条）:${PLAIN}"
+        tail -n 5 "$AUTO_UPDATE_LOG" 2>/dev/null | while IFS= read -r line; do
+            echo -e "    ${line}"
+        done
+    fi
+}
+
+view_auto_update_log() {
+    echo -e "\n${SKYBLUE}--- 自动更新日志（最近 30 条）---${PLAIN}"
+    if [ -f "$AUTO_UPDATE_LOG" ]; then
+        tail -n 30 "$AUTO_UPDATE_LOG"
+    else
+        echo -e "${YELLOW}暂无更新日志${PLAIN}"
+    fi
+    echo ""
+    read -r -p "按回车继续..." _tmp
+}
+
+# ============================================================
+# 系统信息
+# ============================================================
+
+show_system_info() {
+    echo -e "\n${SKYBLUE}--- 系统信息 ---${PLAIN}"
+
+    local _os _kernel _arch _cpu_model _cpu_cores
+    local _mem_total _mem_free _mem_used _disk _load _uptime_str
+
+    _os=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)
+    _kernel=$(uname -r)
+    _arch=$(uname -m)
+    _cpu_model=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs)
+    _cpu_cores=$(nproc 2>/dev/null || grep -c "processor" /proc/cpuinfo 2>/dev/null)
+    _mem_total=$(awk '/MemTotal/     {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
+    _mem_free=$(awk  '/MemAvailable/ {printf "%.0f", $2/1024}' /proc/meminfo 2>/dev/null)
+    _mem_used=$(( ${_mem_total:-0} - ${_mem_free:-0} ))
+    _disk=$(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')
+    _load=$(uptime 2>/dev/null | awk -F'load average:' '{print $2}' | xargs)
+    _uptime_str=$(uptime -p 2>/dev/null || uptime 2>/dev/null | awk -F'up ' '{print $2}' | cut -d, -f1-2)
+
+    echo -e "  系统    : ${YELLOW}${_os}${PLAIN}"
+    echo -e "  内核    : ${YELLOW}${_kernel}${PLAIN}"
+    echo -e "  架构    : ${YELLOW}${_arch}${PLAIN}"
+    echo -e "  CPU     : ${YELLOW}${_cpu_model:-未知} × ${_cpu_cores:-?}${PLAIN}"
+    echo -e "  内存    : ${YELLOW}${_mem_used}MB / ${_mem_total}MB${PLAIN}"
+    echo -e "  磁盘    : ${YELLOW}${_disk:-未知}${PLAIN}"
+    echo -e "  负载    : ${YELLOW}${_load:-未知}${PLAIN}"
+    echo -e "  运行时间: ${YELLOW}${_uptime_str:-未知}${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    check_bbr_status
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    check_auto_update_status
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    echo ""
+    read -r -p "按回车返回..." _tmp
+}
+
+# ============================================================
+# 服务器工具子菜单
+# ============================================================
+
+server_tools_menu() {
+    while true; do
+        clear
+        echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
+        echo -e "1. 一键开启 BBR"
+        echo -e "2. 查看 BBR 状态"
+        echo -e "3. 开启自动更新（每天 03:00）"
+        echo -e "4. 关闭自动更新"
+        echo -e "5. 查看自动更新日志"
+        echo -e "6. 系统信息总览"
+        echo -e "0. 返回"
+        read -r -p "请选择: " opt
+        case $opt in
+            1) enable_bbr ;;
+            2) echo ""; check_bbr_status; echo ""; read -r -p "按回车继续..." _tmp ;;
+            3) install_auto_update ;;
+            4) remove_auto_update ;;
+            5) view_auto_update_log ;;
+            6) show_system_info ;;
+            0) return ;;
+            *) echo -e "${RED}输入错误${PLAIN}"; sleep 1 ;;
+        esac
+    done
 }
 
 # ============================================================
@@ -840,7 +1248,6 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
 
-        # 已安装时显示当前版本
         local _ver_line=""
         if [ -f "$HY_BIN" ]; then
             local _ver
@@ -849,7 +1256,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.6${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.3.7${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -864,6 +1271,7 @@ main_menu() {
         echo -e " 2. 管理 Hysteria2"
         echo -e " 3. 升级 Hysteria2"
         echo -e " 4. 卸载 Hysteria2"
+        echo -e " 5. 服务器工具 (BBR / 自动更新 / 系统信息)"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
 
@@ -873,6 +1281,7 @@ main_menu() {
             2) manage_hy2 ;;
             3) upgrade_hy2 ;;
             4) uninstall_hy2 ;;
+            5) server_tools_menu ;;
             0) exit 0 ;;
             *) echo -e "${RED}输入错误...${PLAIN}"; sleep 1 ;;
         esac

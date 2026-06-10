@@ -40,8 +40,8 @@ DIM='\033[2m'
 
 # ---- 脚本地址 ----
 BASE_URL="https://raw.githubusercontent.com/everett7623/hy2/main"
-HY2_URL="${BASE_URL}/hy2dev.sh"
-SS_URL="${BASE_URL}/ssdev.sh"
+HY2_URL="${BASE_URL}/hy2.sh"
+SS_URL="${BASE_URL}/ss.sh"
 EUSERV_URL="${BASE_URL}/euservhy2.sh"
 
 # ============================================================
