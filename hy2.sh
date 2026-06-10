@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.7
+# 版本：v2.4.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -25,7 +25,7 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# v2.3.7: 合并 dev 版本，含 BBR/自动更新/防火墙/QR/修改配置/服务工具
+# v2.4.0: 端口跳跃 + dev 合并 (BBR/自动更新/防火墙/QR/修改配置/服务工具)
 #====================================================================================
 
 # ============================================================
@@ -1323,7 +1323,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.7${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.4.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
