@@ -80,6 +80,21 @@ step()    { echo -e "${CYAN}[STEP]${NC} $*";     log "STEP: $*"; }
 #  获取 hostname 作为节点名称
 #  hostname为空时回退到 EUserv-HY2
 # ============================================================
+#  获取服务器真实 IPv6（排除 WARP/tunnel 等虚拟网卡）
+#  问题：WARP 安装后虚拟网卡也有 scope global 的 IPv6，
+#        head -1 可能优先取到 WARP 地址 (2606:4700:...) 而非真实地址
+# ============================================================
+_get_real_ipv6() {
+    ip -6 addr show scope global 2>/dev/null | awk '
+        /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
+        /inet6/ && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ {
+            addr=$2; sub(/\/.*/,"",addr)
+            if (addr !~ /^fe80/ && addr !~ /^2606:4700:/) { print addr; exit }
+        }
+    '
+}
+
+# ============================================================
 get_node_name() {
     local hn
     hn=$(hostname 2>/dev/null | tr -d '\n\r')
@@ -197,8 +212,7 @@ show_menu() {
     # 修复：IPv4 不写死，实时获取（Warp装好后立即显示）
     local ipv4_addr ipv6_addr
     ipv4_addr=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || echo "无 IPv4")
-    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
-        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1 \
+    ipv6_addr=$(_get_real_ipv6 \
         || echo "获取失败")
 
     # 修复：节点名实时读取 hostname
@@ -242,8 +256,7 @@ check_network() {
     step "检测网络环境..."
 
     local ipv6_addr
-    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
-        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
+    ipv6_addr=$(_get_real_ipv6)
     if [ -z "$ipv6_addr" ]; then
         error "未检测到全局 IPv6 地址，请确认 EUserv VPS 网络正常"
         return 1
@@ -437,8 +450,7 @@ generate_self_signed_cert() {
     mkdir -p "$CERT_DIR"
 
     local ipv6_addr
-    ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
-        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
+    ipv6_addr=$(_get_real_ipv6)
 
     # 修复：-addext 在 Debian 10 老版 openssl 不支持，加版本判断
     local openssl_ver
@@ -619,8 +631,7 @@ show_node_info() {
     node_name=$(get_node_name)
 
     local ipv6_raw ipv6_bracket
-    ipv6_raw=$(ip -6 addr show scope global 2>/dev/null \
-        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
+    ipv6_raw=$(_get_real_ipv6)
     ipv6_bracket="[${ipv6_raw}]"
 
     local port="${NODE_PORT}"
@@ -1128,7 +1139,7 @@ EOF
                 echo -e "  ${CYAN}CPU:${NC}      $(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs) ($(nproc)核)"
                 echo -e "  ${CYAN}内存:${NC}     $(free -h | awk '/Mem/{print $2" 总 / "$3" 已用 / "$4" 空闲"}')"
                 echo -e "  ${CYAN}磁盘:${NC}     $(df -h / | awk 'NR==2{print $2" 总 / "$3" 已用 / "$4" 空闲 ("$5")"}')"
-                echo -e "  ${CYAN}IPv6:${NC}     $(ip -6 addr show scope global | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)"
+                echo -e "  ${CYAN}IPv6:${NC}     $(_get_real_ipv6)"
                 echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             4)

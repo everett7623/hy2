@@ -88,8 +88,13 @@ get_status() {
 
     # ---- EUserv HY2：检测 HY2 运行状态 + IPv6 环境 ----
     local _ipv6 _ipv4
-    _ipv6=$(ip -6 addr show scope global 2>/dev/null \
-        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
+    _ipv6=$(ip -6 addr show scope global 2>/dev/null | awk '
+        /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
+        /inet6/ && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ {
+            addr=$2; sub(/\/.*/,"",addr)
+            if (addr !~ /^fe80/ && addr !~ /^2606:4700:/) { print addr; exit }
+        }
+    ')
     _ipv4=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || true)
 
     if [ -n "$_ipv6" ]; then
