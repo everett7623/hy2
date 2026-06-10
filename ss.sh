@@ -90,17 +90,19 @@ detect_init() {
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
     local _ip _url
-    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-            PUBLIC_IP="$_ip"; HAS_IPV4=1; break
-        fi
-    done
 
+    # IPv6 优先探测
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
         if echo "$_ip" | grep -q ':'; then
             PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break
+        fi
+    done
+
+    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            PUBLIC_IP="$_ip"; HAS_IPV4=1; break
         fi
     done
 
@@ -114,7 +116,7 @@ detect_network() {
 
     if   [ "$NAT_MODE"  = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
     elif [ "$IPV6_ONLY" = "1" ]; then echo -e "  机器类型: ${YELLOW}纯 IPv6${PLAIN}（IPv6: ${PUBLIC_IPV6}）"
-    elif [ "$HAS_IPV6"  = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv4: ${PUBLIC_IP} | IPv6: ${PUBLIC_IPV6}）"
+    elif [ "$HAS_IPV6"  = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv6: ${PUBLIC_IPV6} | IPv4: ${PUBLIC_IP}）"
     elif [ "$HAS_IPV4"  = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
     else                               echo -e "  机器类型: ${RED}无法检测，请手动输入${PLAIN}"
     fi
@@ -551,7 +553,7 @@ show_node() {
     echo -e "${GREEN} 二维码链接:${PLAIN}\n  ${_qr}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "${GREEN} Clash Meta / Stash 配置:${PLAIN}"
-    echo -e "  - {name: '${_node}', type: ss, server: '${_ip}', port: ${_port}, cipher: ${METHOD}, password: '${PASSWORD}', udp: true }"
+    echo -e "  - {name: ${_node}, type: ss, server: \"${_ip}\", port: ${_port}, cipher: ${METHOD}, password: \"${PASSWORD}\", udp: true}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "${GREEN} Surge / Surfboard 配置:${PLAIN}"
     echo -e "  ${_node} = ss, ${_ip}, ${_port}, encrypt-method=${METHOD}, password=${PASSWORD}, udp-relay=true"
