@@ -106,6 +106,17 @@ detect_network() {
         fi
     done
 
+    # 过滤 WARP/隧道 虚拟 IPv4：纯 IPv6 VPS + WARP 场景下，
+    # curl -4 会通过 WARP 拿到 Cloudflare 的 IPv4，但无法用于入站连接
+    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
+        local _real_ipv4
+        _real_ipv4=$(ip -4 addr show scope global 2>/dev/null | awk '
+            /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
+            /inet / && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ { print "1"; exit }
+        ')
+        [ -z "$_real_ipv4" ] && { HAS_IPV4=0; PUBLIC_IP=""; }
+    fi
+
     if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
         local _local_ips
         _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '^127\.' | grep -v '^169\.254\.')
@@ -553,7 +564,7 @@ show_node() {
     echo -e "${GREEN} 二维码链接:${PLAIN}\n  ${_qr}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "${GREEN} Clash Meta / Stash 配置:${PLAIN}"
-    echo -e "  - {name: ${_node}, type: ss, server: \"${_ip}\", port: ${_port}, cipher: ${METHOD}, password: \"${PASSWORD}\", udp: true}"
+    echo -e "  - {name: '${_node}', type: ss, server: '${_ip}', port: ${_port}, cipher: '${METHOD}', password: '${PASSWORD}', udp: true}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "${GREEN} Surge / Surfboard 配置:${PLAIN}"
     echo -e "  ${_node} = ss, ${_ip}, ${_port}, encrypt-method=${METHOD}, password=${PASSWORD}, udp-relay=true"
@@ -603,12 +614,26 @@ show_config() {
     fi
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    if [ -n "$PUBLIC_IPV6" ]; then
-        echo -e "${YELLOW}▼ IPv6 节点配置 (推荐)${PLAIN}"
+    # 节点配置：双栈时支持 IPv4/IPv6 切换，默认显示 IPv6
+    if [ -n "$PUBLIC_IPV6" ] && [ -n "$PUBLIC_IP" ]; then
+        echo ""
+        echo -e "  ${YELLOW}选择查看节点类型：${PLAIN}"
+        echo -e "  ${GREEN}1${PLAIN}. IPv6 ${DIM}${PUBLIC_IPV6}${NC} ${GREEN}(推荐)${PLAIN}"
+        echo -e "  ${DIM}2${PLAIN}. IPv4 ${DIM}${PUBLIC_IP}${NC}"
+        echo -ne "  ${YELLOW}请选择 [默认 1]:${NC} "
+        read -r _ip_choice
+        echo ""
+        if [ "$_ip_choice" = "2" ]; then
+            echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
+            show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+        else
+            echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
+            show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
+        fi
+    elif [ -n "$PUBLIC_IPV6" ]; then
+        echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
         show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
-    fi
-
-    if [ -n "$PUBLIC_IP" ]; then
+    elif [ -n "$PUBLIC_IP" ]; then
         echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
         show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
     fi
