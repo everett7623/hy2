@@ -63,7 +63,7 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 
 ## Version management
 
-Each script carries its own version in the header comment block. No shared version file. Update manually. `get_latest_version()` fetches from GitHub API at runtime — no version pins or lockfiles.
+All scripts share a unified version number in their header comment block. When any script changes, bump the version in all files simultaneously. `get_latest_version()` fetches from GitHub API at runtime — no version pins or lockfiles.
 
 ## SS-2022 clock caveat
 

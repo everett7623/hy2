@@ -3,7 +3,7 @@
 # 项目：VPS 代理工具集 — 一键管理入口
 # 脚本：Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.1
+# 版本：v1.0.0
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -175,7 +175,7 @@ main_menu() {
 
         # ---- 顶部信息栏 ----
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
-        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v2.0.1${PLAIN}"
+        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v1.0.0${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
         echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
         echo -e "  ${DIM}博客${PLAIN}   ${SKYBLUE}seedloc.com${PLAIN}     ${DIM}│${PLAIN}  ${DIM}测评${PLAIN}  ${SKYBLUE}vpsknow.com${PLAIN}"
