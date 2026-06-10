@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.4
+# 版本：v2.3.6
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-21
+# 更新日期: 2026-06-10
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -27,8 +27,9 @@
 #====================================================================================
 
 # ============================================================
-# 自举：确保以 bash 运行（兼容 curl | sh 方式执行）
+# 自举：确保以 bash 运行
 # Alpine 等系统默认 sh 为 busybox，不支持 bash 语法
+# 注意：仅支持已保存到磁盘后执行，不可通过 curl | sh 管道运行（$0 不是文件路径）
 # ============================================================
 if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
@@ -43,6 +44,7 @@ if [ -z "$BASH_VERSION" ]; then
         elif command -v dnf >/dev/null 2>&1; then
             dnf install -y bash >/dev/null 2>&1
         fi
+        command -v bash >/dev/null 2>&1 || { echo "错误: 无法安装 bash，请手动安装后重试"; exit 1; }
         exec bash "$0" "$@"
     fi
 fi
@@ -253,7 +255,7 @@ detect_network() {
 
     local _ip _url
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
         if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
             PUBLIC_IP="$_ip"; HAS_IPV4=1; break
         fi
@@ -267,7 +269,7 @@ detect_network() {
     done
 
     # NAT 判断：本机接口 IP 列表里找不到公网 IPv4
-    if [ "$HAS_IPV4" = "1" ]; then
+    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
         local _local_ips
         _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
             | grep -v '^127\.' | grep -v '^169\.254\.')
@@ -301,19 +303,33 @@ install_dependencies() {
 
 # ============================================================
 # 获取版本 & 下载（带官方镜像 fallback，不依赖 jq）
+#
+# 设计说明：
+#   Hysteria 官方 GitHub tag 格式为 "app/v2.x.x"
+#   下载 URL 需要完整 tag（含 app/ 前缀）
+#   版本号对比（当前 vs 最新）使用剥离前缀后的 vX.Y.Z 格式
+#
+#   因此维护两个变量：
+#     LAST_VERSION     — 纯版本号（vX.Y.Z），用于对比和展示
+#     LAST_VERSION_TAG — 完整 tag（app/vX.Y.Z），用于构造下载 URL
 # ============================================================
 
 get_latest_version() {
     echo -e "${YELLOW}正在获取最新版本...${PLAIN}"
-    LAST_VERSION=$(curl -Ls --max-time 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
+
+    local _raw_tag
+    _raw_tag=$(curl -Ls --max-time 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
 
-    if [ -z "$LAST_VERSION" ]; then
-        LAST_VERSION=$(curl -Ls --max-time 10 -o /dev/null -w "%{url_effective}" \
+    if [ -z "$_raw_tag" ]; then
+        _raw_tag=$(curl -Ls --max-time 10 -o /dev/null -w "%{url_effective}" \
             "https://github.com/apernet/hysteria/releases/latest" | sed 's|.*/tag/||')
     fi
 
-    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && exit 1
+    [ -z "$_raw_tag" ] && echo -e "${RED}获取版本失败，请检查网络（可能被 GitHub API 限频）${PLAIN}" && exit 1
+
+    LAST_VERSION_TAG="$_raw_tag"
+    LAST_VERSION="${_raw_tag#app/}"
     echo -e "${GREEN}最新版本: ${LAST_VERSION}${PLAIN}"
 }
 
@@ -328,8 +344,8 @@ download_hy2() {
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
 
-    # 主源：GitHub Release；备用：官方永久镜像
-    local _url_github="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION}/hysteria-linux-${_arch}"
+    # 主源：GitHub Release（需完整 tag，含 app/ 前缀）；备用：官方永久镜像
+    local _url_github="https://github.com/apernet/hysteria/releases/download/${LAST_VERSION_TAG}/hysteria-linux-${_arch}"
     local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
 
     # 杀旧进程 + 删旧二进制，避免 "Text file busy"
@@ -350,7 +366,7 @@ download_hy2() {
         fi
     fi
 
-    [ $_ok -eq 0 ] && echo -e "${RED}下载失败，请检查网络${PLAIN}" && rm -f "$HY_BIN" && exit 1
+    [ $_ok -eq 0 ] && echo -e "${RED}下载失败，请检查网络${PLAIN}" && rm -f "$HY_BIN" && return 1
     chmod +x "$HY_BIN"
     echo -e "${GREEN}下载完成${PLAIN}"
 }
@@ -381,6 +397,24 @@ configure_std_port() {
 }
 
 # ============================================================
+# 密码生成（循环保证长度充足，避免管道截断导致弱密码）
+# ============================================================
+
+gen_password() {
+    local _pass=""
+    if command -v openssl >/dev/null 2>&1; then
+        while [ ${#_pass} -lt 20 ]; do
+            _pass="${_pass}$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9')"
+        done
+    else
+        while [ ${#_pass} -lt 20 ]; do
+            _pass="${_pass}$(tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | dd bs=32 count=1 2>/dev/null)"
+        done
+    fi
+    printf '%s' "${_pass:0:20}"
+}
+
+# ============================================================
 # 安装
 # ============================================================
 
@@ -389,7 +423,7 @@ install_hy2() {
     detect_network
     echo ""
     get_latest_version
-    download_hy2
+    download_hy2 || exit 1
 
     mkdir -p /etc/hysteria "$HY_CERT_DIR" "$HY_META"
 
@@ -402,13 +436,7 @@ install_hy2() {
     fi
 
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
-    if [ -z "$PASSWORD" ]; then
-        if command -v openssl >/dev/null 2>&1; then
-            PASSWORD=$(openssl rand -base64 12)
-        else
-            PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 16)
-        fi
-    fi
+    [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
 
     # IPv6 Only：监听双栈
     local LISTEN_ADDR=":${LISTEN_PORT}"
@@ -421,6 +449,7 @@ install_hy2() {
     openssl req -x509 -newkey rsa:2048 -days 3650 -nodes -sha256 \
         -keyout "$HY_CERT_DIR/server.key" -out "$HY_CERT_DIR/server.crt" \
         -subj "/CN=${SNI}" >/dev/null 2>&1
+    chmod 600 "$HY_CERT_DIR/server.key"
 
     # 带宽参数（保存到 meta 供 show_node 使用）
     BW_UP="50"
@@ -508,24 +537,38 @@ upgrade_hy2() {
 
     get_latest_version
 
-    if [ -n "$_cur_ver" ] && [ "app/${_cur_ver}" = "$LAST_VERSION" ]; then
+    if [ -n "$_cur_ver" ] && [ "$_cur_ver" = "$LAST_VERSION" ]; then
         echo -e "${GREEN}已是最新版本，无需升级${PLAIN}"
         sleep 2
         return
     fi
 
-    echo -e "${YELLOW}开始升级...${PLAIN}"
-    download_hy2
-    service_restart
-    sleep 2
+    echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
 
-    if service_is_active; then
-        local _new_ver
-        _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+    # 备份旧二进制，下载/启动失败时回滚
+    cp "$HY_BIN" "${HY_BIN}.bak" 2>/dev/null
+
+    if download_hy2; then
+        service_restart
+        sleep 2
+
+        if service_is_active; then
+            local _new_ver
+            _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+            rm -f "${HY_BIN}.bak"
+        else
+            echo -e "${RED}✗ 升级后服务启动失败，回滚中...${PLAIN}"
+            mv "${HY_BIN}.bak" "$HY_BIN"
+            service_restart
+            echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
+            service_logs
+        fi
     else
-        echo -e "${RED}✗ 升级后服务启动失败，请查看日志${PLAIN}"
-        service_logs
+        echo -e "${RED}✗ 下载失败，回滚中...${PLAIN}"
+        mv "${HY_BIN}.bak" "$HY_BIN"
+        service_restart
+        echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
     fi
     sleep 2
 }
@@ -699,15 +742,42 @@ change_password() {
     read_config_vars
     echo -e "  当前密码: ${YELLOW}${PASSWORD}${PLAIN}"
     read -r -p "请输入新密码 [留空自动生成]: " NEW_PASS
-    if [ -z "$NEW_PASS" ]; then
-        NEW_PASS=$(openssl rand -base64 12 2>/dev/null || tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)
+    [ -z "$NEW_PASS" ] && NEW_PASS=$(gen_password)
+
+    # 校验密码不含破坏 YAML/sed 的特殊字符
+    if echo "$NEW_PASS" | grep -qE '["\\$`]'; then
+        echo -e "${RED}错误: 密码不能包含特殊字符 (\", \\, \$, \`)${PLAIN}"
+        sleep 2
+        return
     fi
 
-    sed -i "s|password:.*|password: \"${NEW_PASS}\"|" "$HY_CONFIG"
-    service_restart
-    sleep 1
-    echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
-    # 同步写入 meta（下次 show_config 不需要重新检测）
+    # 备份旧配置，失败时回滚
+    local _tmp_cfg _bak_cfg
+    _tmp_cfg=$(mktemp)
+    _bak_cfg=$(mktemp)
+    trap 'rm -f "$_tmp_cfg" "$_bak_cfg"' EXIT INT TERM
+    cp "$HY_CONFIG" "$_bak_cfg"
+
+    awk -v pw="$NEW_PASS" '
+        /^auth:/ { in_auth=1; print; next }
+        in_auth && /^[^[:space:]]/ { in_auth=0 }
+        in_auth && /^[[:space:]]+password:/ { sub(/password:.*/, "password: \"" pw "\""); }
+        { print }
+    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG" || { rm -f "$_tmp_cfg" "$_bak_cfg"; trap - EXIT INT TERM; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return; }
+    rm -f "$_tmp_cfg"
+
+    if service_restart && service_is_active; then
+        rm -f "$_bak_cfg"
+        trap - EXIT INT TERM
+        echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
+    else
+        # 回滚到旧配置
+        mv "$_bak_cfg" "$HY_CONFIG"
+        service_restart
+        trap - EXIT INT TERM
+        echo -e "${RED}服务重启失败，配置已回滚${PLAIN}"
+        service_logs
+    fi
     sleep 2
 }
 
@@ -779,7 +849,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.3${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.3.6${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

@@ -60,7 +60,7 @@ get_status() {
     if [ -f "/usr/local/bin/hysteria" ]; then
         local _ver
         _ver=$(/usr/local/bin/hysteria version 2>/dev/null \
-            | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         if systemctl is-active --quiet hysteria-server 2>/dev/null; then
             HY2_STATUS="${GREEN}● 运行中${PLAIN}${DIM} ${_ver}${PLAIN}"
         else
@@ -89,7 +89,7 @@ get_status() {
     # ---- EUserv HY2：检测 HY2 运行状态 + IPv6 环境 ----
     local _ipv6 _ipv4
     _ipv6=$(ip -6 addr show scope global 2>/dev/null \
-        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
+        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
     _ipv4=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || true)
 
     if [ -n "$_ipv6" ]; then
@@ -98,7 +98,7 @@ get_status() {
            systemctl is-active --quiet hysteria-server 2>/dev/null; then
             local _ver
             _ver=$(/usr/local/bin/hysteria version 2>/dev/null \
-                | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+                | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             EUSERV_STATUS="${GREEN}● HY2 运行中${PLAIN}${DIM} ${_ver}${PLAIN}"
         elif [ -z "$_ipv4" ]; then
             EUSERV_STATUS="${CYAN}● 纯 IPv6 环境${PLAIN}${DIM} 可安装${PLAIN}"

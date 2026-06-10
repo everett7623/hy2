@@ -2,34 +2,26 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v3.2.0
+# 版本：v3.2.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-14
+# 更新日期: 2026-06-10
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
 #
-# 更新日志 v3.2.0（ss.sh + ssdev.sh 合并版）:
-#   + 合并升级功能（保留配置，仅替换二进制）
-#   + 合并服务器工具子菜单（BBR / 自动更新 / 系统信息）
-#   + 二维码：新增终端内直接渲染（qrencode -t ANSIUTF8），URL 链接保留作备用
-#   + 新增：修改配置（端口 / 密码 / 加密方式），无需重装
-#   + 新增：连接测试（从服务器本机验证端口是否监听）
-#   + 新增：启动服务 选项补全进管理子菜单
-#   + uri_encode() 优先使用 python3，降级纯 bash
-#   + open_ports() 修复 ufw / firewalld 判断逻辑
-#   + service_logs() 日志条数提升至 50 行
-#   + BBR 支持 bbr3 自动检测，写入独立 sysctl.d 文件
-#   + check_sys() 发行版检测（cron 安装按发行版分支）
-#   + 主菜单显示已安装版本号
+# 更新日志 v3.2.1（ss.sh + ssdev.sh 同步修复）:
+#   fix: service_restart() 改用 systemd/openrc 原生 restart 替代 stop+sleep+start
+#   fix: NAT 检测增加 command -v ip 守卫，避免 iproute2 缺失时误判
+#   fix: cron 安装 CentOS 7 兼容（dnf 失败回落 yum）
 #====================================================================================
 
 # ============================================================
 # 自举：确保以 bash 运行
-# ============================================================
+# Alpine 等系统默认 sh 为 busybox，不支持 bash 语法
+# 注意：仅支持已保存到磁盘后执行，不可通过 curl | sh 管道运行（$0 不是文件路径）
 if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
         exec bash "$0" "$@"
@@ -43,6 +35,7 @@ if [ -z "$BASH_VERSION" ]; then
         elif command -v yum >/dev/null 2>&1; then
             yum install -y bash >/dev/null 2>&1
         fi
+        command -v bash >/dev/null 2>&1 || { echo "错误: 无法安装 bash，请手动安装后重试"; exit 1; }
         exec bash "$0" "$@"
     fi
 fi
@@ -129,7 +122,7 @@ detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
     local _ip _url
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
         if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
             PUBLIC_IP="$_ip"; HAS_IPV4=1; break
         fi
@@ -142,7 +135,7 @@ detect_network() {
         fi
     done
 
-    if [ "$HAS_IPV4" = "1" ]; then
+    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
         local _local_ips
         _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '^127\.' | grep -v '^169\.254\.')
         echo "$_local_ips" | grep -q "^${PUBLIC_IP}$" || NAT_MODE=1
@@ -229,9 +222,15 @@ service_stop() {
 }
 
 service_restart() {
-    service_stop
-    sleep 1
-    service_start
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl restart shadowsocks-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service shadowsocks-server restart
+    else
+        service_stop
+        sleep 1
+        service_start
+    fi
 }
 
 service_enable() {
@@ -319,7 +318,11 @@ EOF
 install_dependencies() {
     echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
 
-    command -v setenforce >/dev/null 2>&1 && setenforce 0 2>/dev/null
+    SELINUX_MODE=""
+    if command -v setenforce >/dev/null 2>&1; then
+        SELINUX_MODE=$(getenforce 2>/dev/null)
+        setenforce 0 2>/dev/null || true
+    fi
 
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -qq >/dev/null 2>&1
@@ -368,26 +371,32 @@ get_latest_version() {
 download_ss() {
     local _arch
     case $(uname -m) in
-        x86_64)        _arch="x86_64-unknown-linux-musl" ;;
-        aarch64|arm64) _arch="aarch64-unknown-linux-musl" ;;
+        x86_64)          _arch="x86_64-unknown-linux-musl" ;;
+        aarch64|arm64)   _arch="aarch64-unknown-linux-musl" ;;
+        armv7l|armv7)    _arch="armv7-unknown-linux-musl"  ;;
+        s390x)           _arch="s390x-unknown-linux-musl"  ;;
+        loongarch64)     _arch="loongarch64-unknown-linux-musl" ;;
         *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
     esac
 
     echo -e "${SKYBLUE}>>> 已强制使用 musl 静态编译库，彻底免疫一切 GLIBC 报错！ <<<${PLAIN}"
 
     local _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${LAST_VERSION}/shadowsocks-${LAST_VERSION}.${_arch}.tar.xz"
+    local _tmp_archive _tmp_dir
+    _tmp_archive=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz)
+    _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX)
 
     service_stop
     rm -f "$SS_BIN"
 
     echo -e "${YELLOW}正在下载 shadowsocks-rust ${LAST_VERSION} (${_arch})...${PLAIN}"
-    wget -q --show-progress --timeout=30 -O /tmp/ss-rust.tar.xz "$_url" \
-        || { echo -e "${RED}下载失败，请检查网络${PLAIN}"; exit 1; }
-    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver \
-        || { echo -e "${RED}解压失败${PLAIN}"; exit 1; }
-    mv /tmp/ssserver "$SS_BIN"
+    wget -q --show-progress --timeout=30 -O "$_tmp_archive" "$_url" \
+        || { echo -e "${RED}下载失败，请检查网络${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
+    tar -xf "$_tmp_archive" -C "$_tmp_dir" ssserver \
+        || { echo -e "${RED}解压失败${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
+    mv "$_tmp_dir/ssserver" "$SS_BIN"
     chmod +x "$SS_BIN"
-    rm -f /tmp/ss-rust.tar.xz
+    rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"
     echo -e "${GREEN}下载完成${PLAIN}"
 }
 
@@ -399,7 +408,7 @@ install_ss() {
     detect_network
     install_dependencies
     get_latest_version
-    download_ss
+    download_ss || exit 1
 
     mkdir -p /etc/shadowsocks-rust "$SS_META"
 
@@ -436,6 +445,11 @@ install_ss() {
         service_logs
         read -r -p "按回车键返回主菜单..." _tmp
         return
+    fi
+
+    # 恢复 SELinux（install_dependencies 中临时设为 Permissive）
+    if [ -n "$SELINUX_MODE" ] && [ "$SELINUX_MODE" != "Disabled" ]; then
+        setenforce "$SELINUX_MODE" 2>/dev/null || true
     fi
 
     show_config
@@ -513,18 +527,32 @@ upgrade_ss() {
     fi
 
     echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
-    download_ss
-    service_restart
-    sleep 2
 
-    if service_is_active; then
-        local _new_raw _new_ver=""
-        _new_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        [ -n "$_new_raw" ] && _new_ver="v${_new_raw}"
-        echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+    # 备份旧二进制，下载/启动失败时回滚
+    cp "$SS_BIN" "${SS_BIN}.bak" 2>/dev/null
+
+    if download_ss; then
+        service_restart
+        sleep 2
+
+        if service_is_active; then
+            local _new_raw _new_ver=""
+            _new_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            [ -n "$_new_raw" ] && _new_ver="v${_new_raw}"
+            echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+            rm -f "${SS_BIN}.bak"
+        else
+            echo -e "${RED}✗ 升级后服务启动失败，回滚中...${PLAIN}"
+            mv "${SS_BIN}.bak" "$SS_BIN"
+            service_restart
+            echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
+            service_logs
+        fi
     else
-        echo -e "${RED}✗ 升级后服务启动失败，请查看日志${PLAIN}"
-        service_logs
+        echo -e "${RED}✗ 下载失败，回滚中...${PLAIN}"
+        mv "${SS_BIN}.bak" "$SS_BIN"
+        service_restart
+        echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
     fi
     sleep 2
 }
@@ -553,6 +581,7 @@ modify_config() {
         1)
             if [ "$NAT_MODE" = "1" ]; then
                 read -r -p "请输入新的本机监听端口: " LISTEN_PORT
+                [[ -z "$LISTEN_PORT" ]] && { echo -e "${RED}端口不能为空${PLAIN}"; sleep 1; return; }
                 read -r -p "请输入新的对外转发端口 [留空=同监听端口]: " EXT_PORT
                 [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
             else
@@ -574,10 +603,7 @@ modify_config() {
             fi
             ;;
         3)
-            # 重新检测网络以确定 HAS_IPV6
-            local _tmp_ipv6
-            _tmp_ipv6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
-            echo "$_tmp_ipv6" | grep -q ':' && HAS_IPV6=1 || HAS_IPV6=0
+            # 保持安装时的 HAS_IPV6 不变（不重新探测，避免网络抖动误降级为纯 IPv4）
             _select_cipher
             ;;
         0) return ;;
@@ -1030,15 +1056,20 @@ main() {
     sleep 1
     rm -f "$SS_BIN"
 
-    if wget -q --timeout=60 -O /tmp/ss-rust.tar.xz "$_url" 2>/dev/null && \
-       tar -xf /tmp/ss-rust.tar.xz -C /tmp/ ssserver 2>/dev/null; then
-        mv /tmp/ssserver "$SS_BIN"
+    local _tmp_a _tmp_dir
+    _tmp_a=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz 2>/dev/null)
+    _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX 2>/dev/null)
+    if [ -n "$_tmp_a" ] && [ -n "$_tmp_dir" ] && \
+       wget -q --timeout=60 -O "$_tmp_a" "$_url" 2>/dev/null && \
+       tar -xf "$_tmp_a" -C "$_tmp_dir" ssserver 2>/dev/null; then
+        mv "$_tmp_dir/ssserver" "$SS_BIN"
         chmod +x "$SS_BIN"
-        rm -f /tmp/ss-rust.tar.xz
+        rm -f "$_tmp_a"; rm -rf "$_tmp_dir"
         restart_service
         sleep 2
         echo "[$TIMESTAMP] 更新成功，当前版本: $(get_current)" >> "$LOG"
     else
+        rm -f "$_tmp_a"; rm -rf "$_tmp_dir"
         echo "[$TIMESTAMP] 更新失败，请手动检查" >> "$LOG"
     fi
 
@@ -1056,7 +1087,7 @@ AUTOUPDATE_EOF
         case "$RELEASE" in
             alpine) apk add --no-cache dcron >/dev/null 2>&1; rc-update add dcron default >/dev/null 2>&1; rc-service dcron start >/dev/null 2>&1 ;;
             arch)   pacman -Sy --noconfirm cronie >/dev/null 2>&1 ;;
-            centos|rocky|fedora) dnf install -y cronie >/dev/null 2>&1 ;;
+            centos|rocky|fedora) dnf install -y cronie >/dev/null 2>&1 || yum install -y cronie >/dev/null 2>&1 ;;
             *)      apt-get install -y -qq cron >/dev/null 2>&1 ;;
         esac
     fi
@@ -1203,7 +1234,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.2.0${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v3.2.2${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

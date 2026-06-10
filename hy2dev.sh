@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.3.4-dev
+# 版本：v2.3.6-dev
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-05-21
+# 更新日期: 2026-06-10
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -25,23 +25,18 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# 更新日志 v2.3.4（基于 v2.3.4 稳定版 dev 分支）:
-#   fix: download_hy2() URL 修复 —— 下载时恢复 app/ 前缀，升级对比使用剥离后版本号
-#   fix: 密码自动生成改为两步法，避免管道截断导致空密码
-#   fix: change_bandwidth() sed 改用 awk 重写配置，兼容任意缩进格式
-#   fix: 分享链接 insecure=1（自签证书场景下正确值，与 v2.2.4 保持一致）
-#   + 新增：防火墙自动放行端口（ufw / firewalld / iptables 三套兼容）
-#   + 新增：一键开启 BBR 拥塞控制（支持 BBRv3 自动检测）
-#   + 新增：定时自动更新（cron，每天凌晨 3 点检查）
-#   + 新增：服务器工具子菜单（BBR / 自动更新 / 防火墙 / 系统信息）
-#   + 新增：管理菜单增加修改带宽选项
-#   + 新增：订阅增加显示二维码扫码
-#   + 日志显示行数提升至 50 行
+# 更新日志 v2.3.5（基于 v2.3.5 稳定版 dev 分支）:
+#   fix: change_password() sed 改用 awk 精准限域替换（仅匹配 auth 块）
+#   fix: 密码自动生成统一使用 dd 替代 head -c（更佳 POSIX 兼容）
+#   fix: NAT 检测增加 command -v ip 守卫，避免 iproute2 缺失时误判
+#   fix: cron 安装 CentOS 7 兼容（dnf 失败回落 yum）
+#   + 同 v2.3.5 稳定版修复
 #====================================================================================
 
 # ============================================================
-# 自举：确保以 bash 运行（兼容 curl | sh 方式执行）
+# 自举：确保以 bash 运行
 # Alpine 等系统默认 sh 为 busybox，不支持 bash 语法
+# 注意：仅支持已保存到磁盘后执行，不可通过 curl | sh 管道运行（$0 不是文件路径）
 # ============================================================
 if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
@@ -56,6 +51,7 @@ if [ -z "$BASH_VERSION" ]; then
         elif command -v dnf >/dev/null 2>&1; then
             dnf install -y bash >/dev/null 2>&1
         fi
+        command -v bash >/dev/null 2>&1 || { echo "错误: 无法安装 bash，请手动安装后重试"; exit 1; }
         exec bash "$0" "$@"
     fi
 fi
@@ -268,7 +264,7 @@ detect_network() {
 
     local _ip _url
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
         if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
             PUBLIC_IP="$_ip"; HAS_IPV4=1; break
         fi
@@ -282,7 +278,7 @@ detect_network() {
     done
 
     # NAT 判断：本机接口 IP 列表里找不到公网 IPv4
-    if [ "$HAS_IPV4" = "1" ]; then
+    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
         local _local_ips
         _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
             | grep -v '^127\.' | grep -v '^169\.254\.')
@@ -382,7 +378,7 @@ download_hy2() {
         echo -e "${GREEN}下载完成（来源：官方镜像）${PLAIN}"
     else
         rm -f "$HY_BIN"
-        echo -e "${RED}下载失败，请检查网络${PLAIN}" && exit 1
+        echo -e "${RED}下载失败，请检查网络${PLAIN}" && return 1
     fi
 }
 
@@ -467,7 +463,7 @@ install_hy2() {
     detect_network
     echo ""
     get_latest_version
-    download_hy2
+    download_hy2 || exit 1
 
     mkdir -p /etc/hysteria "$HY_CERT_DIR" "$HY_META"
 
@@ -497,6 +493,7 @@ install_hy2() {
     openssl req -x509 -newkey rsa:2048 -days 3650 -nodes -sha256 \
         -keyout "$HY_CERT_DIR/server.key" -out "$HY_CERT_DIR/server.crt" \
         -subj "/CN=${SNI}" >/dev/null 2>&1
+    chmod 600 "$HY_CERT_DIR/server.key"
 
     BW_UP="50"
     BW_DOWN="100"
@@ -588,17 +585,31 @@ upgrade_hy2() {
     fi
 
     echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
-    download_hy2
-    service_restart
-    sleep 2
 
-    if service_is_active; then
-        local _new_ver
-        _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+    # 备份旧二进制，下载/启动失败时回滚
+    cp "$HY_BIN" "${HY_BIN}.bak" 2>/dev/null
+
+    if download_hy2; then
+        service_restart
+        sleep 2
+
+        if service_is_active; then
+            local _new_ver
+            _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
+            rm -f "${HY_BIN}.bak"
+        else
+            echo -e "${RED}✗ 升级后服务启动失败，回滚中...${PLAIN}"
+            mv "${HY_BIN}.bak" "$HY_BIN"
+            service_restart
+            echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
+            service_logs
+        fi
     else
-        echo -e "${RED}✗ 升级后服务启动失败，请查看日志${PLAIN}"
-        service_logs
+        echo -e "${RED}✗ 下载失败，回滚中...${PLAIN}"
+        mv "${HY_BIN}.bak" "$HY_BIN"
+        service_restart
+        echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
     fi
     sleep 2
 }
@@ -780,10 +791,39 @@ change_password() {
     read -r -p "请输入新密码 [留空自动生成]: " NEW_PASS
     [ -z "$NEW_PASS" ] && NEW_PASS=$(gen_password)
 
-    sed -i "s|password:.*|password: \"${NEW_PASS}\"|" "$HY_CONFIG"
-    service_restart
-    sleep 1
-    echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
+    # 校验密码不含破坏 YAML 的特殊字符
+    if echo "$NEW_PASS" | grep -qE '["\\$`]'; then
+        echo -e "${RED}错误: 密码不能包含特殊字符 (\", \\, \$, \`)${PLAIN}"
+        sleep 2
+        return
+    fi
+
+    # 备份旧配置，失败时回滚
+    local _tmp_cfg _bak_cfg
+    _tmp_cfg=$(mktemp)
+    _bak_cfg=$(mktemp)
+    trap 'rm -f "$_tmp_cfg" "$_bak_cfg"' EXIT INT TERM
+    cp "$HY_CONFIG" "$_bak_cfg"
+
+    awk -v pw="$NEW_PASS" '
+        /^auth:/ { in_auth=1; print; next }
+        in_auth && /^[^[:space:]]/ { in_auth=0 }
+        in_auth && /^[[:space:]]+password:/ { sub(/password:.*/, "password: \"" pw "\""); }
+        { print }
+    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG" || { rm -f "$_tmp_cfg" "$_bak_cfg"; trap - EXIT INT TERM; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return; }
+    rm -f "$_tmp_cfg"
+
+    if service_restart && service_is_active; then
+        rm -f "$_bak_cfg"
+        trap - EXIT INT TERM
+        echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
+    else
+        mv "$_bak_cfg" "$HY_CONFIG"
+        service_restart
+        trap - EXIT INT TERM
+        echo -e "${RED}服务重启失败，配置已回滚${PLAIN}"
+        service_logs
+    fi
     sleep 2
 }
 
@@ -808,13 +848,15 @@ change_bandwidth() {
     # 用 awk 精准替换 bandwidth 块下的 up/down 行，不依赖固定缩进
     local _tmp_cfg
     _tmp_cfg=$(mktemp)
+    trap 'rm -f "$_tmp_cfg"' EXIT INT TERM
     awk -v up="${BW_UP}" -v dn="${BW_DOWN}" '
         /^bandwidth:/ { in_bw=1; print; next }
         in_bw && /^[^[:space:]]/ { in_bw=0 }
         in_bw && /^[[:space:]]+up:/ { sub(/up:.*/, "up: " up " mbps"); }
         in_bw && /^[[:space:]]+down:/ { sub(/down:.*/, "down: " dn " mbps"); }
         { print }
-    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG"
+    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG" || { rm -f "$_tmp_cfg"; trap - EXIT INT TERM; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return; }
+    trap - EXIT INT TERM
 
     # 更新元数据
     echo "$BW_UP"   > "$HY_META/bw_up"
@@ -1075,7 +1117,7 @@ AUTOUPDATE_EOF
         case "$RELEASE" in
             alpine) apk add --no-cache dcron >/dev/null 2>&1; rc-update add dcron default >/dev/null 2>&1; rc-service dcron start >/dev/null 2>&1 ;;
             arch)   pacman -Sy --noconfirm cronie >/dev/null 2>&1 ;;
-            centos|rocky|fedora) dnf install -y cronie >/dev/null 2>&1 ;;
+            centos|rocky|fedora) dnf install -y cronie >/dev/null 2>&1 || yum install -y cronie >/dev/null 2>&1 ;;
             *)      apt-get install -y -qq cron >/dev/null 2>&1 ;;
         esac
     fi
@@ -1219,7 +1261,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.3.4-dev${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.3.6-dev${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

@@ -3,9 +3,43 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.1
-#  更新时间: 2026-05-14
+#  版本: v2.0.3
+#  更新时间: 2026-06-10
 # ============================================================
+
+# ============================================================
+# 自举：确保以 bash 运行
+# Alpine 等系统默认 sh 为 busybox，不支持 bash 语法
+# 注意：仅支持已保存到磁盘后执行，不可通过 curl | sh 管道运行（$0 不是文件路径）
+# ============================================================
+if [ -z "$BASH_VERSION" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    else
+        if [ -f /etc/alpine-release ]; then
+            apk add --no-cache bash >/dev/null 2>&1
+        elif command -v apt-get >/dev/null 2>&1; then
+            apt-get install -y -qq bash >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y bash >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y bash >/dev/null 2>&1
+        fi
+        command -v bash >/dev/null 2>&1 || { echo "错误: 无法安装 bash，请手动安装后重试"; exit 1; }
+        exec bash "$0" "$@"
+    fi
+fi
+
+# --- 修复交互输入 ---
+if [ ! -t 0 ]; then
+    [ -c /dev/tty ] && exec < /dev/tty
+fi
+
+# --- 修复 Windows 换行符 ---
+if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
+    sed -i 's/\r$//' "$0"
+    exec bash "$0" "$@"
+fi
 
 # ---- 颜色定义 ----
 RED='\033[0;31m'
@@ -26,7 +60,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.1"
+SCRIPT_VERSION="2.0.3"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -97,6 +131,8 @@ nameserver ${NAT64_DNS2}
 nameserver ${NAT64_DNS_BACKUP}
 EOF
     DNS_PATCHED=1
+    # 设置 trap，脚本被中断时也能恢复 DNS
+    trap restore_dns EXIT INT TERM
     success "NAT64 DNS 已启用（安装完成后自动恢复）"
     sleep 1
 }
@@ -105,6 +141,8 @@ restore_dns() {
     if [[ $DNS_PATCHED -eq 1 ]] && [[ -f /etc/resolv.conf.hy2bak ]]; then
         cp /etc/resolv.conf.hy2bak /etc/resolv.conf
         DNS_PATCHED=0
+        # 清除 trap，避免重复触发
+        trap - EXIT INT TERM
         success "DNS 已恢复原始配置"
     fi
 }
@@ -139,7 +177,7 @@ show_menu() {
     local hy2_status warp_status
     local hy2_ver=""
     if [ -f "$HY2_BIN" ]; then
-        hy2_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        hy2_ver=$("$HY2_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     fi
     if systemctl is-active --quiet hysteria-server 2>/dev/null; then
         hy2_status="${GREEN}● 运行中${NC}${DIM} ${hy2_ver}${NC}"
@@ -160,7 +198,7 @@ show_menu() {
     local ipv4_addr ipv6_addr
     ipv4_addr=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || echo "无 IPv4")
     ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
-        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1 \
+        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1 \
         || echo "获取失败")
 
     # 修复：节点名实时读取 hostname
@@ -205,7 +243,7 @@ check_network() {
 
     local ipv6_addr
     ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
-        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
+        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
     if [ -z "$ipv6_addr" ]; then
         error "未检测到全局 IPv6 地址，请确认 EUserv VPS 网络正常"
         return 1
@@ -400,11 +438,11 @@ generate_self_signed_cert() {
 
     local ipv6_addr
     ipv6_addr=$(ip -6 addr show scope global 2>/dev/null \
-        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
+        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
 
     # 修复：-addext 在 Debian 10 老版 openssl 不支持，加版本判断
     local openssl_ver
-    openssl_ver=$(openssl version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+' | head -1 | tr -d '.')
+    openssl_ver=$(openssl version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | tr -d '.')
     local san="DNS:${domain}"
     [ -n "$ipv6_addr" ] && san="${san},IP:${ipv6_addr}"
 
@@ -547,15 +585,34 @@ configure_firewall() {
 }
 
 # ============================================================
+#  安全读取 node.conf（避免 source 注入风险）
+# ============================================================
+_read_node_conf() {
+    local _conf="${HY2_CONFIG_DIR}/node.conf"
+    NODE_PORT=""; NODE_PASSWORD=""; NODE_DOMAIN=""; NODE_MASQUERADE=""
+    [ ! -f "$_conf" ] && return 1
+    while IFS='=' read -r _key _val; do
+        case "$_key" in
+            NODE_PORT)         NODE_PORT="$_val" ;;
+            NODE_PASSWORD)     NODE_PASSWORD="$_val" ;;
+            NODE_DOMAIN)       NODE_DOMAIN="$_val" ;;
+            NODE_MASQUERADE)   NODE_MASQUERADE="$_val" ;;
+        esac
+    done < "$_conf"
+    # 兼容旧版 node.conf（v2.0.1 无 NODE_MASQUERADE），回退默认值
+    [ -z "$NODE_DOMAIN" ]     && NODE_DOMAIN="bing.com"
+    [ -z "$NODE_MASQUERADE" ] && NODE_MASQUERADE="bing.com"
+    [ -n "$NODE_PORT" ] && [ -n "$NODE_PASSWORD" ]
+}
+
+# ============================================================
 #  显示节点信息
-#  修复：name 全部使用 hostname；URI/Clash配置同步更新
 # ============================================================
 show_node_info() {
-    if [ ! -f "${HY2_CONFIG_DIR}/node.conf" ]; then
+    if ! _read_node_conf; then
         warn "未找到节点配置，请先安装 Hysteria2（选项 1）"
         return
     fi
-    source "${HY2_CONFIG_DIR}/node.conf" 2>/dev/null
 
     # 修复：name 从 hostname 实时读取，不用 node.conf 里的固定值
     local node_name
@@ -563,7 +620,7 @@ show_node_info() {
 
     local ipv6_raw ipv6_bracket
     ipv6_raw=$(ip -6 addr show scope global 2>/dev/null \
-        | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)
+        | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)
     ipv6_bracket="[${ipv6_raw}]"
 
     local port="${NODE_PORT}"
@@ -630,7 +687,7 @@ do_install() {
         warn "Hysteria2 已在运行中"
         echo -ne "  ${YELLOW}是否重新安装？[y/N]:${NC} "
         read -r reinstall
-        [ "${reinstall,,}" != "y" ] && return
+        [ "$reinstall" != "y" ] && [ "$reinstall" != "Y" ] && return
         systemctl stop hysteria-server 2>/dev/null
     fi
 
@@ -693,14 +750,14 @@ do_install() {
     create_service
     configure_firewall "$PORT"
 
-    # 保存节点配置
-    cat > "${HY2_CONFIG_DIR}/node.conf" <<EOF
-NODE_PORT=${PORT}
-NODE_PASSWORD=${PASSWORD}
-NODE_DOMAIN=${NODE_DOMAIN}
-NODE_MASQUERADE=${MASQUERADE_DOMAIN}
-INSTALL_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-EOF
+    # 保存节点配置（使用 printf 避免注入）
+    {
+        printf 'NODE_PORT=%s\n' "$PORT"
+        printf 'NODE_PASSWORD=%s\n' "$PASSWORD"
+        printf 'NODE_DOMAIN=%s\n' "$NODE_DOMAIN"
+        printf 'NODE_MASQUERADE=%s\n' "$MASQUERADE_DOMAIN"
+        printf 'INSTALL_DATE=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    } > "${HY2_CONFIG_DIR}/node.conf"
 
     step "启动 Hysteria2 服务..."
     systemctl start hysteria-server
@@ -728,7 +785,7 @@ do_uninstall() {
     echo ""
     echo -ne "  ${YELLOW}确认卸载？将删除所有配置文件 [y/N]:${NC} "
     read -r confirm
-    [ "${confirm,,}" != "y" ] && { info "已取消"; read -rp "  按 Enter 返回..." _; return; }
+    [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && { info "已取消"; read -rp "  按 Enter 返回..." _; return; }
 
     systemctl stop hysteria-server 2>/dev/null
     systemctl disable hysteria-server 2>/dev/null
@@ -748,11 +805,10 @@ modify_config() {
     echo -e "  ${WHITE}${BOLD}修改配置${NC}"
     echo ""
 
-    if [ ! -f "${HY2_CONFIG_DIR}/node.conf" ]; then
+    if ! _read_node_conf; then
         error "未找到节点配置，请先安装（选项 1）"
         read -rp "  按 Enter 返回..." _; return
     fi
-    source "${HY2_CONFIG_DIR}/node.conf" 2>/dev/null
 
     echo -e "  当前端口: ${CYAN}${NODE_PORT}${NC}"
     echo -ne "  新端口 ${DIM}[留空保持]${NC}: "
@@ -773,14 +829,14 @@ modify_config() {
 
     local prev_date
     prev_date=$(grep "INSTALL_DATE" "${HY2_CONFIG_DIR}/node.conf" | cut -d= -f2-)
-    cat > "${HY2_CONFIG_DIR}/node.conf" <<EOF
-NODE_PORT=${NODE_PORT}
-NODE_PASSWORD=${NODE_PASSWORD}
-NODE_DOMAIN=${NODE_DOMAIN}
-NODE_MASQUERADE=${NODE_MASQUERADE}
-INSTALL_DATE=${prev_date}
-MODIFY_DATE=$(date '+%Y-%m-%d %H:%M:%S')
-EOF
+    {
+        printf 'NODE_PORT=%s\n' "$NODE_PORT"
+        printf 'NODE_PASSWORD=%s\n' "$NODE_PASSWORD"
+        printf 'NODE_DOMAIN=%s\n' "$NODE_DOMAIN"
+        printf 'NODE_MASQUERADE=%s\n' "$NODE_MASQUERADE"
+        printf 'INSTALL_DATE=%s\n' "${prev_date}"
+        printf 'MODIFY_DATE=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    } > "${HY2_CONFIG_DIR}/node.conf"
 
     configure_firewall "$NODE_PORT"
     systemctl restart hysteria-server
@@ -810,7 +866,7 @@ do_upgrade() {
     fi
 
     local cur_ver
-    cur_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    cur_ver=$("$HY2_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     info "当前版本: ${cur_ver:-未知}"
 
     get_latest_version
@@ -825,7 +881,19 @@ do_upgrade() {
     echo ""
     echo -ne "  ${YELLOW}确认升级 ${cur_ver} → ${new_ver}？[y/N]:${NC} "
     read -r confirm
-    [ "${confirm,,}" != "y" ] && { info "已取消"; read -rp "  按 Enter 返回..." _; return; }
+    [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && { info "已取消"; read -rp "  按 Enter 返回..." _; return; }
+
+    # 设置中断保护：Ctrl+C 或异常退出时自动恢复服务
+    __upgrade_recover() {
+        warn "升级被中断，正在自动恢复..."
+        restore_dns
+        if [ -s "${HY2_BIN}.bak" ] && [ ! -s "$HY2_BIN" ]; then
+            mv "${HY2_BIN}.bak" "$HY2_BIN" 2>/dev/null
+        fi
+        systemctl start hysteria-server 2>/dev/null || true
+        warn "已尝试恢复旧版本服务，请检查状态"
+    }
+    trap __upgrade_recover EXIT INT TERM
 
     systemctl stop hysteria-server 2>/dev/null
     cp "$HY2_BIN" "${HY2_BIN}.bak" 2>/dev/null
@@ -833,10 +901,11 @@ do_upgrade() {
 
     if install_hysteria2_binary; then
         restore_dns
+        trap __upgrade_recover EXIT INT TERM  # re-set: restore_dns 内部会清除 trap
         systemctl start hysteria-server; sleep 1
         if systemctl is-active --quiet hysteria-server; then
             local updated_ver
-            updated_ver=$("$HY2_BIN" version 2>/dev/null | grep -oP 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            updated_ver=$("$HY2_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             success "升级成功！当前版本: ${updated_ver}"
             rm -f "${HY2_BIN}.bak"
         else
@@ -847,11 +916,15 @@ do_upgrade() {
         fi
     else
         restore_dns
+        trap __upgrade_recover EXIT INT TERM  # re-set: restore_dns 内部会清除 trap
         error "下载失败，回滚中..."
         mv "${HY2_BIN}.bak" "$HY2_BIN"
         systemctl start hysteria-server
         warn "已回滚至旧版本 ${cur_ver}"
     fi
+
+    # 升级完成（成功或已回滚），清除中断保护
+    trap - EXIT INT TERM
 
     echo ""
     read -rp "  按 Enter 返回..." _
@@ -896,9 +969,11 @@ manage_service() {
 # ============================================================
 show_logs() {
     show_banner
-    echo -e "  ${WHITE}${BOLD}Hysteria2 运行日志（最近 50 行，Ctrl+C 退出）${NC}"
+    echo -e "  ${WHITE}${BOLD}Hysteria2 运行日志（最近 50 行）${NC}"
     echo ""
-    journalctl -u hysteria-server -n 50 -f
+    journalctl -u hysteria-server -n 50 --no-pager
+    echo ""
+    read -rp "  按 Enter 返回..." _
 }
 
 # ============================================================
@@ -957,14 +1032,19 @@ run_warp_script() {
         rm -f "$warp_script"
 
         echo ""
-        # 修复：操作完成后立即重新检测并输出WARP状态，不再显示"未安装"
-        sleep 2
-        if [ "$(check_warp_status)" = "installed" ]; then
-            success "WARP 已成功安装并运行 ✓"
-            info "验证 IPv4 出口: curl -4 ip.sb"
-        else
-            warn "WARP 网卡未检测到，可能安装未完成或已卸载"
-        fi
+        # 操作完成后等待 WARP 接口初始化（最多重试 3 次）
+        local _warp_ok=0 _warp_tries=0
+        while [ $_warp_tries -lt 3 ]; do
+            sleep 3
+            if [ "$(check_warp_status)" = "installed" ]; then
+                success "WARP 已成功安装并运行 ✓"
+                info "验证 IPv4 出口: curl -4 ip.sb"
+                _warp_ok=1
+                break
+            fi
+            _warp_tries=$((_warp_tries + 1))
+        done
+        [ $_warp_ok -eq 0 ] && warn "WARP 网卡未检测到（已等待 $((_warp_tries * 3)) 秒），请稍后重新检查"
         echo ""
         read -rp "  按 Enter 继续..." _
     done
@@ -991,7 +1071,7 @@ system_tools() {
         echo -e "  ${DIM}┌─────────────────────────────────────────────┐${NC}"
         echo -e "  ${DIM}│${NC}  BBR 状态:  $(echo -e "$bbr_status")"
         echo -e "  ${DIM}│${NC}  内核版本:  ${CYAN}$(uname -r)${NC}"
-        echo -e "  ${DIM}│${NC}  系统负载:  ${CYAN}$(uptime | grep -oP 'load average:.*')${NC}"
+        echo -e "  ${DIM}│${NC}  系统负载:  ${CYAN}$(uptime | grep -oE 'load average:.*')${NC}"
         echo -e "  ${DIM}│${NC}  内存使用:  ${CYAN}$(free -h | awk '/Mem/{print $3"/"$2}')${NC}"
         echo -e "  ${DIM}│${NC}  磁盘使用:  ${CYAN}$(df -h / | awk 'NR==2{print $3"/"$2" ("$5")"}')${NC}"
         echo -e "  ${DIM}└─────────────────────────────────────────────┘${NC}"
@@ -1013,13 +1093,21 @@ system_tools() {
         case "$opt" in
             1)
                 step "开启 BBR + fq..."
-                sed -i '/net.core.default_qdisc/d;/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-                echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
-                echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+                local _sysctl_conf="/etc/sysctl.d/99-euserv-bbr.conf"
+                mkdir -p /etc/sysctl.d
                 modprobe tcp_bbr 2>/dev/null || true
-                sysctl -p >> "$LOG_FILE" 2>&1
+                cat > "$_sysctl_conf" <<EOF
+# EUserv Hysteria2 脚本写入 - BBR 优化
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+                sysctl -p "$_sysctl_conf" >> "$LOG_FILE" 2>&1
                 local r; r=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
-                [ "$r" = "bbr" ] && success "BBR 已开启！" || error "BBR 开启失败，内核可能不支持"
+                if [ "$r" = "bbr" ]; then
+                    success "BBR 已开启！配置写入 ${_sysctl_conf}，重启后持续生效"
+                else
+                    warn "BBR 可能未生效，内核可能不支持（OpenVZ 容器等）"
+                fi
                 echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             2)
@@ -1040,7 +1128,7 @@ system_tools() {
                 echo -e "  ${CYAN}CPU:${NC}      $(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs) ($(nproc)核)"
                 echo -e "  ${CYAN}内存:${NC}     $(free -h | awk '/Mem/{print $2" 总 / "$3" 已用 / "$4" 空闲"}')"
                 echo -e "  ${CYAN}磁盘:${NC}     $(df -h / | awk 'NR==2{print $2" 总 / "$3" 已用 / "$4" 空闲 ("$5")"}')"
-                echo -e "  ${CYAN}IPv6:${NC}     $(ip -6 addr show scope global | grep -oP '(?<=inet6 )[\da-f:]+(?=/)' | grep -v '^fe80' | head -1)"
+                echo -e "  ${CYAN}IPv6:${NC}     $(ip -6 addr show scope global | awk '/inet6/ {print $2}' | grep -v '^fe80' | cut -d/ -f1 | head -1)"
                 echo ""; read -rp "  按 Enter 继续..." _
                 ;;
             4)
@@ -1088,7 +1176,8 @@ main() {
         show_menu
         read -r choice
 
-        case "${choice,,}" in
+        choice=$(echo "$choice" | tr '[:upper:]' '[:lower:]')
+        case "$choice" in
             1) do_install ;;
             2) show_banner; show_node_info; read -rp "  按 Enter 返回..." _ ;;
             3) modify_config ;;
