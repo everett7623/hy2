@@ -89,6 +89,7 @@ PUBLIC_IP=""
 PUBLIC_IPV6=""
 LISTEN_PORT=""
 EXT_PORT=""
+PORT_HOP=""  # 端口跳跃，如 "20000:50000"
 SNI="amd.com"
 BW_UP="50"
 BW_DOWN="100"
@@ -397,9 +398,31 @@ configure_nat_port() {
 }
 
 configure_std_port() {
-    read -r -p "请输入监听端口 [默认 18888]: " LISTEN_PORT
-    [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
-    EXT_PORT="$LISTEN_PORT"
+    # 端口跳跃：服务器同时监听一段端口范围，客户端随机选端口连接
+    # Hysteria 2 原生支持，可有效绕过端口封锁
+    echo ""
+    echo -ne "  ${YELLOW}是否启用端口跳跃（Port Hopping）？[y/N]:${NC} "
+    read -r _use_hop
+    if [ "$_use_hop" = "y" ] || [ "$_use_hop" = "Y" ]; then
+        echo -e "  ${DIM}端口跳跃示例: 20000:50000 → 服务器监听 20000-50000 全部端口${NC}"
+        echo -e "  ${DIM}客户端可连接范围内任意端口, 有效绕过单端口封锁${NC}"
+        read -r -p "  请输入端口范围 [格式 起始:结束, 如 20000:50000]: " PORT_HOP
+        if echo "$PORT_HOP" | grep -qE '^[0-9]+:[0-9]+$'; then
+            LISTEN_PORT=$(echo "$PORT_HOP" | cut -d: -f1)
+            EXT_PORT="$LISTEN_PORT"
+            echo -e "  ${GREEN}✓ 端口跳跃已启用: ${PORT_HOP}${PLAIN}"
+        else
+            echo -e "  ${RED}格式错误，将使用默认单端口${PLAIN}"
+            PORT_HOP=""
+            read -r -p "请输入监听端口 [默认 18888]: " LISTEN_PORT
+            [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+            EXT_PORT="$LISTEN_PORT"
+        fi
+    else
+        read -r -p "请输入监听端口 [默认 18888]: " LISTEN_PORT
+        [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+        EXT_PORT="$LISTEN_PORT"
+    fi
 }
 
 # ============================================================
@@ -426,6 +449,30 @@ open_firewall_port() {
         echo -e "  ${GREEN}✓ iptables 已放行 ${_proto}/${_port}${PLAIN}"
     else
         echo -e "  ${YELLOW}⚠ 未检测到防火墙工具，请手动放行 ${_proto}/${_port}${PLAIN}"
+    fi
+}
+
+# 防火墙端口范围放行（端口跳跃专用）
+open_firewall_range() {
+    local _start="$1" _end="$2"
+    local _proto="${3:-udp}"
+
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
+        # ufw 支持端口范围语法
+        ufw allow "${_start}:${_end}/${_proto}" >/dev/null 2>&1
+        echo -e "  ${GREEN}✓ ufw 已放行 ${_proto}/${_start}:${_end}${PLAIN}"
+    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port="${_start}-${_end}/${_proto}" >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
+        echo -e "  ${GREEN}✓ firewalld 已放行 ${_proto}/${_start}-${_end}${PLAIN}"
+    elif command -v iptables >/dev/null 2>&1; then
+        iptables -I INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null
+        if [ -f /etc/iptables/rules.v4 ] && command -v iptables-save >/dev/null 2>&1; then
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null
+        fi
+        echo -e "  ${GREEN}✓ iptables 已放行 ${_proto}/${_start}:${_end}${PLAIN}"
+    else
+        echo -e "  ${YELLOW}⚠ 未检测到防火墙工具，请手动放行 ${_proto}/${_start}-${_end}${PLAIN}"
     fi
 }
 
@@ -470,18 +517,33 @@ install_hy2() {
         configure_std_port
     fi
 
-    # 自动放行端口
+    # 自动放行端口（端口跳跃时放行整个范围）
     echo -e "${YELLOW}正在配置防火墙...${PLAIN}"
-    open_firewall_port "$LISTEN_PORT" "udp"
+    if [ -n "$PORT_HOP" ]; then
+        local _hop_start _hop_end
+        _hop_start=$(echo "$PORT_HOP" | cut -d: -f1)
+        _hop_end=$(echo "$PORT_HOP" | cut -d: -f2)
+        open_firewall_range "$_hop_start" "$_hop_end" "udp"
+    else
+        open_firewall_port "$LISTEN_PORT" "udp"
+    fi
 
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
     [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
 
     # IPv6 Only：监听双栈
-    local LISTEN_ADDR=":${LISTEN_PORT}"
-    if [ "$IPV6_ONLY" = "1" ]; then
-        echo -e "${YELLOW}纯 IPv6 机器，将监听 [::]:${LISTEN_PORT}${PLAIN}"
-        LISTEN_ADDR="[::]:${LISTEN_PORT}"
+    if [ -n "$PORT_HOP" ]; then
+        local LISTEN_ADDR=":${PORT_HOP}"
+        if [ "$IPV6_ONLY" = "1" ]; then
+            echo -e "${YELLOW}纯 IPv6 机器，将监听 [::]:${PORT_HOP}${PLAIN}"
+            LISTEN_ADDR="[::]:${PORT_HOP}"
+        fi
+    else
+        local LISTEN_ADDR=":${LISTEN_PORT}"
+        if [ "$IPV6_ONLY" = "1" ]; then
+            echo -e "${YELLOW}纯 IPv6 机器，将监听 [::]:${LISTEN_PORT}${PLAIN}"
+            LISTEN_ADDR="[::]:${LISTEN_PORT}"
+        fi
     fi
 
     echo -e "${YELLOW}生成自签名证书...${PLAIN}"
@@ -527,6 +589,7 @@ EOF
     echo "$NAT_MODE"    > "$HY_META/nat_mode"
     echo "$EXT_PORT"    > "$HY_META/ext_port"
     echo "$LISTEN_PORT" > "$HY_META/listen_port"
+    [ -n "$PORT_HOP"   ] && echo "$PORT_HOP"   > "$HY_META/port_hop"
     echo "$BW_UP"       > "$HY_META/bw_up"
     echo "$BW_DOWN"     > "$HY_META/bw_down"
     [ -n "$PUBLIC_IP"   ] && echo "$PUBLIC_IP"   > "$HY_META/public_ip"
@@ -628,6 +691,7 @@ read_config_vars() {
         PUBLIC_IPV6=$(cat "$HY_META/public_ipv6" 2>/dev/null)
         BW_UP=$(cat "$HY_META/bw_up"             2>/dev/null); BW_UP=${BW_UP:-50}
         BW_DOWN=$(cat "$HY_META/bw_down"         2>/dev/null); BW_DOWN=${BW_DOWN:-100}
+        PORT_HOP=$(cat "$HY_META/port_hop"       2>/dev/null)
     fi
 
     [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
@@ -707,17 +771,17 @@ show_node() {
 
     # ---- Clash Meta / Stash / Clash Verge ----
     echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
-    echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: ${BW_UP}, down: ${BW_DOWN}}"
+    echo -e "  - {name: '${_node}', type: hysteria2, server: ${_ip}, port: ${_port}, password: ${PASSWORD}, sni: ${SNI}, skip-cert-verify: true, up: ${BW_UP}, down: ${BW_DOWN}}$([ -n "$PORT_HOP" ] && echo "  # 端口跳跃: ${PORT_HOP}")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- Surge / Surfboard ----
     echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
-    echo -e "  ${_node} = hysteria2, ${_ip}, ${_port}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true, download-bandwidth=${BW_DOWN}, upload-bandwidth=${BW_UP}"
+    echo -e "  ${_node} = hysteria2, ${_ip}, ${_port}, password=${PASSWORD}, sni=${SNI}, skip-cert-verify=true, download-bandwidth=${BW_DOWN}, upload-bandwidth=${BW_UP}$([ -n "$PORT_HOP" ] && echo "  # 端口跳跃: ${PORT_HOP}")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- Loon ----
     echo -e "${GREEN} Loon 配置:${PLAIN}"
-    echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true"
+    echo -e "  ${_node} = Hysteria2, ${_ip}, ${_port}, \"${PASSWORD}\", udp=true, sni=${SNI}, skip-cert-verify=true$([ -n "$PORT_HOP" ] && echo "  # 端口跳跃: ${PORT_HOP}")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -742,6 +806,9 @@ show_config() {
     if [ "$NAT_MODE" = "1" ] && [ "$EXT_PORT" != "$LISTEN_PORT" ]; then
         echo -e "  ${BOLD}监听端口${PLAIN}: ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
         echo -e "  ${BOLD}对外端口${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}← 客户端连接此端口${PLAIN}"
+    elif [ -n "$PORT_HOP" ]; then
+        echo -e "  ${BOLD}端口跳跃${PLAIN}: ${GREEN}${PORT_HOP}${PLAIN}  ${DIM}(服务器监听全范围)${NC}"
+        echo -e "  ${DIM}客户端可随机选择范围内任意端口连接${NC}"
     else
         echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
