@@ -401,11 +401,11 @@ configure_std_port() {
     # 端口跳跃：服务器同时监听一段端口范围，客户端随机选端口连接
     # Hysteria 2 原生支持，可有效绕过端口封锁
     echo ""
-    echo -ne "  ${YELLOW}是否启用端口跳跃（Port Hopping）？[y/N]:${NC} "
+    echo -ne "  ${YELLOW}是否启用端口跳跃（Port Hopping）？[y/N]:${PLAIN} "
     read -r _use_hop
     if [ "$_use_hop" = "y" ] || [ "$_use_hop" = "Y" ]; then
-        echo -e "  ${DIM}端口跳跃示例: 20000:50000 → 服务器监听 20000-50000 全部端口${NC}"
-        echo -e "  ${DIM}客户端可连接范围内任意端口, 有效绕过单端口封锁${NC}"
+        echo -e "  ${DIM}端口跳跃示例: 20000:50000 → 服务器监听 20000-50000 全部端口${PLAIN}"
+        echo -e "  ${DIM}客户端可连接范围内任意端口, 有效绕过单端口封锁${PLAIN}"
         read -r -p "  请输入端口范围 [格式 起始:结束, 如 20000:50000]: " PORT_HOP
         if echo "$PORT_HOP" | grep -qE '^[0-9]+:[0-9]+$'; then
             LISTEN_PORT=$(echo "$PORT_HOP" | cut -d: -f1)
@@ -532,11 +532,15 @@ install_hy2() {
     [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
 
     # IPv6 Only：监听双栈
+    # PORT_HOP 格式为用户友好的 "起始:结束"（如 20000:50000），
+    # 但 Hysteria2 配置 listen 字段要求 "-" 作为端口范围分隔符
     if [ -n "$PORT_HOP" ]; then
-        local LISTEN_ADDR=":${PORT_HOP}"
+        local _hop_cfg
+        _hop_cfg=$(echo "$PORT_HOP" | tr ':' '-')
+        local LISTEN_ADDR=":${_hop_cfg}"
         if [ "$IPV6_ONLY" = "1" ]; then
-            echo -e "${YELLOW}纯 IPv6 机器，将监听 [::]:${PORT_HOP}${PLAIN}"
-            LISTEN_ADDR="[::]:${PORT_HOP}"
+            echo -e "${YELLOW}纯 IPv6 机器，将监听 [::]:${_hop_cfg}${PLAIN}"
+            LISTEN_ADDR="[::]:${_hop_cfg}"
         fi
     else
         local LISTEN_ADDR=":${LISTEN_PORT}"
@@ -807,8 +811,8 @@ show_config() {
         echo -e "  ${BOLD}监听端口${PLAIN}: ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
         echo -e "  ${BOLD}对外端口${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}← 客户端连接此端口${PLAIN}"
     elif [ -n "$PORT_HOP" ]; then
-        echo -e "  ${BOLD}端口跳跃${PLAIN}: ${GREEN}${PORT_HOP}${PLAIN}  ${DIM}(服务器监听全范围)${NC}"
-        echo -e "  ${DIM}客户端可随机选择范围内任意端口连接${NC}"
+        echo -e "  ${BOLD}端口跳跃${PLAIN}: ${GREEN}${PORT_HOP}${PLAIN}  ${DIM}(服务器监听全范围)${PLAIN}"
+        echo -e "  ${DIM}客户端可随机选择范围内任意端口连接${PLAIN}"
     else
         echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
