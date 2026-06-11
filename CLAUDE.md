@@ -2,9 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Start here
+
+Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `docs/TESTING.md` before editing. Follow `docs/RELEASE.md` for versioned releases and `docs/MAINTENANCE.md` for security, external dependency, and handoff boundaries.
+
 ## Project overview
 
-A collection of bash scripts for one-click deployment and management of Hysteria 2 and Shadowsocks proxies on Linux VPS. No build system, no tests, no CI. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`.
+A collection of bash scripts for one-click deployment and management of Hysteria 2 and Shadowsocks proxies on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`.
 
 ## Script relationships
 
@@ -63,7 +67,17 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 
 ## Version management
 
-All scripts share a unified version number in their header comment block. When any script changes, bump the version in all files simultaneously. `get_latest_version()` fetches from GitHub API at runtime — no version pins or lockfiles.
+There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). The current release policy keeps all four script versions unified, so a project release requires manually updating every script header, visible menu version, date, and `CHANGELOG.md`.
+
+Do not confuse the project script version with the installed proxy version. `get_latest_version()` fetches Hysteria 2 or Shadowsocks-Rust releases from their upstream GitHub APIs at runtime; there are no dependency pins or lockfiles.
+
+## Local development and verification
+
+- Run edited sub-scripts directly, for example `bash hy2.sh`. Do not use `install.sh` to test unpushed local changes.
+- Run `bash tests/validate_scripts.sh` on Linux or in a Linux-compatible shell. It includes syntax, version, line-ending, compatibility, and generated auto-update script checks.
+- Because the repository has no automated integration tests, installation, upgrade, rollback, service management, firewall changes, and uninstall flows require manual VPS verification.
+- Preserve LF line endings. The runtime CRLF guard is a recovery measure, not a formatting convention.
+- Never test destructive install or uninstall paths on the developer workstation; use a disposable VPS.
 
 ## SS-2022 clock caveat
 

@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v1.0.0
+#  版本: v1.0.1
 #  更新时间: 2026-06-11
 # ============================================================
 
@@ -19,6 +19,7 @@ if [ -z "$BASH_VERSION" ]; then
         if [ -f /etc/alpine-release ]; then
             apk add --no-cache bash >/dev/null 2>&1
         elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1
             apt-get install -y -qq bash >/dev/null 2>&1
         elif command -v yum >/dev/null 2>&1; then
             yum install -y bash >/dev/null 2>&1
@@ -60,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.0.1"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -102,6 +103,10 @@ get_node_name() {
         hn="EUserv-HY2"
     fi
     echo "$hn"
+}
+
+valid_domain() {
+    echo "$1" | grep -qE '^([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:[0-9]{1,5})?$'
 }
 
 # ============================================================
@@ -285,12 +290,18 @@ check_network() {
 init_system() {
     step "初始化系统环境..."
 
+    if ! [ -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1; then
+        error "EUserv 专用脚本需要 systemd；其他环境请使用 hy2.sh"
+        return 1
+    fi
+
     if [ -f /etc/debian_version ]; then
         OS="debian"; PKG_MGR="apt-get"
     elif [ -f /etc/redhat-release ]; then
         OS="redhat"; PKG_MGR="yum"
     else
-        error "不支持的操作系统"; exit 1
+        error "不支持的操作系统"
+        return 1
     fi
     info "系统类型: ${OS}"
 
@@ -302,7 +313,7 @@ init_system() {
             >> "$LOG_FILE" 2>&1 || \
         apt-get install -y curl wget openssl net-tools file >> "$LOG_FILE" 2>&1
     else
-        yum update -y >> "$LOG_FILE" 2>&1
+        yum makecache -y >> "$LOG_FILE" 2>&1
         yum install -y curl wget openssl qrencode net-tools util-linux file \
             >> "$LOG_FILE" 2>&1
     fi
@@ -353,12 +364,16 @@ install_hysteria2_binary() {
     case $(uname -m) in
         x86_64)  arch="amd64" ;;
         aarch64) arch="arm64" ;;
-        armv7l)  arch="armv7" ;;
+        armv7l)  arch="arm" ;;
         *)       error "不支持架构: $(uname -m)"; return 1 ;;
     esac
     info "架构: linux-${arch}"
 
-    local tmp_bin="/tmp/hysteria_tmp"
+    local tmp_bin
+    tmp_bin=$(mktemp /tmp/hysteria-euserv-XXXXXX 2>/dev/null) || {
+        error "无法创建下载临时文件"
+        return 1
+    }
     local ver_tag="${HY2_VERSION}"   # 格式: app/v2.x.x
     local gh_url="https://github.com/apernet/hysteria/releases/download/${ver_tag}/hysteria-linux-${arch}"
 
@@ -398,38 +413,27 @@ install_hysteria2_binary() {
         "https://download.hysteria.network/app/latest/hysteria-linux-${arch}" \
         && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（官方CDN）"; return 0; }
 
-    # ── 方案2：官方安装脚本 get.hy2.dev（CF托管，有AAAA）
-    #   修复：用子shell隔离，防止脚本内部 exit 影响当前脚本
-    info "尝试 [官方安装脚本 get.hy2.dev]..."
-    ( curl -fsSL --connect-timeout 15 --max-time 60 https://get.hy2.dev/ 2>>"$LOG_FILE" \
-        | bash -s -- --version latest >> "$LOG_FILE" 2>&1 ) || true
-    if [ -f "$HY2_BIN" ] && __verify_bin "$HY2_BIN"; then
-        success "下载成功（官方安装脚本）"
-        return 0
-    fi
-    warn "[官方安装脚本] 失败"
-
-    # ── 方案3：IPv6 直连 GitHub
+    # ── 方案2：IPv6 直连 GitHub
     __try_url "IPv6直连GitHub" "$gh_url" \
         && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（GitHub直连）"; return 0; }
 
-    # ── 方案4：临时 NAT64 DNS + GitHub
+    # ── 方案3：临时 NAT64 DNS + GitHub
     info "启用 NAT64 DNS 后重试 GitHub..."
     enable_nat64_dns; sleep 2
     __try_url "NAT64+GitHub" "$gh_url" \
         && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（NAT64+GitHub）"; return 0; }
 
-    # ── 方案5：ghproxy.net 镜像
+    # ── 方案4：ghproxy.net 镜像
     __try_url "ghproxy.net" \
         "https://ghproxy.net/${gh_url}" \
         && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（ghproxy.net）"; return 0; }
 
-    # ── 方案6：mirror.ghproxy.com
+    # ── 方案5：mirror.ghproxy.com
     __try_url "mirror.ghproxy.com" \
         "https://mirror.ghproxy.com/${gh_url}" \
         && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（mirror.ghproxy）"; return 0; }
 
-    # ── 方案7：gh-proxy.com
+    # ── 方案6：gh-proxy.com
     __try_url "gh-proxy.com" \
         "https://gh-proxy.com/${gh_url}" \
         && { mv "$tmp_bin" "$HY2_BIN"; chmod +x "$HY2_BIN"; success "下载成功（gh-proxy.com）"; return 0; }
@@ -504,7 +508,7 @@ tls:
 
 auth:
   type: password
-  password: ${password}
+  password: "${password}"
 
 masquerade:
   type: proxy
@@ -576,6 +580,13 @@ configure_firewall() {
         info "UFW 规则已添加"
     fi
 
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port="${port}/udp" >> "$LOG_FILE" 2>&1
+        firewall-cmd --permanent --add-port="${port}/tcp" >> "$LOG_FILE" 2>&1
+        firewall-cmd --reload >> "$LOG_FILE" 2>&1
+        info "firewalld 规则已添加"
+    fi
+
     if command -v ip6tables &>/dev/null; then
         ip6tables -C INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null \
             || ip6tables -I INPUT -p udp --dport "${port}" -j ACCEPT
@@ -589,8 +600,10 @@ configure_firewall() {
     fi
 
     if command -v iptables &>/dev/null; then
-        iptables -I INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null || true
-        iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null || true
+        iptables -C INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null \
+            || iptables -I INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null || true
+        iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null \
+            || iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null || true
     fi
 
     success "防火墙配置完成（端口 ${port} UDP/TCP）"
@@ -702,8 +715,8 @@ do_install() {
         systemctl stop hysteria-server 2>/dev/null
     fi
 
+    init_system || { read -rp "  按 Enter 返回..." _; return; }
     check_network || { read -rp "  按 Enter 返回..." _; return; }
-    init_system
 
     echo ""
     echo -e "  ${WHITE}${BOLD}━━━ 配置参数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -734,16 +747,31 @@ do_install() {
     else
         PASSWORD="$input_pass"
     fi
+    if echo "$PASSWORD" | grep -qE '["\\$`]|[[:cntrl:]]'; then
+        error "密码不能包含引号、反斜杠、美元符、反引号或控制字符"
+        read -rp "  按 Enter 返回..." _
+        return
+    fi
 
     # 伪装域名
     echo -ne "  ${CYAN}伪装域名${NC} ${DIM}[默认: bing.com]${NC}: "
     read -r input_domain
     MASQUERADE_DOMAIN="${input_domain:-bing.com}"
+    if ! valid_domain "$MASQUERADE_DOMAIN"; then
+        error "伪装域名格式无效，请输入域名或域名:端口，不要包含协议和路径"
+        read -rp "  按 Enter 返回..." _
+        return
+    fi
 
     # SNI
     echo -ne "  ${CYAN}SNI 域名${NC} ${DIM}[默认: bing.com]${NC}: "
     read -r input_sni
     NODE_DOMAIN="${input_sni:-bing.com}"
+    if ! valid_domain "$NODE_DOMAIN" || echo "$NODE_DOMAIN" | grep -q ':'; then
+        error "SNI 格式无效，请输入纯域名"
+        read -rp "  按 Enter 返回..." _
+        return
+    fi
 
     echo ""
     echo -e "  ${DIM}─────────────────────────────────────────────${NC}"
@@ -802,7 +830,7 @@ do_uninstall() {
     systemctl disable hysteria-server 2>/dev/null
     rm -f "$HY2_SERVICE" "$HY2_BIN"
     rm -rf "$HY2_CONFIG_DIR"
-    rm -f /etc/sysctl.d/99-hy2.conf
+    rm -f /etc/sysctl.d/99-hy2.conf /etc/sysctl.d/99-euserv-bbr.conf
     systemctl daemon-reload
     success "Hysteria2 已完全卸载"
     read -rp "  按 Enter 返回..." _
@@ -821,20 +849,72 @@ modify_config() {
         read -rp "  按 Enter 返回..." _; return
     fi
 
+    local config_backup node_backup
+    config_backup=$(mktemp /tmp/euserv-hy2-config-XXXXXX 2>/dev/null) || {
+        error "无法创建配置备份"
+        read -rp "  按 Enter 返回..." _
+        return
+    }
+    node_backup=$(mktemp /tmp/euserv-hy2-node-XXXXXX 2>/dev/null) || {
+        rm -f "$config_backup"
+        error "无法创建节点配置备份"
+        read -rp "  按 Enter 返回..." _
+        return
+    }
+    cp "${HY2_CONFIG_DIR}/config.yaml" "$config_backup"
+    cp "${HY2_CONFIG_DIR}/node.conf" "$node_backup"
+
     echo -e "  当前端口: ${CYAN}${NODE_PORT}${NC}"
     echo -ne "  新端口 ${DIM}[留空保持]${NC}: "
     read -r new_port
-    [ -n "$new_port" ] && NODE_PORT="$new_port"
+    if [ -n "$new_port" ]; then
+        if ! echo "$new_port" | grep -qE '^[0-9]+$' || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+            error "端口必须为 1-65535 的整数"
+            rm -f "$config_backup" "$node_backup"
+            read -rp "  按 Enter 返回..." _
+            return
+        fi
+        NODE_PORT="$new_port"
+    fi
 
     echo -e "  当前密码: ${CYAN}${NODE_PASSWORD}${NC}"
     echo -ne "  新密码 ${DIM}[留空保持]${NC}: "
     read -r new_pass
-    [ -n "$new_pass" ] && NODE_PASSWORD="$new_pass"
+    if [ -n "$new_pass" ]; then
+        if echo "$new_pass" | grep -qE '["\\$`]|[[:cntrl:]]'; then
+            error "密码不能包含引号、反斜杠、美元符、反引号或控制字符"
+            rm -f "$config_backup" "$node_backup"
+            read -rp "  按 Enter 返回..." _
+            return
+        fi
+        NODE_PASSWORD="$new_pass"
+    fi
 
     echo -e "  当前伪装域名: ${CYAN}${NODE_MASQUERADE}${NC}"
     echo -ne "  新伪装域名 ${DIM}[留空保持]${NC}: "
     read -r new_masq
-    [ -n "$new_masq" ] && NODE_MASQUERADE="$new_masq"
+    if [ -n "$new_masq" ]; then
+        if ! valid_domain "$new_masq"; then
+            error "伪装域名格式无效"
+            rm -f "$config_backup" "$node_backup"
+            read -rp "  按 Enter 返回..." _
+            return
+        fi
+        NODE_MASQUERADE="$new_masq"
+    fi
+
+    echo -e "  当前 SNI: ${CYAN}${NODE_DOMAIN}${NC}"
+    echo -ne "  新 SNI ${DIM}[留空保持]${NC}: "
+    read -r new_sni
+    if [ -n "$new_sni" ]; then
+        if ! valid_domain "$new_sni" || echo "$new_sni" | grep -q ':'; then
+            error "SNI 格式无效，请输入纯域名"
+            rm -f "$config_backup" "$node_backup"
+            read -rp "  按 Enter 返回..." _
+            return
+        fi
+        NODE_DOMAIN="$new_sni"
+    fi
 
     generate_config "$NODE_PORT" "$NODE_PASSWORD" "$NODE_MASQUERADE" "$NODE_DOMAIN"
 
@@ -854,9 +934,14 @@ modify_config() {
     sleep 1
 
     if systemctl is-active --quiet hysteria-server; then
+        rm -f "$config_backup" "$node_backup"
         success "配置已更新，服务已重启"
     else
-        error "服务重启失败，请查看日志（选项 6）"
+        cp "$config_backup" "${HY2_CONFIG_DIR}/config.yaml"
+        cp "$node_backup" "${HY2_CONFIG_DIR}/node.conf"
+        systemctl restart hysteria-server 2>/dev/null || true
+        rm -f "$config_backup" "$node_backup"
+        error "服务重启失败，配置已回滚；请查看日志（选项 6）"
     fi
 
     show_node_info

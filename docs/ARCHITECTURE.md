@@ -3,7 +3,7 @@
 ## 设计原则
 
 1. **零依赖运行**：每个 .sh 文件完全独立，无 `source`/`include`，无共享库
-2. **curl | bash 部署**：必须支持管道执行（需含 TTY fix + bash 自举 + CRLF guard）
+2. **远程交互部署**：面向 `bash <(curl -fsSL URL)` 运行方式，需保留 TTY fix、bash 自举与 CRLF guard
 3. **busybox 兼容**：不用 `grep -oP`，不用 `${var,,}`，不用 `head -c`
 4. **全发行版覆盖**：Debian/Ubuntu/CentOS/Alpine/Arch，systemd + openrc
 
@@ -82,18 +82,57 @@ LISTEN_PORT=""
 | mktemp -d | 下载解压用临时目录而非临时文件，避免空文件回退 |
 | IPv6 过滤 | EUserv 场景需 `_get_real_ipv6()` 排除 WARP/tunnel 网卡 |
 
+## 执行与发布模型
+
+```text
+用户运行 install.sh
+        │
+        ├── 选择 Hysteria 2 ──────> 下载 main/hy2.sh ──────> 临时文件中执行
+        ├── 选择 Shadowsocks ─────> 下载 main/ss.sh ───────> 临时文件中执行
+        └── 选择 EUserv IPv6 HY2 ─> 下载 main/euservhy2.sh > 临时文件中执行
+```
+
+- `install.sh` 是统一远程入口，但三个子脚本也可独立运行。
+- 启动器不读取仓库中的本地子脚本；未推送到 GitHub `main` 的修改不会通过启动器生效。
+- 项目没有预发布分支。静态检查由 `tests/validate_scripts.sh` 和 GitHub Actions 执行；运行时行为仍需在一次性 VPS 上端到端验证。
+- 四个脚本的项目版本目前保持一致，但版本文本分散在文件头、菜单和变量中，发布时必须人工同步。
+
+## 本地验证清单
+
+```bash
+bash tests/validate_scripts.sh
+```
+
+语法检查通过后，至少手动覆盖以下路径：
+
+1. 全新安装与重复运行。
+2. systemd 和 OpenRC 服务启停、重启与日志。
+3. 标准 IPv4、NAT、双栈及纯 IPv6 网络检测。
+4. 防火墙单端口与 Hysteria 2 端口跳跃范围。
+5. 升级成功、下载失败及备份回滚。
+6. 自动更新 cron 的创建、执行日志与移除。
+7. 卸载后服务、配置和定时任务清理。
+
 ## 文件结构
 
 ```
 hy2/
-├── install.sh          # 启动器（唯一入口）
+├── install.sh          # 统一远程入口（子脚本也可独立运行）
 ├── hy2.sh              # Hysteria 2 管理
 ├── ss.sh               # Shadowsocks 管理
 ├── euservhy2.sh        # EUserv IPv6 Hysteria 2
 ├── CHANGELOG.md        # 更新日志
+├── CONTRIBUTING.md     # 贡献与开发流程
 ├── README.md           # 项目说明
 ├── CLAUDE.md           # Claude Code 指引
 ├── AGENTS.md           # AI Agent 指引
+├── tests/
+│   └── validate_scripts.sh # 静态验证入口
+├── .github/workflows/
+│   └── shell-checks.yml # GitHub Actions
 └── docs/
-    └── ARCHITECTURE.md # 本文档
+    ├── ARCHITECTURE.md # 本文档
+    ├── TESTING.md      # VPS 测试矩阵
+    ├── RELEASE.md      # 发布与回滚流程
+    └── MAINTENANCE.md  # 维护、安全与外部依赖
 ```

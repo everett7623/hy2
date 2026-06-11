@@ -3,7 +3,7 @@
 # 项目：VPS 代理工具集 — 一键管理入口
 # 脚本：Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v1.0.0
+# 版本：v1.0.1
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -18,13 +18,26 @@ if [ -z "$BASH_VERSION" ]; then
     if command -v bash >/dev/null 2>&1; then
         exec bash "$0" "$@"
     else
-        for _pm in apk apt-get dnf yum; do
-            command -v "$_pm" >/dev/null 2>&1 && $_pm ${_pm:+add} --no-cache bash >/dev/null 2>&1 && break
-        done
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache bash >/dev/null 2>&1
+        elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -y -qq bash >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y bash >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y bash >/dev/null 2>&1
+        fi
+        command -v bash >/dev/null 2>&1 || { echo "错误: 无法安装 bash，请手动安装后重试"; exit 1; }
         exec bash "$0" "$@"
     fi
 fi
 [ ! -t 0 ] && [ -c /dev/tty ] && exec < /dev/tty
+
+if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
+    sed -i 's/\r$//' "$0"
+    exec bash "$0" "$@"
+fi
 
 # ---- 颜色 ----
 RED='\033[0;31m'
@@ -52,6 +65,17 @@ check_root() {
         echo -e "${RED}错误: 请以 root 权限运行${PLAIN}" && exit 1
 }
 
+service_active() {
+    local _service="$1" _pidfile="$2"
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet "$_service" 2>/dev/null
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service "$_service" status 2>/dev/null | grep -q "started"
+    else
+        [ -f "$_pidfile" ] && kill -0 "$(cat "$_pidfile" 2>/dev/null)" 2>/dev/null
+    fi
+}
+
 # ============================================================
 # 实时状态检测
 # ============================================================
@@ -61,7 +85,7 @@ get_status() {
         local _ver
         _ver=$(/usr/local/bin/hysteria version 2>/dev/null \
             | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        if systemctl is-active --quiet hysteria-server 2>/dev/null; then
+        if service_active hysteria-server /var/run/hysteria.pid; then
             HY2_STATUS="${GREEN}● 运行中${PLAIN}${DIM} ${_ver}${PLAIN}"
         else
             HY2_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} ${_ver}${PLAIN}"
@@ -75,9 +99,7 @@ get_status() {
         local _ver
         _ver=$(/usr/local/bin/ssserver --version 2>/dev/null \
             | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        if systemctl is-active --quiet shadowsocks-server 2>/dev/null || \
-           { [ -f /var/run/ssserver.pid ] && \
-             kill -0 "$(cat /var/run/ssserver.pid)" 2>/dev/null; }; then
+        if service_active shadowsocks-server /var/run/ssserver.pid; then
             SS_STATUS="${GREEN}● 运行中${PLAIN}${DIM} v${_ver}${PLAIN}"
         else
             SS_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} v${_ver}${PLAIN}"
@@ -88,19 +110,21 @@ get_status() {
 
     # ---- EUserv HY2：检测 HY2 运行状态 + IPv6 环境 ----
     local _ipv6 _ipv4
-    _ipv6=$(ip -6 addr show scope global 2>/dev/null | awk '
+    if command -v ip >/dev/null 2>&1; then
+        _ipv6=$(ip -6 addr show scope global 2>/dev/null | awk '
         /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
         /inet6/ && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ {
             addr=$2; sub(/\/.*/,"",addr)
             if (addr !~ /^fe80/ && addr !~ /^2606:4700:/) { print addr; exit }
         }
-    ')
+        ')
+    fi
     _ipv4=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || true)
 
     if [ -n "$_ipv6" ]; then
         # 有 IPv6：进一步检测 HY2 服务状态
         if [ -f "/usr/local/bin/hysteria" ] && \
-           systemctl is-active --quiet hysteria-server 2>/dev/null; then
+           service_active hysteria-server /var/run/hysteria.pid; then
             local _ver
             _ver=$(/usr/local/bin/hysteria version 2>/dev/null \
                 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
@@ -130,14 +154,37 @@ run_script() {
     echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
 
     if ! command -v curl >/dev/null 2>&1; then
-        echo -e "${RED}错误: curl 未安装，无法下载脚本${PLAIN}"
-        sleep 2; return
+        echo -e "${YELLOW}curl 未安装，正在尝试安装...${PLAIN}"
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache curl ca-certificates >/dev/null 2>&1
+        elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -y -qq curl ca-certificates >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y curl ca-certificates >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y curl ca-certificates >/dev/null 2>&1
+        fi
+        command -v curl >/dev/null 2>&1 || {
+            echo -e "${RED}错误: curl 安装失败，无法下载脚本${PLAIN}"
+            sleep 2
+            return
+        }
     fi
 
     local _tmp
-    _tmp=$(mktemp /tmp/hy2_sub_XXXXXX.sh)
-
+    _tmp=$(mktemp /tmp/hy2_sub_XXXXXX.sh 2>/dev/null) || {
+        echo -e "${RED}错误: 无法创建临时文件${PLAIN}"
+        sleep 2
+        return
+    }
     if curl -fsSL --connect-timeout 15 --max-time 60 "$_url" -o "$_tmp" 2>/dev/null; then
+        if ! [ -s "$_tmp" ] || ! bash -n "$_tmp" 2>/dev/null; then
+            echo -e "${RED}  ✗ 下载内容无效或脚本语法检查失败${PLAIN}"
+            rm -f "$_tmp"
+            sleep 3
+            return
+        fi
         chmod +x "$_tmp"
         bash "$_tmp"
         rm -f "$_tmp"
@@ -175,7 +222,7 @@ main_menu() {
 
         # ---- 顶部信息栏 ----
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
-        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v1.0.0${PLAIN}"
+        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v1.0.1${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
         echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
         echo -e "  ${DIM}博客${PLAIN}   ${SKYBLUE}seedloc.com${PLAIN}     ${DIM}│${PLAIN}  ${DIM}测评${PLAIN}  ${SKYBLUE}vpsknow.com${PLAIN}"

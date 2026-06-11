@@ -1,5 +1,9 @@
 # hy2 — VPS 代理工具集
 
+## Start here
+
+Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `docs/TESTING.md`. Release work must also follow `docs/RELEASE.md`; security and external dependency boundaries are documented in `docs/MAINTENANCE.md`.
+
 ## Script relationships
 
 - `install.sh` is a **remote launcher** — it downloads scripts from `https://raw.githubusercontent.com/everett7623/hy2/main/` and pipes to bash. It does **not** use local files. Bug fixes in local scripts won't take effect until pushed to GitHub.
@@ -9,15 +13,24 @@
 
 ## Version management
 
-- Each script carries its own version in the header comment block. No shared version file. Update manually.
+- Each script carries its own version in the header comment block; there is no shared version file. The current release policy keeps all script versions unified, so update every header, visible menu version, date, and `CHANGELOG.md` manually for a project release.
 - `install.sh` always points to `main` branch on GitHub. There's no staging/test branch mechanism.
 - `get_latest_version()` fetches `apernet/hysteria` or `shadowsocks` releases from GitHub API — no dependency file for version pins.
 
-## No build system, no tests, no CI
+## Validation and CI
 
-- Zero tests. Zero CI. No linter, formatter, or typechecker.
-- The only "verification" is manual: run the script on a VPS and observe output.
+- There is no build system, formatter, or typechecker.
+- `tests/validate_scripts.sh` runs Bash syntax checks, version consistency checks, line-ending checks, compatibility-rule checks, and validates the generated auto-update scripts.
+- GitHub Actions runs the static validation script on pushes and pull requests.
+- Runtime behavior still requires manual VPS testing.
 - No lockfiles, no package.json, no manifest beyond the MIT `LICENSE`.
+
+## Local verification
+
+- Test local edits by running the edited script directly; never use `install.sh` for unpushed changes.
+- Run `bash tests/validate_scripts.sh` before release.
+- Preserve LF line endings and UTF-8 encoding.
+- Use a disposable Linux VPS for install, upgrade, firewall, service, and uninstall checks.
 
 ## Script quirks
 

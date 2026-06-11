@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.0
+# 版本：v1.0.1
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -40,6 +40,7 @@ if [ -z "$BASH_VERSION" ]; then
         if [ -f /etc/alpine-release ]; then
             apk add --no-cache bash >/dev/null 2>&1
         elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1
             apt-get install -y -qq bash >/dev/null 2>&1
         elif command -v yum >/dev/null 2>&1; then
             yum install -y bash >/dev/null 2>&1
@@ -128,7 +129,7 @@ check_sys() {
 }
 
 detect_init() {
-    if command -v systemctl >/dev/null 2>&1 && systemctl --version >/dev/null 2>&1; then
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
         INIT_SYS="systemd"
     elif command -v rc-service >/dev/null 2>&1; then
         INIT_SYS="openrc"
@@ -298,12 +299,52 @@ detect_network() {
 install_dependencies() {
     echo -e "${YELLOW}正在安装依赖...${PLAIN}"
     case "$RELEASE" in
-        alpine)       apk update -q >/dev/null 2>&1; apk add --no-cache bash curl wget openssl qrencode >/dev/null 2>&1 ;;
-        centos)       yum  install -y curl wget openssl qrencode >/dev/null 2>&1 ;;
-        fedora|rocky) dnf  install -y curl wget openssl qrencode >/dev/null 2>&1 ;;
-        arch)         pacman -Sy --noconfirm curl wget openssl qrencode >/dev/null 2>&1 ;;
-        *)            apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget openssl qrencode >/dev/null 2>&1 ;;
+        alpine)
+            apk update -q >/dev/null 2>&1
+            apk add --no-cache bash curl wget ca-certificates openssl iproute2 procps >/dev/null 2>&1
+            apk add --no-cache libqrencode >/dev/null 2>&1 || true
+            ;;
+        centos)
+            yum install -y curl wget ca-certificates openssl iproute procps-ng >/dev/null 2>&1
+            yum install -y qrencode >/dev/null 2>&1 || true
+            ;;
+        fedora|rocky)
+            dnf install -y curl wget ca-certificates openssl iproute procps-ng >/dev/null 2>&1
+            dnf install -y qrencode >/dev/null 2>&1 || true
+            ;;
+        arch)
+            pacman -Sy --noconfirm curl wget ca-certificates openssl iproute2 procps-ng >/dev/null 2>&1
+            pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
+            ;;
+        *)
+            if command -v apt-get >/dev/null 2>&1; then
+                apt-get update -qq >/dev/null 2>&1
+                apt-get install -y -qq curl wget ca-certificates openssl iproute2 procps >/dev/null 2>&1
+                apt-get install -y -qq qrencode >/dev/null 2>&1 || true
+            else
+                echo -e "${RED}无法识别包管理器，请手动安装 curl、wget、openssl 和 iproute2${PLAIN}"
+                return 1
+            fi
+            ;;
     esac
+    local _cmd
+    for _cmd in curl wget openssl; do
+        command -v "$_cmd" >/dev/null 2>&1 || {
+            echo -e "${RED}依赖安装失败: 缺少 ${_cmd}${PLAIN}"
+            return 1
+        }
+    done
+}
+
+valid_port() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+valid_positive_number() {
+    echo "$1" | grep -qE '^[0-9]+([.][0-9]+)?$' && [ "$1" != "0" ] && [ "$1" != "0.0" ]
 }
 
 # ============================================================
@@ -333,7 +374,7 @@ get_latest_version() {
             "https://github.com/apernet/hysteria/releases/latest" | sed 's|.*/tag/||')
     fi
 
-    [ -z "$_raw_tag" ] && echo -e "${RED}获取版本失败，请检查网络（可能被 GitHub API 限频）${PLAIN}" && exit 1
+    [ -z "$_raw_tag" ] && echo -e "${RED}获取版本失败，请检查网络（可能被 GitHub API 限频）${PLAIN}" && return 1
 
     # 保留完整 tag 用于下载 URL
     LAST_VERSION_TAG="$_raw_tag"
@@ -348,10 +389,10 @@ download_hy2() {
     case $(uname -m) in
         x86_64)          _arch="amd64"   ;;
         aarch64|arm64)   _arch="arm64"   ;;
-        armv7l|armv7)    _arch="armv7"   ;;
+        armv7l|armv7)    _arch="arm"     ;;
         s390x)           _arch="s390x"   ;;
         loongarch64)     _arch="loong64" ;;
-        *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
+        *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && return 1 ;;
     esac
 
     # 主源使用完整 tag（含 app/ 前缀），确保 URL 正确
@@ -359,23 +400,33 @@ download_hy2() {
     # 备用：官方永久镜像（始终指向最新版，无需 tag）
     local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
 
-    # 杀旧进程 + 删旧二进制，避免 "Text file busy"
-    pkill -f "hysteria server" 2>/dev/null
-    sleep 1
-    rm -f "$HY_BIN"
+    local _tmp_bin
+    _tmp_bin=$(mktemp /tmp/hysteria-XXXXXX 2>/dev/null) || {
+        echo -e "${RED}无法创建下载临时文件${PLAIN}"
+        return 1
+    }
 
     echo -e "${YELLOW}正在下载 hysteria-linux-${_arch}...${PLAIN}"
 
-    if wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_github" 2>/dev/null; then
-        chmod +x "$HY_BIN"
-        echo -e "${GREEN}下载完成（来源：GitHub）${PLAIN}"
-    elif wget -q --show-progress --timeout=30 -O "$HY_BIN" "$_url_mirror" 2>/dev/null; then
-        chmod +x "$HY_BIN"
-        echo -e "${GREEN}下载完成（来源：官方镜像）${PLAIN}"
+    local _source=""
+    if wget -q --show-progress --timeout=30 -O "$_tmp_bin" "$_url_github" 2>/dev/null; then
+        _source="GitHub"
+    elif wget -q --show-progress --timeout=30 -O "$_tmp_bin" "$_url_mirror" 2>/dev/null; then
+        _source="官方镜像"
     else
-        rm -f "$HY_BIN"
-        echo -e "${RED}下载失败，请检查网络${PLAIN}" && return 1
+        rm -f "$_tmp_bin"
+        echo -e "${RED}下载失败，请检查网络${PLAIN}"
+        return 1
     fi
+
+    chmod +x "$_tmp_bin"
+    if ! "$_tmp_bin" version >/dev/null 2>&1; then
+        rm -f "$_tmp_bin"
+        echo -e "${RED}下载的二进制无效，已保留当前版本${PLAIN}"
+        return 1
+    fi
+    mv -f "$_tmp_bin" "$HY_BIN"
+    echo -e "${GREEN}下载完成（来源：${_source}）${PLAIN}"
 }
 
 # ============================================================
@@ -392,8 +443,10 @@ configure_nat_port() {
     echo ""
     read -r -p "请输入本机监听端口 [默认 18888]: " LISTEN_PORT
     [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+    valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
     read -r -p "请输入对外端口（客户端连接端口）[留空=与监听端口相同]: " EXT_PORT
     [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
+    valid_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return 1; }
     echo -e "${YELLOW}提示: 请确保宿主机已将 UDP ${EXT_PORT} 转发到本机 UDP ${LISTEN_PORT}${PLAIN}"
 }
 
@@ -407,8 +460,11 @@ configure_std_port() {
         echo -e "  ${DIM}端口跳跃示例: 20000:50000 → 服务器监听 20000-50000 全部端口${PLAIN}"
         echo -e "  ${DIM}客户端可连接范围内任意端口, 有效绕过单端口封锁${PLAIN}"
         read -r -p "  请输入端口范围 [格式 起始:结束, 如 20000:50000]: " PORT_HOP
-        if echo "$PORT_HOP" | grep -qE '^[0-9]+:[0-9]+$'; then
-            LISTEN_PORT=$(echo "$PORT_HOP" | cut -d: -f1)
+        local _hop_start _hop_end
+        _hop_start=$(echo "$PORT_HOP" | cut -d: -f1)
+        _hop_end=$(echo "$PORT_HOP" | cut -d: -f2)
+        if valid_port "$_hop_start" && valid_port "$_hop_end" && [ "$_hop_start" -le "$_hop_end" ]; then
+            LISTEN_PORT="$_hop_start"
             EXT_PORT="$LISTEN_PORT"
             echo -e "  ${GREEN}✓ 端口跳跃已启用: ${PORT_HOP}${PLAIN}"
         else
@@ -416,11 +472,13 @@ configure_std_port() {
             PORT_HOP=""
             read -r -p "请输入监听端口 [默认 18888]: " LISTEN_PORT
             [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+            valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
             EXT_PORT="$LISTEN_PORT"
         fi
     else
         read -r -p "请输入监听端口 [默认 18888]: " LISTEN_PORT
         [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         EXT_PORT="$LISTEN_PORT"
     fi
 }
@@ -441,7 +499,12 @@ open_firewall_port() {
         firewall-cmd --reload >/dev/null 2>&1
         echo -e "  ${GREEN}✓ firewalld 已放行 ${_proto}/${_port}${PLAIN}"
     elif command -v iptables >/dev/null 2>&1; then
-        iptables -I INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null
+        iptables -C INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null || \
+            iptables -I INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null
+        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
+            ip6tables -C INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null || \
+                ip6tables -I INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null
+        fi
         # 尝试持久化
         if [ -f /etc/iptables/rules.v4 ] && command -v iptables-save >/dev/null 2>&1; then
             iptables-save > /etc/iptables/rules.v4 2>/dev/null
@@ -466,7 +529,12 @@ open_firewall_range() {
         firewall-cmd --reload >/dev/null 2>&1
         echo -e "  ${GREEN}✓ firewalld 已放行 ${_proto}/${_start}-${_end}${PLAIN}"
     elif command -v iptables >/dev/null 2>&1; then
-        iptables -I INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null
+        iptables -C INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null || \
+            iptables -I INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null
+        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
+            ip6tables -C INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null || \
+                ip6tables -I INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null
+        fi
         if [ -f /etc/iptables/rules.v4 ] && command -v iptables-save >/dev/null 2>&1; then
             iptables-save > /etc/iptables/rules.v4 2>/dev/null
         fi
@@ -501,20 +569,20 @@ gen_password() {
 # ============================================================
 
 install_hy2() {
-    install_dependencies
+    install_dependencies || return
     detect_network
     echo ""
-    get_latest_version
-    download_hy2 || exit 1
+    get_latest_version || return
+    download_hy2 || return
 
     mkdir -p /etc/hysteria "$HY_CERT_DIR" "$HY_META"
 
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
 
     if [ "$NAT_MODE" = "1" ]; then
-        configure_nat_port
+        configure_nat_port || return
     else
-        configure_std_port
+        configure_std_port || return
     fi
 
     # 自动放行端口（端口跳跃时放行整个范围）
@@ -530,6 +598,10 @@ install_hy2() {
 
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
     [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
+    echo "$PASSWORD" | grep -qE '["\\$`]|[[:cntrl:]]' && {
+        echo -e "${RED}密码不能包含引号、反斜杠、美元符、反引号或控制字符${PLAIN}"
+        return
+    }
 
     # IPv6 Only：监听双栈
     # PORT_HOP 格式为用户友好的 "起始:结束"（如 20000:50000），
@@ -553,7 +625,10 @@ install_hy2() {
     echo -e "${YELLOW}生成自签名证书...${PLAIN}"
     openssl req -x509 -newkey rsa:2048 -days 3650 -nodes -sha256 \
         -keyout "$HY_CERT_DIR/server.key" -out "$HY_CERT_DIR/server.crt" \
-        -subj "/CN=${SNI}" >/dev/null 2>&1
+        -subj "/CN=${SNI}" >/dev/null 2>&1 || {
+            echo -e "${RED}证书生成失败${PLAIN}"
+            return
+        }
     chmod 600 "$HY_CERT_DIR/server.key"
 
     BW_UP="50"
@@ -565,6 +640,10 @@ install_hy2() {
         read -r -p "请输入下行带宽 Mbps [默认 100]: " _dn
         [[ -n "$_up" ]] && BW_UP="$_up"
         [[ -n "$_dn" ]] && BW_DOWN="$_dn"
+        valid_positive_number "$BW_UP" && valid_positive_number "$BW_DOWN" || {
+            echo -e "${RED}带宽必须为大于 0 的数字${PLAIN}"
+            return
+        }
     fi
 
     cat > "$HY_CONFIG" <<EOF
@@ -603,7 +682,11 @@ EOF
     elif [ "$INIT_SYS" = "openrc"  ]; then setup_openrc_service
     fi
     service_enable
-    service_start
+    if service_is_active; then
+        service_restart
+    else
+        service_start
+    fi
 
     sleep 2
     echo -e "${YELLOW}验证服务状态...${PLAIN}"
@@ -638,7 +721,7 @@ upgrade_hy2() {
     _cur_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     echo -e "  当前版本: ${YELLOW}${_cur_ver:-未知}${PLAIN}"
 
-    get_latest_version
+    get_latest_version || return
     # LAST_VERSION 已剥离 app/ 前缀（vX.Y.Z），可直接与 _cur_ver 对比
 
     if [ -n "$_cur_ver" ] && [ "$_cur_ver" = "$LAST_VERSION" ]; then
@@ -649,7 +732,10 @@ upgrade_hy2() {
     echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
 
     # 备份旧二进制，下载/启动失败时回滚
-    cp "$HY_BIN" "${HY_BIN}.bak" 2>/dev/null
+    cp "$HY_BIN" "${HY_BIN}.bak" 2>/dev/null || {
+        echo -e "${RED}无法备份当前二进制，取消升级${PLAIN}"
+        return
+    }
 
     if download_hy2; then
         service_restart
@@ -715,9 +801,10 @@ read_config_vars() {
 uri_encode() {
     local _in="$1"
     if command -v python3 >/dev/null 2>&1; then
-        printf '%s' "$_in" | python3 -c \
-            "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')"
-        return
+        if printf '%s' "$_in" | python3 -c \
+            "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')" 2>/dev/null; then
+            return
+        fi
     fi
     local _out="" _i=0 _c _hex _b
     local _len=${#_in}
@@ -726,8 +813,8 @@ uri_encode() {
         case "$_c" in
             [a-zA-Z0-9.~_-]) _out+="$_c" ;;
             *)
-                _hex=$(printf '%s' "$_c" | od -An -tx1 | tr -d ' \n')
-                for _b in $_hex; do _out+="%${_b^^}"; done
+                _hex=$(printf '%s' "$_c" | od -An -tx1 | awk '{ for (i=1; i<=NF; i++) printf "%%%s", toupper($i) }')
+                _out="${_out}${_hex}"
                 ;;
         esac
         _i=$((_i + 1))
@@ -910,6 +997,11 @@ change_bandwidth() {
     read -r -p "请输入新的下行带宽 Mbps [留空保持 ${BW_DOWN}]: " _new_dn
     [[ -n "$_new_up" ]] && BW_UP="$_new_up"
     [[ -n "$_new_dn" ]] && BW_DOWN="$_new_dn"
+    valid_positive_number "$BW_UP" && valid_positive_number "$BW_DOWN" || {
+        echo -e "${RED}带宽必须为大于 0 的数字${PLAIN}"
+        sleep 2
+        return
+    }
 
     # 用 awk 精准替换 bandwidth 块下的 up/down 行，不依赖固定缩进
     local _tmp_cfg
@@ -930,7 +1022,12 @@ change_bandwidth() {
 
     service_restart
     sleep 1
-    echo -e "${GREEN}带宽已更新: 上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
+    if service_is_active; then
+        echo -e "${GREEN}带宽已更新: 上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
+    else
+        echo -e "${RED}服务重启失败，请检查配置和日志${PLAIN}"
+        service_logs
+    fi
     sleep 2
 }
 
@@ -1108,7 +1205,7 @@ detect_arch() {
     case $(uname -m) in
         x86_64)        echo "amd64"   ;;
         aarch64|arm64) echo "arm64"   ;;
-        armv7l|armv7)  echo "armv7"   ;;
+        armv7l|armv7)  echo "arm"     ;;
         s390x)         echo "s390x"   ;;
         loongarch64)   echo "loong64" ;;
         *) echo "" ;;
@@ -1116,7 +1213,7 @@ detect_arch() {
 }
 
 restart_service() {
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled hysteria-server >/dev/null 2>&1; then
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
         systemctl restart hysteria-server
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service hysteria-server restart 2>/dev/null
@@ -1124,7 +1221,8 @@ restart_service() {
 }
 
 main() {
-    local _info _tag _latest _current _arch
+    local _info _tag _latest _current _arch _url _url_mirror
+    local _tmp_bin _backup _was_active=0
     _info=$(get_latest)
     _tag="${_info%%|*}"
     _latest="${_info##*|}"
@@ -1143,30 +1241,66 @@ main() {
 
     echo "[$TIMESTAMP] 发现新版本: $_current → $_latest，开始更新..." >> "$LOG"
 
-    # 使用完整 tag 构造下载 URL
-    local _url="https://github.com/apernet/hysteria/releases/download/${_tag}/hysteria-linux-${_arch}"
-    pkill -f "hysteria server" 2>/dev/null
-    sleep 1
-    rm -f "$HY_BIN"
+    _url="https://github.com/apernet/hysteria/releases/download/${_tag}/hysteria-linux-${_arch}"
+    _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
+    _tmp_bin=$(mktemp /tmp/hy2-autoupdate-XXXXXX 2>/dev/null)
+    _backup="${HY_BIN}.autoupdate.bak"
 
-    if wget -q --timeout=60 -O "$HY_BIN" "$_url" 2>/dev/null; then
-        chmod +x "$HY_BIN"
+    if [ -z "$_tmp_bin" ]; then
+        echo "[$TIMESTAMP] 无法创建临时文件，跳过更新" >> "$LOG"
+        return
+    fi
+
+    if ! wget -q --timeout=60 -O "$_tmp_bin" "$_url" 2>/dev/null; then
+        echo "[$TIMESTAMP] GitHub 下载失败，尝试备用镜像..." >> "$LOG"
+        wget -q --timeout=60 -O "$_tmp_bin" "$_url_mirror" 2>/dev/null || {
+            rm -f "$_tmp_bin"
+            echo "[$TIMESTAMP] 更新下载失败，当前版本保持不变" >> "$LOG"
+            return
+        }
+    fi
+
+    chmod +x "$_tmp_bin"
+    if ! "$_tmp_bin" version >/dev/null 2>&1; then
+        rm -f "$_tmp_bin"
+        echo "[$TIMESTAMP] 下载文件校验失败，当前版本保持不变" >> "$LOG"
+        return
+    fi
+
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet hysteria-server; then
+        _was_active=1
+    elif command -v rc-service >/dev/null 2>&1 && rc-service hysteria-server status 2>/dev/null | grep -q started; then
+        _was_active=1
+    fi
+
+    cp "$HY_BIN" "$_backup" 2>/dev/null || {
+        rm -f "$_tmp_bin"
+        echo "[$TIMESTAMP] 备份当前版本失败，取消更新" >> "$LOG"
+        return
+    }
+    mv -f "$_tmp_bin" "$HY_BIN"
+
+    if [ "$_was_active" -eq 1 ]; then
         restart_service
         sleep 2
-        echo "[$TIMESTAMP] 更新成功，当前版本: $(get_current)" >> "$LOG"
-    else
-        echo "[$TIMESTAMP] GitHub 下载失败，尝试备用镜像..." >> "$LOG"
-        local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
-        if wget -q --timeout=60 -O "$HY_BIN" "$_url_mirror" 2>/dev/null; then
-            chmod +x "$HY_BIN"
-            restart_service
-            sleep 2
-            echo "[$TIMESTAMP] 更新成功（备用源），当前版本: $(get_current)" >> "$LOG"
-        else
-            rm -f "$HY_BIN"
-            echo "[$TIMESTAMP] 更新失败，请手动检查" >> "$LOG"
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl is-active --quiet hysteria-server || {
+                mv -f "$_backup" "$HY_BIN"
+                restart_service
+                echo "[$TIMESTAMP] 新版本启动失败，已回滚至 $_current" >> "$LOG"
+                return
+            }
+        elif command -v rc-service >/dev/null 2>&1; then
+            rc-service hysteria-server status 2>/dev/null | grep -q started || {
+                mv -f "$_backup" "$HY_BIN"
+                restart_service
+                echo "[$TIMESTAMP] 新版本启动失败，已回滚至 $_current" >> "$LOG"
+                return
+            }
         fi
     fi
+    rm -f "$_backup"
+    echo "[$TIMESTAMP] 更新成功，当前版本: $(get_current)" >> "$LOG"
 
     # 保留最近 500 行日志
     tail -n 500 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
@@ -1187,6 +1321,16 @@ AUTOUPDATE_EOF
             *)      apt-get install -y -qq cron >/dev/null 2>&1 ;;
         esac
     fi
+
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        systemctl enable --now cron >/dev/null 2>&1 || \
+            systemctl enable --now crond >/dev/null 2>&1 || true
+    fi
+    command -v crontab >/dev/null 2>&1 || {
+        echo -e "${RED}cron 安装失败，无法配置自动更新${PLAIN}"
+        sleep 2
+        return
+    }
 
     # 写入 crontab（避免重复）
     local _cron_entry="0 3 * * * /bin/bash ${AUTO_UPDATE_SCRIPT} >> ${AUTO_UPDATE_LOG} 2>&1"
@@ -1327,7 +1471,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v1.0.0${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v1.0.1${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

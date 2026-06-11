@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v1.0.0
+# 版本：v1.0.1
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -26,6 +26,7 @@ if [ -z "$BASH_VERSION" ]; then
         if command -v apk >/dev/null 2>&1; then
             apk add --no-cache bash >/dev/null 2>&1
         elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1
             apt-get install -y -qq bash >/dev/null 2>&1
         elif command -v dnf >/dev/null 2>&1; then
             dnf install -y bash >/dev/null 2>&1
@@ -106,7 +107,7 @@ check_sys() {
 }
 
 detect_init() {
-    if command -v systemctl >/dev/null 2>&1 && systemctl --version >/dev/null 2>&1; then
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
         INIT_SYS="systemd"
     elif command -v rc-service >/dev/null 2>&1; then
         INIT_SYS="openrc"
@@ -185,6 +186,7 @@ open_ports() {
         firewall-cmd --permanent --add-port="${_port}/udp" >/dev/null 2>&1
         firewall-cmd --reload >/dev/null 2>&1
         echo -e "  ${GREEN}✓ firewalld 已放行 tcp+udp/${_port}${PLAIN}"
+        return
     fi
 
     # ufw：用 ufw status 判断 active（比 is-active 更可靠）
@@ -192,11 +194,20 @@ open_ports() {
         ufw allow "${_port}/tcp" >/dev/null 2>&1
         ufw allow "${_port}/udp" >/dev/null 2>&1
         echo -e "  ${GREEN}✓ ufw 已放行 tcp+udp/${_port}${PLAIN}"
+        return
     fi
 
     if command -v iptables >/dev/null 2>&1; then
-        iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
-        iptables -I INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+            iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        iptables -C INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+            iptables -I INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
+            ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+                ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+            ip6tables -C INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+                ip6tables -I INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        fi
         if command -v netfilter-persistent >/dev/null 2>&1; then
             netfilter-persistent save >/dev/null 2>&1
         elif [ -f /etc/sysconfig/iptables ] && command -v service >/dev/null 2>&1; then
@@ -328,25 +339,24 @@ EOF
 install_dependencies() {
     echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
 
-    SELINUX_MODE=""
-    if command -v setenforce >/dev/null 2>&1; then
-        SELINUX_MODE=$(getenforce 2>/dev/null)
-        setenforce 0 2>/dev/null || true
-    fi
-
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -qq >/dev/null 2>&1
         # qrencode 用于终端内渲染二维码
-        apt-get install -y -qq curl wget openssl tar xz-utils qrencode >/dev/null 2>&1
+        apt-get install -y -qq curl wget ca-certificates openssl tar xz-utils iproute2 procps >/dev/null 2>&1
+        apt-get install -y -qq qrencode >/dev/null 2>&1 || true
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y curl wget openssl tar xz qrencode >/dev/null 2>&1
+        dnf install -y curl wget ca-certificates openssl tar xz iproute procps-ng >/dev/null 2>&1
+        dnf install -y qrencode >/dev/null 2>&1 || true
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y curl wget openssl tar xz qrencode >/dev/null 2>&1
+        yum install -y curl wget ca-certificates openssl tar xz iproute procps-ng >/dev/null 2>&1
+        yum install -y qrencode >/dev/null 2>&1 || true
     elif command -v pacman >/dev/null 2>&1; then
-        pacman -Sy --noconfirm curl wget openssl tar xz qrencode >/dev/null 2>&1
+        pacman -Sy --noconfirm curl wget ca-certificates openssl tar xz iproute2 procps-ng >/dev/null 2>&1
+        pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
     elif command -v apk >/dev/null 2>&1; then
         apk update -q >/dev/null 2>&1
-        apk add --no-cache bash curl wget openssl tar xz libqrencode >/dev/null 2>&1
+        apk add --no-cache bash curl wget ca-certificates openssl tar xz iproute2 procps >/dev/null 2>&1
+        apk add --no-cache libqrencode >/dev/null 2>&1 || true
     fi
 
     local _missing=0
@@ -357,6 +367,17 @@ install_dependencies() {
         fi
     done
     [ "$_missing" -eq 1 ] && exit 1
+}
+
+valid_port() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+valid_json_secret() {
+    ! echo "$1" | grep -qE '["\\]|[[:cntrl:]]'
 }
 
 # ============================================================
@@ -374,7 +395,7 @@ get_latest_version() {
             "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" | sed 's|.*/tag/||')
     fi
 
-    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && exit 1
+    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && return 1
     echo -e "${GREEN}最新版本: ${LAST_VERSION}${PLAIN}"
 }
 
@@ -386,7 +407,7 @@ download_ss() {
         armv7l|armv7)    _arch="armv7-unknown-linux-musl"  ;;
         s390x)           _arch="s390x-unknown-linux-musl"  ;;
         loongarch64)     _arch="loongarch64-unknown-linux-musl" ;;
-        *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && exit 1 ;;
+        *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && return 1 ;;
     esac
 
     echo -e "${SKYBLUE}>>> 已强制使用 musl 静态编译库，彻底免疫一切 GLIBC 报错！ <<<${PLAIN}"
@@ -396,16 +417,15 @@ download_ss() {
     _tmp_archive=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz)
     _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX)
 
-    service_stop
-    rm -f "$SS_BIN"
-
     echo -e "${YELLOW}正在下载 shadowsocks-rust ${LAST_VERSION} (${_arch})...${PLAIN}"
     wget -q --show-progress --timeout=30 -O "$_tmp_archive" "$_url" \
         || { echo -e "${RED}下载失败，请检查网络${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
     tar -xf "$_tmp_archive" -C "$_tmp_dir" ssserver \
         || { echo -e "${RED}解压失败${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
-    mv "$_tmp_dir/ssserver" "$SS_BIN"
-    chmod +x "$SS_BIN"
+    chmod +x "$_tmp_dir/ssserver"
+    "$_tmp_dir/ssserver" --version >/dev/null 2>&1 \
+        || { echo -e "${RED}下载的二进制无效${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
+    mv -f "$_tmp_dir/ssserver" "$SS_BIN"
     rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"
     echo -e "${GREEN}下载完成${PLAIN}"
 }
@@ -415,10 +435,10 @@ download_ss() {
 # ============================================================
 
 install_ss() {
+    install_dependencies || return
     detect_network
-    install_dependencies
-    get_latest_version
-    download_ss || exit 1
+    get_latest_version || return
+    download_ss || return
 
     mkdir -p /etc/shadowsocks-rust "$SS_META"
 
@@ -426,15 +446,18 @@ install_ss() {
     if [ "$NAT_MODE" = "1" ]; then
         read -r -p "请输入本机监听端口 [默认 28888]: " LISTEN_PORT
         [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="28888"
+        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return; }
         read -r -p "请输入对外转发端口 [留空=与监听端口相同]: " EXT_PORT
         [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
+        valid_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return; }
     else
         read -r -p "请输入端口 [默认 28888]: " LISTEN_PORT
         [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="28888"
+        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return; }
         EXT_PORT="$LISTEN_PORT"
     fi
 
-    _select_cipher
+    _select_cipher || return
     _write_config
     _save_meta
 
@@ -445,7 +468,11 @@ install_ss() {
     fi
 
     service_enable
-    service_start
+    if service_is_active; then
+        service_restart
+    else
+        service_start
+    fi
 
     sleep 2
     if service_is_active; then
@@ -455,11 +482,6 @@ install_ss() {
         service_logs
         read -r -p "按回车键返回主菜单..." _tmp
         return
-    fi
-
-    # 恢复 SELinux（install_dependencies 中临时设为 Permissive）
-    if [ -n "$SELINUX_MODE" ] && [ "$SELINUX_MODE" != "Disabled" ]; then
-        setenforce "$SELINUX_MODE" 2>/dev/null || true
     fi
 
     show_config
@@ -482,6 +504,10 @@ _select_cipher() {
         METHOD="aes-256-gcm"
         read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
         [[ -z "$PASSWORD" ]] && PASSWORD=$(openssl rand -base64 16 | tr -d ' \n\r')
+        valid_json_secret "$PASSWORD" || {
+            echo -e "${RED}密码不能包含双引号、反斜杠或控制字符${PLAIN}"
+            return 1
+        }
         echo -e "${GREEN}已启用经典 aes-256-gcm 协议，保证最高连通率！${PLAIN}"
     fi
 }
@@ -529,7 +555,7 @@ upgrade_ss() {
     [ -n "$_cur_raw" ] && _cur_ver="v${_cur_raw}"
     echo -e "  当前版本: ${YELLOW}${_cur_ver:-未知}${PLAIN}"
 
-    get_latest_version
+    get_latest_version || return
 
     if [ -n "$_cur_ver" ] && [ "$_cur_ver" = "$LAST_VERSION" ]; then
         echo -e "${GREEN}已是最新版本，无需升级${PLAIN}"
@@ -539,7 +565,10 @@ upgrade_ss() {
     echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
 
     # 备份旧二进制，下载/启动失败时回滚
-    cp "$SS_BIN" "${SS_BIN}.bak" 2>/dev/null
+    cp "$SS_BIN" "${SS_BIN}.bak" 2>/dev/null || {
+        echo -e "${RED}无法备份当前二进制，取消升级${PLAIN}"
+        return
+    }
 
     if download_ss; then
         service_restart
@@ -592,11 +621,14 @@ modify_config() {
             if [ "$NAT_MODE" = "1" ]; then
                 read -r -p "请输入新的本机监听端口: " LISTEN_PORT
                 [[ -z "$LISTEN_PORT" ]] && { echo -e "${RED}端口不能为空${PLAIN}"; sleep 1; return; }
+                valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; sleep 1; return; }
                 read -r -p "请输入新的对外转发端口 [留空=同监听端口]: " EXT_PORT
                 [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
+                valid_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; sleep 1; return; }
             else
                 read -r -p "请输入新端口: " LISTEN_PORT
                 [[ -z "$LISTEN_PORT" ]] && { echo -e "${RED}端口不能为空${PLAIN}"; sleep 1; return; }
+                valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; sleep 1; return; }
                 EXT_PORT="$LISTEN_PORT"
             fi
             open_ports "$LISTEN_PORT"
@@ -609,16 +641,34 @@ modify_config() {
             else
                 read -r -p "请输入新密码 [留空自动生成]: " PASSWORD
                 [[ -z "$PASSWORD" ]] && PASSWORD=$(openssl rand -base64 16 | tr -d ' \n\r')
+                valid_json_secret "$PASSWORD" || {
+                    echo -e "${RED}密码不能包含双引号、反斜杠或控制字符${PLAIN}"
+                    sleep 1
+                    return
+                }
                 echo -e "  新密码: ${GREEN}${PASSWORD}${PLAIN}"
             fi
             ;;
         3)
             # 保持安装时的 HAS_IPV6 不变（不重新探测，避免网络抖动误降级为纯 IPv4）
-            _select_cipher
+            _select_cipher || return
             ;;
         0) return ;;
         *) echo -e "${RED}输入错误${PLAIN}"; sleep 1; return ;;
     esac
+
+    local _config_backup _meta_backup
+    _config_backup=$(mktemp /tmp/ss-config-XXXXXX 2>/dev/null) || {
+        echo -e "${RED}无法创建配置备份${PLAIN}"
+        return
+    }
+    _meta_backup=$(mktemp -d /tmp/ss-meta-XXXXXX 2>/dev/null) || {
+        rm -f "$_config_backup"
+        echo -e "${RED}无法创建元数据备份${PLAIN}"
+        return
+    }
+    cp "$SS_CONFIG" "$_config_backup"
+    cp -a "$SS_META"/. "$_meta_backup"/ 2>/dev/null || true
 
     _write_config
     _save_meta
@@ -626,11 +676,20 @@ modify_config() {
     sleep 1
 
     if service_is_active; then
+        rm -f "$_config_backup"
+        rm -rf "$_meta_backup"
         echo -e "${GREEN}✓ 配置已更新，服务已重启${PLAIN}"
         sleep 1
         show_config
     else
-        echo -e "${RED}✗ 服务重启失败，请查看日志${PLAIN}"
+        cp "$_config_backup" "$SS_CONFIG"
+        rm -rf "$SS_META"
+        mkdir -p "$SS_META"
+        cp -a "$_meta_backup"/. "$SS_META"/ 2>/dev/null || true
+        service_restart
+        rm -f "$_config_backup"
+        rm -rf "$_meta_backup"
+        echo -e "${RED}✗ 服务重启失败，配置已回滚${PLAIN}"
         service_logs
         read -r -p "按回车继续..." _tmp
     fi
@@ -643,9 +702,10 @@ modify_config() {
 uri_encode() {
     local _in="$1"
     if command -v python3 >/dev/null 2>&1; then
-        printf '%s' "$_in" | python3 -c \
-            "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')"
-        return
+        if printf '%s' "$_in" | python3 -c \
+            "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')" 2>/dev/null; then
+            return
+        fi
     fi
     local _out="" _i=0 _c _hex _byte
     local _len=${#_in}
@@ -654,8 +714,8 @@ uri_encode() {
         case "$_c" in
             [a-zA-Z0-9.~_-]) _out+="$_c" ;;
             *)
-                _hex=$(printf '%s' "$_c" | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')
-                for _byte in $_hex; do _out+="%${_byte}"; done
+                _hex=$(printf '%s' "$_c" | od -An -tx1 | awk '{ for (i=1; i<=NF; i++) printf "%%%s", toupper($i) }')
+                _out="${_out}${_hex}"
                 ;;
         esac
         _i=$((_i + 1))
@@ -1045,12 +1105,15 @@ detect_arch() {
     case $(uname -m) in
         x86_64)        echo "x86_64-unknown-linux-musl"  ;;
         aarch64|arm64) echo "aarch64-unknown-linux-musl" ;;
+        armv7l|armv7)  echo "armv7-unknown-linux-musl" ;;
+        s390x)         echo "s390x-unknown-linux-musl" ;;
+        loongarch64)   echo "loongarch64-unknown-linux-musl" ;;
         *) echo "" ;;
     esac
 }
 
 restart_service() {
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled shadowsocks-server >/dev/null 2>&1; then
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
         systemctl restart shadowsocks-server
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service shadowsocks-server restart 2>/dev/null
@@ -1059,6 +1122,7 @@ restart_service() {
 
 main() {
     local _latest _current _arch _url
+    local _tmp_a _tmp_dir _candidate _backup _was_active=0
     _latest=$(get_latest)
     _current=$(get_current)
     _arch=$(detect_arch)
@@ -1076,25 +1140,58 @@ main() {
     echo "[$TIMESTAMP] 发现新版本: $_current → $_latest，开始更新..." >> "$LOG"
 
     _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${_latest}/shadowsocks-${_latest}.${_arch}.tar.xz"
-    pkill -f "ssserver" 2>/dev/null
-    sleep 1
-    rm -f "$SS_BIN"
-
-    local _tmp_a _tmp_dir
     _tmp_a=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz 2>/dev/null)
     _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX 2>/dev/null)
     if [ -n "$_tmp_a" ] && [ -n "$_tmp_dir" ] && \
        wget -q --timeout=60 -O "$_tmp_a" "$_url" 2>/dev/null && \
        tar -xf "$_tmp_a" -C "$_tmp_dir" ssserver 2>/dev/null; then
-        mv "$_tmp_dir/ssserver" "$SS_BIN"
-        chmod +x "$SS_BIN"
+        _candidate="$_tmp_dir/ssserver"
+        chmod +x "$_candidate"
+        if ! "$_candidate" --version >/dev/null 2>&1; then
+            rm -f "$_tmp_a"; rm -rf "$_tmp_dir"
+            echo "[$TIMESTAMP] 下载文件校验失败，当前版本保持不变" >> "$LOG"
+            return
+        fi
+
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet shadowsocks-server; then
+            _was_active=1
+        elif command -v rc-service >/dev/null 2>&1 && rc-service shadowsocks-server status 2>/dev/null | grep -q started; then
+            _was_active=1
+        fi
+
+        _backup="${SS_BIN}.autoupdate.bak"
+        cp "$SS_BIN" "$_backup" 2>/dev/null || {
+            rm -f "$_tmp_a"; rm -rf "$_tmp_dir"
+            echo "[$TIMESTAMP] 备份当前版本失败，取消更新" >> "$LOG"
+            return
+        }
+        mv -f "$_candidate" "$SS_BIN"
         rm -f "$_tmp_a"; rm -rf "$_tmp_dir"
-        restart_service
-        sleep 2
+
+        if [ "$_was_active" -eq 1 ]; then
+            restart_service
+            sleep 2
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl is-active --quiet shadowsocks-server || {
+                    mv -f "$_backup" "$SS_BIN"
+                    restart_service
+                    echo "[$TIMESTAMP] 新版本启动失败，已回滚至 $_current" >> "$LOG"
+                    return
+                }
+            elif command -v rc-service >/dev/null 2>&1; then
+                rc-service shadowsocks-server status 2>/dev/null | grep -q started || {
+                    mv -f "$_backup" "$SS_BIN"
+                    restart_service
+                    echo "[$TIMESTAMP] 新版本启动失败，已回滚至 $_current" >> "$LOG"
+                    return
+                }
+            fi
+        fi
+        rm -f "$_backup"
         echo "[$TIMESTAMP] 更新成功，当前版本: $(get_current)" >> "$LOG"
     else
         rm -f "$_tmp_a"; rm -rf "$_tmp_dir"
-        echo "[$TIMESTAMP] 更新失败，请手动检查" >> "$LOG"
+        echo "[$TIMESTAMP] 更新下载失败，当前版本保持不变" >> "$LOG"
     fi
 
     # 保留最近 500 行日志
@@ -1115,6 +1212,16 @@ AUTOUPDATE_EOF
             *)      apt-get install -y -qq cron >/dev/null 2>&1 ;;
         esac
     fi
+
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        systemctl enable --now cron >/dev/null 2>&1 || \
+            systemctl enable --now crond >/dev/null 2>&1 || true
+    fi
+    command -v crontab >/dev/null 2>&1 || {
+        echo -e "${RED}cron 安装失败，无法配置自动更新${PLAIN}"
+        sleep 2
+        return
+    }
 
     local _cron_entry="0 3 * * * /bin/bash ${AUTO_UPDATE_SCRIPT} >> ${AUTO_UPDATE_LOG} 2>&1"
     ( crontab -l 2>/dev/null | grep -v "ss-autoupdate"; echo "$_cron_entry" ) | crontab -
@@ -1258,7 +1365,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v1.0.0${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v1.0.1${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

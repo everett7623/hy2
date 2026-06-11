@@ -36,6 +36,16 @@
 
 ## 🚀 快速开始
 
+### 统一入口（推荐）
+
+统一入口会检测当前网络和服务状态，并提供 Hysteria 2、Shadowsocks 与 EUserv IPv6 专用脚本三个选项：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)
+```
+
+> `install.sh` 是远程启动器。选择菜单项后，它会再次从 GitHub `main` 分支下载对应脚本，因此需要 VPS 能访问 `raw.githubusercontent.com`。
+
 ### Hysteria 2（主推）
 
 适用于绝大多数网络环境，UDP 协议极速占满带宽，抗封锁能力强。
@@ -92,6 +102,27 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 | 客户端访问 | 需本地支持 IPv6（国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 须先在客户端侧安装 WARP） |
 
 > **⚠️ 纯 IPv4 客户端用户**：若本地网络无 IPv6，可在脚本中选择选项 **8** 为服务器安装 WARP 后，将节点转换为通过 WARP IPv4 中转访问——但此方案延迟较高，建议优先解决客户端 IPv6 连接问题。
+
+---
+
+## 🔄 日常管理
+
+重新运行对应脚本即可进入管理菜单，不会自动覆盖现有配置：
+
+```bash
+# Hysteria 2
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
+
+# Shadowsocks
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
+
+# EUserv IPv6 专用 Hysteria 2
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
+```
+
+管理菜单提供升级、修改配置、服务启停、查看日志和卸载等功能。升级二进制时脚本会备份旧版本，启动失败则尝试回滚。
+
+自动更新默认不会开启，需要在“服务器工具”中手动启用；启用后由 cron 每天 `03:00` 检查上游版本。
 
 ---
 
@@ -163,6 +194,106 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 > 支持 标准 VPS · NAT 机器 · IPv6 单栈 / 双栈 · 低配 VPS（≥ 128MB RAM）
 >
 > EUserv 专用脚本额外支持：纯 IPv6-only 环境 · Debian 系统优先适配
+
+---
+
+## 🧭 如何选择
+
+| 场景 | 建议 |
+| --- | --- |
+| 普通 IPv4 / 双栈 VPS | 优先使用 Hysteria 2 |
+| NAT VPS | 使用 Hysteria 2 或 Shadowsocks，并按提示填写外网映射端口 |
+| 纯 IPv6 VPS | Hysteria 2 与 Shadowsocks 均可，客户端必须具备 IPv6 可达性 |
+| EUserv 免费 IPv6-only VPS | 使用 `euservhy2.sh` |
+| UDP 被限制的网络 | 尝试 Shadowsocks；Hysteria 2 依赖 UDP |
+| 需要 SS-2022 | 使用 `ss.sh`，并确保服务端和客户端时间准确 |
+
+---
+
+## 🛠️ 常见问题
+
+### 执行后无法输入
+
+请使用文档中的 `bash <(curl ...)` 命令，不要使用 `curl ... | sh`。脚本包含 TTY 修复，但交互式菜单仍要求系统存在 `/dev/tty`。
+
+### 下载失败或 GitHub API 限频
+
+确认 VPS 的 DNS、系统时间及 GitHub 连通性：
+
+```bash
+curl -I https://raw.githubusercontent.com
+curl -I https://api.github.com
+date
+```
+
+EUserv 脚本会自动尝试 IPv6、NAT64 和镜像等多级下载方式；普通脚本下载失败时，请先解决 VPS 到 GitHub 的网络问题。
+
+### 服务已安装但无法连接
+
+1. 检查云服务商安全组是否放行对应 UDP 端口。
+2. 检查脚本菜单中的服务状态和运行日志。
+3. NAT VPS 需确认外网端口映射到脚本配置的内网端口。
+4. Hysteria 2 端口跳跃需要放行整个 UDP 端口范围。
+5. SS-2022 超时优先检查服务端与客户端时钟。
+
+### 本地修改为什么没有生效
+
+`install.sh` 始终下载 GitHub `main` 分支的远程脚本，不会调用当前目录中的 `hy2.sh`、`ss.sh` 或 `euservhy2.sh`。开发调试时应直接运行本地文件：
+
+```bash
+bash hy2.sh
+```
+
+---
+
+## 🔒 安全说明
+
+- 建议先下载并审阅脚本，再以 root 权限运行。
+- 节点链接和二维码包含连接凭据，请勿公开分享。
+- 卸载前请自行备份需要保留的配置；卸载功能会删除对应服务、配置和自动更新任务。
+- 本项目安装的是上游最新版本，未使用锁文件固定 Hysteria 2 或 Shadowsocks-Rust 版本。
+
+---
+
+## 📂 项目结构
+
+| 文件 | 用途 |
+| --- | --- |
+| `install.sh` | 远程统一入口，从 GitHub `main` 下载并执行子脚本 |
+| `hy2.sh` | Hysteria 2 安装与管理 |
+| `ss.sh` | Shadowsocks-Rust 安装与管理 |
+| `euservhy2.sh` | EUserv IPv6-only 专用 Hysteria 2 脚本 |
+| `tests/validate_scripts.sh` | Bash 语法、版本、换行、兼容规则及自动更新脚本检查 |
+| `docs/ARCHITECTURE.md` | 代码结构、兼容性约束和开发注意事项 |
+| `CHANGELOG.md` | 项目版本变更记录 |
+
+---
+
+## 📚 开发文档
+
+| 文档 | 适用对象 |
+| --- | --- |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献者的开发流程、修改原则和 PR 清单 |
+| [AGENTS.md](AGENTS.md) | Codex 等通用 AI Agent 的仓库约束 |
+| [CLAUDE.md](CLAUDE.md) | Claude Code 的项目上下文和维护约束 |
+| [架构说明](docs/ARCHITECTURE.md) | 脚本边界、执行模型和代码模板 |
+| [测试指南](docs/TESTING.md) | 静态验证、VPS 矩阵和故障注入 |
+| [发布流程](docs/RELEASE.md) | 版本同步、验收、发布和紧急回滚 |
+| [维护说明](docs/MAINTENANCE.md) | 外部依赖、安全边界、已知限制和 AI 接手协议 |
+
+新开发者或 AI 工具建议按以下顺序阅读：
+
+```text
+AGENTS.md / CLAUDE.md
+        ↓
+docs/ARCHITECTURE.md
+        ↓
+CONTRIBUTING.md
+        ↓
+docs/TESTING.md
+        ↓
+docs/RELEASE.md
+```
 
 ---
 
