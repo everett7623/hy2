@@ -4,8 +4,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-SCRIPTS="install.sh hy2.sh ss.sh euservhy2.sh"
-EXPECTED_VERSION="v1.0.1"
+SCRIPTS="install.sh hy2.sh ss.sh euservhy2.sh anytls.sh"
+EXPECTED_VERSION="v1.0.2"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -49,6 +49,10 @@ for script in $SCRIPTS; do
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
             ;;
+        anytls.sh)
+            grep -q "# 版本：${EXPECTED_VERSION}" "$script"
+            grep -q "AnyTLS Management Script ${EXPECTED_VERSION}" "$script"
+            ;;
     esac
 
     if grep -qE 'grep -oP|head -c|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}' "$script"; then
@@ -57,7 +61,7 @@ for script in $SCRIPTS; do
     fi
 done
 
-for script in hy2.sh ss.sh; do
+for script in hy2.sh ss.sh anytls.sh; do
     tmp=$(mktemp)
     awk '
         /cat > "\$AUTO_UPDATE_SCRIPT" <<'\''AUTOUPDATE_EOF'\''/ {

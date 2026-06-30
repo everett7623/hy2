@@ -4,6 +4,22 @@
 
 ---
 
+## v1.0.2 (2026-06-30)
+
+**新增 AnyTLS 协议支持**
+
+- 新增 `anytls.sh` 管理脚本，支持 AnyTLS 协议一键部署
+- AnyTLS 使用 TCP 传输，适合 UDP 受限网络环境
+- 支持自签证书、SNI 伪装、配置修改、升级卸载
+- 集成 BBR 加速、自动更新、系统信息展示
+- 集成到 `install.sh` 统一启动器（选项 4）
+- 更新 `tests/validate_scripts.sh` 支持 anytls.sh 验证
+- 完整的输入验证（端口、密码、域名）
+- 支持 NAT 模式、IPv4/IPv6 双栈
+- systemd 和 OpenRC 服务管理
+
+---
+
 ## v1.0.1 (2026-06-11)
 
 **兼容性与可靠性修复**

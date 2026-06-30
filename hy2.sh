@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v1.0.1
+# 版本：v1.0.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-06-11
+# 更新日期: 2026-06-30
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -833,7 +833,9 @@ show_node() {
     local _host="$_ip"
     echo "$_ip" | grep -q ':' && _host="[${_ip}]"
 
-    local _node="HY2-${_tag}-$(date +%m%d)"
+    local _date
+    _date=$(date +%m%d)
+    local _node="HY2-${_tag}-${_date}"
     local _pass_encoded
     _pass_encoded=$(uri_encode "${PASSWORD}")
 

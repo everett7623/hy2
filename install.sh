@@ -3,12 +3,12 @@
 # 项目：VPS 代理工具集 — 一键管理入口
 # 脚本：Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v1.0.1
+# 版本：v1.0.2
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-06-11
+# 更新日期: 2026-06-30
 #====================================================================================
 
 # ============================================================
@@ -56,6 +56,7 @@ BASE_URL="https://raw.githubusercontent.com/everett7623/hy2/main"
 HY2_URL="${BASE_URL}/hy2.sh"
 SS_URL="${BASE_URL}/ss.sh"
 EUSERV_URL="${BASE_URL}/euservhy2.sh"
+ANYTLS_URL="${BASE_URL}/anytls.sh"
 
 # ============================================================
 # Root 检测
@@ -136,6 +137,19 @@ get_status() {
         fi
     else
         EUSERV_STATUS="${RED}● 无公网 IPv6${PLAIN}${DIM} 不适用${PLAIN}"
+    fi
+
+    # ---- AnyTLS ----
+    if [ -f "/usr/local/bin/anytls-go" ]; then
+        local _ver
+        _ver=$(/usr/local/bin/anytls-go version 2>/dev/null | head -1)
+        if service_active anytls-server /var/run/anytls.pid; then
+            ANYTLS_STATUS="${GREEN}● 运行中${PLAIN}${DIM} ${_ver}${PLAIN}"
+        else
+            ANYTLS_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} ${_ver}${PLAIN}"
+        fi
+    else
+        ANYTLS_STATUS="${RED}● 未安装${PLAIN}"
     fi
 
     # ---- 网络信息 ----
@@ -222,7 +236,7 @@ main_menu() {
 
         # ---- 顶部信息栏 ----
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
-        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v1.0.1${PLAIN}"
+        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v1.0.2${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
         echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
         echo -e "  ${DIM}博客${PLAIN}   ${SKYBLUE}seedloc.com${PLAIN}     ${DIM}│${PLAIN}  ${DIM}测评${PLAIN}  ${SKYBLUE}vpsknow.com${PLAIN}"
@@ -249,18 +263,22 @@ main_menu() {
         echo -e "  ${MAGENTA}${BOLD}3.${PLAIN}  ${BOLD}EUserv IPv6 专用 HY2${PLAIN}     ${DIM}纯 IPv6 适配 · NAT64 兜底 · WARP 集成${PLAIN}"
         echo -e "     ${DIM}状态:${PLAIN} $(echo -e "$EUSERV_STATUS")"
         echo ""
+        echo -e "  ${GREEN}${BOLD}4.${PLAIN}  ${BOLD}AnyTLS${PLAIN}                    ${DIM}TCP 传输 · TLS 指纹规避 · UDP 受限网络${PLAIN}"
+        echo -e "     ${DIM}状态:${PLAIN} $(echo -e "$ANYTLS_STATUS")"
+        echo ""
         echo -e "${SKYBLUE}  ───────────────────────────────────────────────────────────────────${PLAIN}"
         echo -e "  ${YELLOW}${BOLD}0.${PLAIN}  退出"
         echo ""
         echo -e "${SKYBLUE}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
         echo ""
-        echo -ne "  ${WHITE}${BOLD}请输入选项 [0-3]:${PLAIN} "
+        echo -ne "  ${WHITE}${BOLD}请输入选项 [0-4]:${PLAIN} "
         read -r choice
 
         case "$choice" in
             1) run_script "Hysteria2" "$HY2_URL" ;;
             2) run_script "Shadowsocks" "$SS_URL" ;;
             3) run_script "EUserv IPv6 HY2" "$EUSERV_URL" ;;
+            4) run_script "AnyTLS" "$ANYTLS_URL" ;;
             0|q|quit|exit)
                 echo ""
                 echo -e "  ${DIM}感谢使用 HY2 Tools，再见！${PLAIN}"
@@ -268,7 +286,7 @@ main_menu() {
                 exit 0
                 ;;
             *)
-                echo -e "  ${RED}无效选项，请输入 0-3${PLAIN}"
+                echo -e "  ${RED}无效选项，请输入 0-4${PLAIN}"
                 sleep 1
                 ;;
         esac

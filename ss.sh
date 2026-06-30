@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v1.0.1
+# 版本：v1.0.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-06-11
+# 更新日期: 2026-06-30
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
@@ -761,8 +761,10 @@ show_node() {
     local _host="$_ip"
     echo "$_ip" | grep -q ':' && _host="[${_ip}]"
 
-    local _node="SS-${_tag}-$(date +%m%d)"
-    echo "$METHOD" | grep -q "2022" && _node="SS22-${_tag}-$(date +%m%d)"
+    local _date
+    _date=$(date +%m%d)
+    local _node="SS-${_tag}-${_date}"
+    echo "$METHOD" | grep -q "2022" && _node="SS22-${_tag}-${_date}"
 
     local _credentials
     _credentials=$(printf "%s:%s" "$METHOD" "$PASSWORD" | base64 | tr -d ' \n\r')
