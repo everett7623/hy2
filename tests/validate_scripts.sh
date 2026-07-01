@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-SCRIPTS="install.sh hy2.sh ss.sh euservhy2.sh anytls.sh"
+SCRIPTS="install.sh hy2.sh ss.sh euservhy2.sh"
 EXPECTED_VERSION="v1.0.2"
 REQUIRED_DOCS="
 README.md
@@ -49,17 +49,6 @@ for script in $SCRIPTS; do
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
             ;;
-        anytls.sh)
-            grep -q "# 版本：${EXPECTED_VERSION}" "$script"
-            grep -q "AnyTLS Management Script ${EXPECTED_VERSION}" "$script"
-            grep -q 'ANYTLS_BIN="/usr/local/bin/anytls-server"' "$script"
-            grep -q 'anytls_${release_version}_linux_${arch}\.zip' "$script"
-            grep -q 'ExecStart=\$ANYTLS_BIN -l .* -p ' "$script"
-            if grep -qE '/usr/local/bin/anytls-go|ExecStart=.* -c .*anytls' "$script"; then
-                echo "Obsolete AnyTLS binary or CLI found: $script" >&2
-                exit 1
-            fi
-            ;;
     esac
 
     if grep -qE 'grep -oP|head -c|\$\{[^}]+,,\}|\$\{[^}]+\^\^\}' "$script"; then
@@ -68,7 +57,7 @@ for script in $SCRIPTS; do
     fi
 done
 
-for script in hy2.sh ss.sh anytls.sh; do
+for script in hy2.sh ss.sh; do
     tmp=$(mktemp)
     awk '
         /cat > "\$AUTO_UPDATE_SCRIPT" <<'\''AUTOUPDATE_EOF'\''/ {

@@ -34,7 +34,7 @@ bash tests/validate_scripts.sh
 
 项目没有共享版本文件。发布时同步修改：
 
-- 五个脚本的文件头版本和日期
+- 四个脚本的文件头版本和日期
 - `install.sh`、`hy2.sh`、`ss.sh` 的菜单显示版本
 - `euservhy2.sh` 的 `SCRIPT_VERSION`
 - `tests/validate_scripts.sh` 的 `EXPECTED_VERSION`

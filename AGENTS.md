@@ -9,7 +9,6 @@ Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant
 - `install.sh` is a **remote launcher** — it downloads scripts from `https://raw.githubusercontent.com/everett7623/hy2/main/` and pipes to bash. It does **not** use local files. Bug fixes in local scripts won't take effect until pushed to GitHub.
 - `hy2.sh` — Hysteria 2 management (install/upgrade/uninstall, BBR, auto-update, firewall, QR, server tools).
 - `ss.sh` — Shadowsocks-Rust management (install/upgrade/uninstall, BBR, auto-update, QR, connection test, IPv4/IPv6 switch).
-- `anytls.sh` — AnyTLS management (install/upgrade/uninstall, BBR, auto-update, TCP firewall, QR, NAT).
 - `euservhy2.sh` — Standalone EUserv IPv6-only script. Does not share code with hy2.sh.
 
 ## Version management
@@ -48,8 +47,6 @@ Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant
 | Hysteria 2 config | `/etc/hysteria/config.yaml` |
 | Hysteria 2 metadata | `/etc/hysteria/meta/` |
 | SS binary | `/usr/local/bin/ssserver` |
-| AnyTLS binary | `/usr/local/bin/anytls-server` |
-| AnyTLS metadata | `/etc/anytls/` |
 | SS config | `/etc/shadowsocks.json` or `/etc/shadowsocks-rust/config.json` |
 | Systemd service | `/etc/systemd/system/hysteria-server.service` |
 | OpenRC service | `/etc/init.d/hysteria-server` |

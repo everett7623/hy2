@@ -4,7 +4,7 @@
 
 1. 确认工作区只包含本次发布内容。
 2. 确定语义化版本，例如 `v1.0.2`。
-3. 同步五个脚本的文件头版本和更新日期。
+3. 同步四个脚本的文件头版本和更新日期。
 4. 同步三个菜单版本和 EUserv `SCRIPT_VERSION`。
 5. 更新 `tests/validate_scripts.sh` 中的 `EXPECTED_VERSION`。
 6. 在 `CHANGELOG.md` 顶部增加版本、日期和用户可见变化。

@@ -7,7 +7,7 @@
 # Avoids bash 4.x+ syntax: no case-transform expansions, no grep -P patterns,
 # no head byte-count, no readarray/mapfile, no associative arrays.
 #
-# Feature: bugfix-optimize-anytls
+# Generic property-test input generators
 # Requirements: 1.3, 1.4, 7.4, 3.1, 4.2
 
 # ---------------------------------------------------------------------------

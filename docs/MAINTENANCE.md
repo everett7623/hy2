@@ -19,7 +19,6 @@
 | --- | --- | --- |
 | `apernet/hysteria` GitHub Releases | Hysteria 2 版本与二进制 | tag、文件名、架构名 |
 | `shadowsocks/shadowsocks-rust` Releases | SS 版本与 musl 二进制 | tag、压缩包、架构名 |
-| `anytls/anytls-go` Releases | AnyTLS 服务端 ZIP 与版本 | tag、ZIP 文件名、CLI 参数、支持架构 |
 | `download.hysteria.network` | Hysteria 备用下载 | URL 或可达性 |
 | GitHub API | 获取最新版本 | 限频、网络阻断 |
 | `raw.githubusercontent.com` | 分发项目脚本 | DNS、网络阻断 |
@@ -33,14 +32,11 @@
 
 - `/usr/local/bin/hy2-autoupdate.sh`
 - `/usr/local/bin/ss-autoupdate.sh`
-- `/usr/local/bin/anytls-autoupdate.sh`
 - `/var/log/hy2-autoupdate.log`
 - `/var/log/ss-autoupdate.log`
-- `/var/log/anytls-autoupdate.log`
 - `/etc/sysctl.d/99-hysteria-bbr.conf`
 - `/etc/sysctl.d/99-ss-bbr.conf`
 - `/etc/sysctl.d/99-euserv-bbr.conf`
-- `/etc/sysctl.d/99-anytls-bbr.conf`
 - root 用户的 crontab
 
 ## 安全规则
