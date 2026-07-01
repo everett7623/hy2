@@ -178,7 +178,7 @@ validate_port() {
     case "$port" in
         0*) return 1 ;;
     esac
-    awk -v p="$port" 'BEGIN { exit (p >= 1 && p <= 65535) ? 0 : 1 }'
+    [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
 
 validate_password() {
@@ -620,13 +620,19 @@ configure_anytls() {
     else
         read -r -p "请输入端口 [默认 38888]: " LISTEN_PORT
         [ -z "$LISTEN_PORT" ] && LISTEN_PORT="38888"
-        validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
+        validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数（输入值: '${LISTEN_PORT}'）${PLAIN}"; return 1; }
         EXT_PORT="$LISTEN_PORT"
+        echo -e "${GREEN}端口: ${LISTEN_PORT}${PLAIN}"
     fi
 
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
-    [ -z "$PASSWORD" ] && PASSWORD=$(openssl rand -base64 24 | tr -d ' \n\r/+=' | cut -c1-32)
-    validate_password "$PASSWORD" || { echo -e "${RED}密码包含非法字符${PLAIN}"; return 1; }
+    if [ -z "$PASSWORD" ]; then
+        PASSWORD=$(openssl rand -base64 24 2>/dev/null | tr -d ' \n\r/+=' | cut -c1-32)
+        [ -z "$PASSWORD" ] && PASSWORD=$(dd if=/dev/urandom bs=1 count=32 2>/dev/null | tr -dc 'A-Za-z0-9' | cut -c1-24)
+        [ -z "$PASSWORD" ] && PASSWORD="AnyTLS$(date +%s | tail -c 8)"
+        echo -e "${GREEN}自动生成密码: ${YELLOW}${PASSWORD}${PLAIN}"
+    fi
+    validate_password "$PASSWORD" || { echo -e "${RED}密码包含非法字符（实际值: ${PASSWORD}）${PLAIN}"; return 1; }
 
     NODE_NAME="AnyTLS-$(hostname 2>/dev/null | tr -d '\n\r')"
     [ "$NODE_NAME" = "AnyTLS-" ] && NODE_NAME="AnyTLS-Node"
