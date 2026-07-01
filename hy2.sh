@@ -1473,7 +1473,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v1.0.1${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v1.0.2${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -1492,15 +1492,15 @@ main_menu() {
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
 
-        read -r -p "请输入选项: " choice
+        read -r -p "请输入选项 [0-5]: " choice
         case $choice in
             1) install_hy2 ;;
             2) manage_hy2 ;;
             3) upgrade_hy2 ;;
             4) uninstall_hy2 ;;
             5) server_tools_menu ;;
-            0) exit 0 ;;
-            *) echo -e "${RED}输入错误...${PLAIN}"; sleep 1 ;;
+            0|q|quit|exit) exit 0 ;;
+            *) echo -e "${RED}无效选项，请输入 0-5${PLAIN}"; sleep 1 ;;
         esac
     done
 }

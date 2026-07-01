@@ -17,6 +17,8 @@
 - 完整的输入验证（端口、密码、域名）
 - 支持 NAT 模式、IPv4/IPv6 双栈
 - systemd 和 OpenRC 服务管理
+- 优化 AnyTLS 菜单刷新与安装状态识别，未安装时操作会给出明确提示
+- 统一 Hysteria2、Shadowsocks 和 AnyTLS 的输入范围提示及快捷退出方式
 
 ---
 

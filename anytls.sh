@@ -145,7 +145,6 @@ detect_network() {
     
     # IPv4 检测
     for api in "https://api.ipify.org" "https://ip4.seeip.org" "https://icanhazip.com"; do
-        ip
         ip=$(curl -s --connect-timeout 3 --max-time 6 "$api" 2>/dev/null)
         if [ -n "$ip" ] && echo "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
             PUBLIC_IP="$ip"
@@ -156,7 +155,6 @@ detect_network() {
     
     # IPv6 检测
     for api in "https://api6.ipify.org" "https://ip6.seeip.org"; do
-        ip
         ip=$(curl -s --max-time 6 "$api" 2>/dev/null)
         if [ -n "$ip" ] && echo "$ip" | grep -q ':'; then
             PUBLIC_IPV6="$ip"
@@ -167,7 +165,6 @@ detect_network() {
     
     # 如果 API 失败，回退到本地地址
     if [ $HAS_IPV4 -eq 0 ]; then
-        LOCAL_IP
         LOCAL_IP=$(ip addr show 2>/dev/null | awk '/inet / && !/127\.0\.0\.1/ {print $2}' | cut -d/ -f1 | head -n1)
         if [ -n "$LOCAL_IP" ]; then
             PUBLIC_IP="$LOCAL_IP"
@@ -177,7 +174,6 @@ detect_network() {
     
     if [ $HAS_IPV6 -eq 0 ]; then
         # 过滤 WARP/tunnel 网卡和链路本地地址
-        LOCAL_IPV6
         LOCAL_IPV6=$(ip addr show 2>/dev/null | awk '/inet6/ {
             iface=$2
             getline
@@ -287,8 +283,8 @@ validate_binary() {
     [ -f "$bin" ] || return 1
     # 检查 ELF magic bytes
     local magic
-    magic=$(head -c 4 "$bin" | od -A n -t x1 | tr -d ' \n')
-    [ "$magic" = "7f454c46" ] && return 0
+    magic=$(od -A d -t x1 -N 4 "$bin" 2>/dev/null | awk 'NR==1 { print $2, $3, $4, $5 }')
+    [ "$magic" = "7f 45 4c 46" ] && return 0
     # 或尝试执行 version 子命令
     if [ -x "$bin" ]; then
         "$bin" version >/dev/null 2>&1 && return 0
@@ -693,7 +689,7 @@ install_anytls() {
     
     read -rp "请输入密码 [随机生成]: " input_pw
     if [ -z "$input_pw" ]; then
-        PASSWORD=$(head -c 16 /dev/urandom | base64 | tr -d '/+=')
+        PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
     else
         PASSWORD="$input_pw"
         validate_password "$PASSWORD" || { echo -e "${RED}密码无效${PLAIN}"; return 1; }
@@ -878,7 +874,7 @@ enable_bbr() {
 }
 
 setup_autoupdate() {
-    cat > "$AUTO_UPDATE_SCRIPT" << 'AUTOUPDATE_EOF'
+    cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
 #!/bin/bash
 set -e
 
@@ -912,7 +908,7 @@ if [ "$latest_version" != "$current_version" ]; then
     
     if wget -q --timeout=60 -O "$tmp_bin" "$url"; then
         chmod +x "$tmp_bin"
-        if head -c 4 "$tmp_bin" | od -A n -t x1 | tr -d ' \n' | grep -q "7f454c46"; then
+        if od -A d -t x1 -N 4 "$tmp_bin" 2>/dev/null | awk 'NR==1 { print $2, $3, $4, $5 }' | grep -q "7f 45 4c 46"; then
             cp "$ANYTLS_BIN" "${ANYTLS_BIN}.autoupdate.bak"
             mv "$tmp_bin" "$ANYTLS_BIN"
             chmod +x "$ANYTLS_BIN"
@@ -1012,10 +1008,12 @@ main_menu() {
     detect_init
     detect_network
     
-    local installed=0
-    [ -f "$ANYTLS_BIN" ] && installed=1
-    
     while true; do
+        clear
+
+        local installed=0
+        [ -f "$ANYTLS_BIN" ] && installed=1
+
         echo -e "\n${BOLD}${GREEN}AnyTLS Management Script v1.0.2${PLAIN}"
         echo -e "${CYAN}https://github.com/everett7623/hy2${PLAIN}\n"
         
@@ -1039,7 +1037,7 @@ main_menu() {
         echo "5. 服务器工具"
         echo "0. 退出"
         
-        read -rp "请选择: " choice
+        read -rp "请选择 [0-5]: " choice
         
         case "$choice" in
             1)
@@ -1050,40 +1048,51 @@ main_menu() {
                 fi
                 ;;
             2)
-                [ $installed -eq 1 ] && {
+                if [ $installed -eq 1 ]; then
                     echo -e "\n${BOLD}修改配置${PLAIN}"
                     echo "1. 修改端口"
                     echo "2. 修改密码"
                     echo "3. 修改 SNI"
                     echo "0. 返回"
-                    read -rp "请选择: " sub_choice
+                    read -rp "请选择 [0-3]: " sub_choice
                     case "$sub_choice" in
                         1) change_port ;;
                         2) change_password ;;
                         3) change_sni ;;
                         0) ;;
-                        *) echo -e "${RED}无效选择${PLAIN}" ;;
+                        *) echo -e "${RED}无效选项，请输入 0-3${PLAIN}"; sleep 1 ;;
                     esac
-                }
+                else
+                    echo -e "${YELLOW}AnyTLS 尚未安装，请先选择 1 安装${PLAIN}"
+                    sleep 1
+                fi
                 ;;
             3)
-                [ $installed -eq 1 ] && upgrade_anytls
+                if [ $installed -eq 1 ]; then
+                    upgrade_anytls
+                else
+                    echo -e "${YELLOW}AnyTLS 尚未安装，请先选择 1 安装${PLAIN}"
+                    sleep 1
+                fi
                 ;;
             4)
-                [ $installed -eq 1 ] && {
+                if [ $installed -eq 1 ]; then
                     uninstall_anytls
-                    installed=0
-                }
+                else
+                    echo -e "${YELLOW}AnyTLS 尚未安装，无需卸载${PLAIN}"
+                    sleep 1
+                fi
                 ;;
             5)
                 server_tools_menu
                 ;;
-            0)
+            0|q|quit|exit)
                 echo -e "${GREEN}再见${PLAIN}"
                 exit 0
                 ;;
             *)
-                echo -e "${RED}无效选择${PLAIN}"
+                echo -e "${RED}无效选项，请输入 0-5${PLAIN}"
+                sleep 1
                 ;;
         esac
     done
