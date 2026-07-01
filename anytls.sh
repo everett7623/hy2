@@ -624,10 +624,10 @@ configure_anytls() {
 }
 
 install_anytls() {
-    install_dependencies || return
+    install_dependencies || { read -r -p "按回车键返回主菜单..." _; return; }
     detect_network
-    ensure_anytls_bin || return
-    configure_anytls || return
+    ensure_anytls_bin || { read -r -p "按回车键返回主菜单..." _; return; }
+    configure_anytls || { read -r -p "按回车键返回主菜单..." _; return; }
     write_config
 
     if [ "$INIT_SYS" = "systemd" ]; then
@@ -755,9 +755,9 @@ show_config() {
 # 升级 / 卸载 / 工具
 # ============================================================
 upgrade_anytls() {
-    install_dependencies || return
-    get_latest_version || return
-    download_anytls || return
+    install_dependencies || { read -r -p "按回车键返回主菜单..." _; return; }
+    get_latest_version || { read -r -p "按回车键返回主菜单..." _; return; }
+    download_anytls || { read -r -p "按回车键返回主菜单..." _; return; }
     if service_is_active; then service_restart; fi
     echo -e "${GREEN}✓ anytls-server 已升级${PLAIN}"
     sleep 2
