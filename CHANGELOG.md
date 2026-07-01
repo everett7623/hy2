@@ -10,15 +10,17 @@
 
 - 新增 `anytls.sh` 管理脚本，支持 AnyTLS 协议一键部署
 - AnyTLS 使用 TCP 传输，适合 UDP 受限网络环境
-- 支持自签证书、SNI 伪装、配置修改、升级卸载
+- 使用上游 `anytls-server` 临时自签证书，节点配置自动启用跳过证书验证
 - 集成 BBR 加速、自动更新、系统信息展示
 - 集成到 `install.sh` 统一启动器（选项 4）
 - 更新 `tests/validate_scripts.sh` 支持 anytls.sh 验证
-- 完整的输入验证（端口、密码、域名）
+- 完整的端口与密码输入验证
 - 支持 NAT 模式、IPv4/IPv6 双栈
 - systemd 和 OpenRC 服务管理
 - 优化 AnyTLS 菜单刷新与安装状态识别，未安装时操作会给出明确提示
 - 统一 Hysteria2、Shadowsocks 和 AnyTLS 的输入范围提示及快捷退出方式
+- 修复上游发布包文件名、ZIP 解压、二进制名称及 `-l`/`-p` 启动参数
+- 修复端口修改、卸载防火墙清理、IPv6 URI、升级及自动更新失败回滚
 
 ---
 

@@ -9,8 +9,6 @@
 # Nodeloc论坛: https://nodeloc.com
 # 更新日期: 2026-06-30
 #
-# AnyTLS Management Script v1.0.2
-#
 # 支持系统:
 #   Debian 10/11/12+
 #   Ubuntu 20.04/22.04/24.04+
@@ -27,7 +25,7 @@
 #   IPv6 单栈 / 双栈机器
 #   低配 VPS（无需 jq，低内存友好）
 #
-# v1.0.1: AnyTLS 协议支持 - TCP 传输，适合 UDP 受限网络
+# v1.0.2: AnyTLS 协议支持 - TCP 传输，适合 UDP 受限网络
 #====================================================================================
 
 # ============================================================
@@ -73,9 +71,8 @@ PLAIN='\033[0m'
 BOLD='\033[1m'
 
 # --- 路径 ---
-ANYTLS_BIN="/usr/local/bin/anytls-go"
-ANYTLS_CONFIG="/etc/anytls/config.yaml"
-ANYTLS_CERT_DIR="/etc/anytls/cert"
+ANYTLS_BIN="/usr/local/bin/anytls-server"
+ANYTLS_CONFIG="/etc/anytls/config.env"
 ANYTLS_META="/etc/anytls/meta"
 SERVICE_FILE="/etc/systemd/system/anytls-server.service"
 OPENRC_SERVICE="/etc/init.d/anytls-server"
@@ -92,7 +89,6 @@ PUBLIC_IPV6=""
 LISTEN_PORT=""
 EXT_PORT=""
 PASSWORD=""
-SNI="microsoft.com"
 INIT_SYS=""
 
 # ============================================================
@@ -174,22 +170,12 @@ detect_network() {
 
     if [ $HAS_IPV6 -eq 0 ]; then
         # 过滤 WARP/tunnel 网卡和链路本地地址
-        LOCAL_IPV6=$(ip addr show 2>/dev/null | awk '/inet6/ {
-            iface=$2
-            getline
-            if ($0 ~ /inet6/) {
-                addr=$2
-                gsub(/\/.*/, "", addr)
-                # 排除 fe80 链路本地
-                if (addr !~ /^fe80:/ && addr !~ /^2606:4700:/) {
-                    # 排除 WARP/tunnel 网卡
-                    if (iface !~ /wgcf|warp|tun|wg|tailscale|zt/) {
-                        print addr
-                        exit
-                    }
-                }
-            }
-        }' | head -n1)
+        LOCAL_IPV6=$(ip -6 addr show scope global 2>/dev/null | awk '
+            /^[0-9]+:/ { iface=$2; sub(/:.*/, "", iface) }
+            /inet6/ && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ {
+                addr=$2; sub(/\/.*/, "", addr)
+                if (addr !~ /^fe80:/ && addr !~ /^2606:4700:/) { print addr; exit }
+            }')
         if [ -n "$LOCAL_IPV6" ]; then
             PUBLIC_IPV6="$LOCAL_IPV6"
             HAS_IPV6=1
@@ -203,23 +189,23 @@ install_dependencies() {
     case "$RELEASE" in
         debian)
             apt-get update -qq
-            apt-get install -y -qq curl wget openssl ca-certificates iproute2 >/dev/null 2>&1
+            apt-get install -y -qq curl wget unzip openssl ca-certificates iproute2 cron >/dev/null 2>&1
             ;;
         centos|rocky)
             if command -v dnf >/dev/null 2>&1; then
-                dnf install -y -q curl wget openssl ca-certificates iproute >/dev/null 2>&1
+                dnf install -y -q curl wget unzip openssl ca-certificates iproute cronie >/dev/null 2>&1
             else
-                yum install -y -q curl wget openssl ca-certificates iproute >/dev/null 2>&1
+                yum install -y -q curl wget unzip openssl ca-certificates iproute cronie >/dev/null 2>&1
             fi
             ;;
         fedora)
-            dnf install -y -q curl wget openssl ca-certificates iproute >/dev/null 2>&1
+            dnf install -y -q curl wget unzip openssl ca-certificates iproute cronie >/dev/null 2>&1
             ;;
         alpine)
-            apk add --no-cache curl wget openssl ca-certificates iproute2 >/dev/null 2>&1
+            apk add --no-cache curl wget unzip openssl ca-certificates iproute2 dcron >/dev/null 2>&1
             ;;
         arch)
-            pacman -Sy --noconfirm curl wget openssl ca-certificates iproute2 >/dev/null 2>&1
+            pacman -Sy --noconfirm curl wget unzip openssl ca-certificates iproute2 cronie >/dev/null 2>&1
             ;;
         *)
             echo -e "${YELLOW}警告: 未知系统，跳过依赖安装${PLAIN}"
@@ -249,32 +235,10 @@ validate_port() {
 
 validate_password() {
     local pw="$1"
-    # 长度检查 [1, 128]
+    # systemd/OpenRC 参数和 URI 均使用该值，仅接受无需转义的安全字符。
     [ -z "$pw" ] && return 1
     [ ${#pw} -gt 128 ] && return 1
-    # 禁止字符: " \ ` $ 和控制字符
-    case "$pw" in
-        *\"*|*\\*|*\`*|*\$*) return 1 ;;
-    esac
-    # 检查控制字符 (0x00-0x1F, 0x7F)
-    if echo "$pw" | grep -q $'[\x00-\x1F\x7F]'; then
-        return 1
-    fi
-    return 0
-}
-
-validate_domain() {
-    local domain="$1"
-    [ -z "$domain" ] && return 1
-    # 仅允许字母、数字、点号、连字符
-    echo "$domain" | grep -qE '^[a-zA-Z0-9.-]+$' || return 1
-    # 不以点号或连字符开头/结尾
-    case "$domain" in
-        .*|*.-|-.*) return 1 ;;
-    esac
-    # 禁止协议前缀和端口号
-    echo "$domain" | grep -qE '^(http|https)://' && return 1
-    echo "$domain" | grep -qE ':' && return 1
+    echo "$pw" | grep -qE '^[a-zA-Z0-9._~-]+$' || return 1
     return 0
 }
 
@@ -287,7 +251,7 @@ validate_binary() {
     [ "$magic" = "7f 45 4c 46" ] && return 0
     # 或尝试执行 version 子命令
     if [ -x "$bin" ]; then
-        "$bin" version >/dev/null 2>&1 && return 0
+        "$bin" -h >/dev/null 2>&1 && return 0
     fi
     return 1
 }
@@ -309,23 +273,23 @@ download_anytls() {
     case "$(uname -m)" in
         x86_64)   arch="amd64" ;;
         aarch64)  arch="arm64" ;;
-        armv7l)   arch="arm" ;;
-        s390x)    arch="s390x" ;;
-        loongarch64) arch="loong64" ;;
         *)        echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}"; return 1 ;;
     esac
 
-    local url="https://github.com/anytls/anytls-go/releases/download/${version}/anytls-linux-${arch}"
-    local tmp_bin
-    tmp_bin=$(mktemp /tmp/anytls-XXXXXX 2>/dev/null) || {
+    local release_version="${version#v}"
+    local url="https://github.com/anytls/anytls-go/releases/download/${version}/anytls_${release_version}_linux_${arch}.zip"
+    local tmp_dir tmp_zip tmp_bin
+    tmp_dir=$(mktemp -d /tmp/anytls-XXXXXX 2>/dev/null) || {
         echo -e "${RED}无法创建下载临时文件${PLAIN}"
         return 1
     }
 
+    tmp_zip="$tmp_dir/anytls.zip"
+    tmp_bin="$tmp_dir/anytls-server"
     echo -e "${YELLOW}正在下载 AnyTLS ${version} (${arch})...${PLAIN}"
-    if ! wget -q --show-progress --timeout=30 -O "$tmp_bin" "$url"; then
+    if ! wget -q --show-progress --timeout=30 -O "$tmp_zip" "$url" || ! unzip -q "$tmp_zip" -d "$tmp_dir"; then
         echo -e "${RED}下载失败${PLAIN}"
-        rm -f "$tmp_bin"
+        rm -rf "$tmp_dir"
         return 1
     fi
 
@@ -334,12 +298,15 @@ download_anytls() {
     # 验证二进制
     if ! validate_binary "$tmp_bin"; then
         echo -e "${RED}下载的文件无效${PLAIN}"
-        rm -f "$tmp_bin"
+        rm -rf "$tmp_dir"
         return 1
     fi
 
     mv "$tmp_bin" "$ANYTLS_BIN"
+    rm -rf "$tmp_dir"
     chmod +x "$ANYTLS_BIN"
+    mkdir -p "$ANYTLS_META"
+    printf '%s\n' "$version" > "$ANYTLS_META/version"
     echo -e "${GREEN}下载完成${PLAIN}"
     return 0
 }
@@ -422,7 +389,7 @@ service_start() {
             rc-update add anytls-server default >/dev/null 2>&1
             ;;
         *)
-            "$ANYTLS_BIN" -c "$ANYTLS_CONFIG" >/dev/null 2>&1 &
+            "$ANYTLS_BIN" -l "0.0.0.0:$LISTEN_PORT" -p "$PASSWORD" >/dev/null 2>&1 &
             ;;
     esac
 }
@@ -438,7 +405,7 @@ service_stop() {
             rc-update del anytls-server default >/dev/null 2>&1
             ;;
         *)
-            pkill -f "anytls-go" >/dev/null 2>&1
+            pkill -f "$ANYTLS_BIN" >/dev/null 2>&1
             ;;
     esac
 }
@@ -468,7 +435,7 @@ service_is_active() {
             rc-service anytls-server status | grep -q "started"
             ;;
         *)
-            pgrep -f "anytls-go" >/dev/null
+            pgrep -f "$ANYTLS_BIN" >/dev/null
             ;;
     esac
 }
@@ -477,43 +444,67 @@ service_is_active() {
 # 配置生成
 # ============================================================
 
-gen_cert() {
-    mkdir -p "$ANYTLS_CERT_DIR"
-    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-        -keyout "$ANYTLS_CERT_DIR/key.pem" \
-        -out "$ANYTLS_CERT_DIR/cert.pem" \
-        -subj "/CN=$SNI" >/dev/null 2>&1
-}
-
 gen_config() {
     mkdir -p /etc/anytls
-
-    cat > "$ANYTLS_CONFIG" << EOF
-listen: 0.0.0.0:$LISTEN_PORT
-cert: $ANYTLS_CERT_DIR/cert.pem
-key: $ANYTLS_CERT_DIR/key.pem
-sni: $SNI
-password: $PASSWORD
-EOF
-
-    # 保存元数据
     mkdir -p "$ANYTLS_META"
-    cat > "$ANYTLS_META/config" << EOF
+    cat > "$ANYTLS_CONFIG" << EOF
 LISTEN_PORT=$LISTEN_PORT
 EXT_PORT=$EXT_PORT
 PASSWORD=$PASSWORD
-SNI=$SNI
-VERSION=$(get_latest_version)
+NAT_MODE=$NAT_MODE
 EOF
+    chmod 600 "$ANYTLS_CONFIG"
+    cp "$ANYTLS_CONFIG" "$ANYTLS_META/config"
+    chmod 600 "$ANYTLS_META/config"
+}
+
+load_config() {
+    [ -f "$ANYTLS_CONFIG" ] || return 1
+    LISTEN_PORT=$(sed -n 's/^LISTEN_PORT=//p' "$ANYTLS_CONFIG" | tail -n1)
+    EXT_PORT=$(sed -n 's/^EXT_PORT=//p' "$ANYTLS_CONFIG" | tail -n1)
+    PASSWORD=$(sed -n 's/^PASSWORD=//p' "$ANYTLS_CONFIG" | tail -n1)
+    NAT_MODE=$(sed -n 's/^NAT_MODE=//p' "$ANYTLS_CONFIG" | tail -n1)
+    validate_port "$LISTEN_PORT" && validate_port "$EXT_PORT" && validate_password "$PASSWORD"
+}
+
+write_service() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        cat > "$SERVICE_FILE" << EOF
+[Unit]
+Description=AnyTLS Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$ANYTLS_BIN -l 0.0.0.0:$LISTEN_PORT -p $PASSWORD
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        cat > "$OPENRC_SERVICE" << EOF
+#!/sbin/openrc-run
+command="$ANYTLS_BIN"
+command_args="-l 0.0.0.0:$LISTEN_PORT -p $PASSWORD"
+command_background=true
+pidfile="/run/anytls-server.pid"
+output_log="/var/log/anytls-server.log"
+error_log="/var/log/anytls-server.log"
+depend() { need net; after firewall; }
+EOF
+        chmod +x "$OPENRC_SERVICE"
+    fi
 }
 
 show_config() {
-    if [ ! -f "$ANYTLS_META/config" ]; then
+    if ! load_config; then
         echo -e "${RED}未找到配置信息${PLAIN}"
         return
     fi
-
-    . "$ANYTLS_META/config"
 
     local display_port="$LISTEN_PORT"
     [ "$NAT_MODE" = "1" ] && display_port="$EXT_PORT"
@@ -522,11 +513,13 @@ show_config() {
     echo -e "${CYAN}服务器地址:${PLAIN} ${PUBLIC_IP:-$PUBLIC_IPV6}"
     echo -e "${CYAN}端口:${PLAIN} $display_port"
     echo -e "${CYAN}密码:${PLAIN} $PASSWORD"
-    echo -e "${CYAN}SNI:${PLAIN} $SNI"
+    echo -e "${CYAN}TLS 验证:${PLAIN} 跳过（上游服务端使用临时自签证书）"
     echo -e "${CYAN}协议:${PLAIN} anytls"
 
     # Shadowrocket URI
-    local uri="anytls://$PASSWORD@${PUBLIC_IP:-$PUBLIC_IPV6}:$display_port?sni=$SNI"
+    local server_addr="${PUBLIC_IP:-$PUBLIC_IPV6}"
+    echo "$server_addr" | grep -q ':' && server_addr="[$server_addr]"
+    local uri="anytls://$PASSWORD@${server_addr}:$display_port/?insecure=1"
     echo -e "\n${CYAN}Shadowrocket URI:${PLAIN}"
     echo "$uri"
 
@@ -538,7 +531,7 @@ show_config() {
   server: ${PUBLIC_IP:-$PUBLIC_IPV6}
   port: $display_port
   password: $PASSWORD
-  sni: $SNI
+  skip-cert-verify: true
 EOF
 
     # 二维码
@@ -553,6 +546,8 @@ EOF
 # ============================================================
 
 change_port() {
+    load_config || { echo -e "${RED}配置无效${PLAIN}"; return 1; }
+    local old_port="$LISTEN_PORT"
     echo -e "${YELLOW}当前端口: $LISTEN_PORT${PLAIN}"
     read -rp "请输入新端口 [1-65535]: " new_port
 
@@ -562,7 +557,7 @@ change_port() {
     fi
 
     # 备份配置
-    cp "$ANYTLS_CONFIG" "${ANYTLS_CONFIG}.bak"
+    cp "$ANYTLS_CONFIG" "${ANYTLS_CONFIG}.bak" || return 1
 
     # 修改配置
     LISTEN_PORT="$new_port"
@@ -580,6 +575,7 @@ change_port() {
     fi
 
     gen_config
+    write_service
 
     # 重启服务
     service_restart
@@ -588,16 +584,20 @@ change_port() {
     if service_is_active; then
         echo -e "${GREEN}端口修改成功${PLAIN}"
         rm -f "${ANYTLS_CONFIG}.bak"
-        close_firewall_port "$(grep '^LISTEN_PORT=' "${ANYTLS_META}.bak" | cut -d= -f2)"
+        close_firewall_port "$old_port"
         open_firewall_port "$LISTEN_PORT"
     else
         echo -e "${RED}服务启动失败，回滚配置${PLAIN}"
         mv "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG"
+        load_config
+        gen_config
+        write_service
         service_restart
     fi
 }
 
 change_password() {
+    load_config || { echo -e "${RED}配置无效${PLAIN}"; return 1; }
     echo -e "${YELLOW}当前密码: $PASSWORD${PLAIN}"
     read -rp "请输入新密码 [1-128字符]: " new_pw
 
@@ -609,6 +609,7 @@ change_password() {
     cp "$ANYTLS_CONFIG" "${ANYTLS_CONFIG}.bak"
     PASSWORD="$new_pw"
     gen_config
+    write_service
 
     service_restart
     sleep 3
@@ -619,33 +620,9 @@ change_password() {
     else
         echo -e "${RED}服务启动失败，回滚配置${PLAIN}"
         mv "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG"
-        service_restart
-    fi
-}
-
-change_sni() {
-    echo -e "${YELLOW}当前 SNI: $SNI${PLAIN}"
-    read -rp "请输入新 SNI 域名: " new_sni
-
-    if ! validate_domain "$new_sni"; then
-        echo -e "${RED}域名无效${PLAIN}"
-        return
-    fi
-
-    cp "$ANYTLS_CONFIG" "${ANYTLS_CONFIG}.bak"
-    SNI="$new_sni"
-    gen_cert
-    gen_config
-
-    service_restart
-    sleep 3
-
-    if service_is_active; then
-        echo -e "${GREEN}SNI 修改成功${PLAIN}"
-        rm -f "${ANYTLS_CONFIG}.bak"
-    else
-        echo -e "${RED}服务启动失败，回滚配置${PLAIN}"
-        mv "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG"
+        load_config
+        gen_config
+        write_service
         service_restart
     fi
 }
@@ -695,47 +672,9 @@ install_anytls() {
         validate_password "$PASSWORD" || { echo -e "${RED}密码无效${PLAIN}"; return 1; }
     fi
 
-    read -rp "请输入 SNI 域名 [默认 microsoft.com]: " input_sni
-    SNI="${input_sni:-microsoft.com}"
-    validate_domain "$SNI" || { echo -e "${RED}域名无效${PLAIN}"; return 1; }
-
     # 生成配置
-    gen_cert
     gen_config
-
-    # 创建服务文件
-    if [ "$INIT_SYS" = "systemd" ]; then
-        cat > "$SERVICE_FILE" << EOF
-[Unit]
-Description=AnyTLS Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=$ANYTLS_BIN -c $ANYTLS_CONFIG
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        systemctl daemon-reload
-    elif [ "$INIT_SYS" = "openrc" ]; then
-        cat > "$OPENRC_SERVICE" << 'EOF'
-#!/sbin/openrc-run
-
-command="/usr/local/bin/anytls-go"
-command_args="-c /etc/anytls/config.yaml"
-command_background=true
-pidfile="/run/anytls.pid"
-
-depend() {
-    need net
-    after firewall
-}
-EOF
-        chmod +x "$OPENRC_SERVICE"
-    fi
+    write_service
 
     # 放行防火墙
     open_firewall_port "$LISTEN_PORT"
@@ -760,8 +699,9 @@ upgrade_anytls() {
 
     local current_version
     local latest_version
-    current_version=$("$ANYTLS_BIN" version 2>/dev/null | head -n1)
+    current_version=$(cat "$ANYTLS_META/version" 2>/dev/null || echo "未知")
     latest_version=$(get_latest_version)
+    [ -z "$latest_version" ] && { echo -e "${RED}获取最新版本失败${PLAIN}"; return 1; }
 
     echo -e "${CYAN}当前版本: $current_version${PLAIN}"
     echo -e "${CYAN}最新版本: $latest_version${PLAIN}"
@@ -794,7 +734,9 @@ upgrade_anytls() {
     else
         echo -e "${RED}服务启动失败，回滚${PLAIN}"
         rollback_binary
+        printf '%s\n' "$current_version" > "$ANYTLS_META/version"
         service_restart
+        return 1
     fi
 }
 
@@ -802,6 +744,9 @@ uninstall_anytls() {
     echo -e "${YELLOW}=== AnyTLS 卸载 ===${PLAIN}"
     read -rp "确认卸载? [y/N]: " confirm
     [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && return
+
+    local old_port=""
+    load_config && old_port="$LISTEN_PORT"
 
     # 停止服务
     service_stop
@@ -820,18 +765,15 @@ uninstall_anytls() {
     # 删除二进制
     rm -f "$ANYTLS_BIN" "${ANYTLS_BIN}.bak"
 
-    # 删除配置
-    rm -rf /etc/anytls
-
     # 删除自动更新
     rm -f "$AUTO_UPDATE_SCRIPT" "$AUTO_UPDATE_LOG"
     crontab -l 2>/dev/null | grep -v "anytls-autoupdate" | crontab -
 
     # 删除防火墙规则
-    if [ -f "$ANYTLS_META/config" ]; then
-        . "$ANYTLS_META/config"
-        close_firewall_port "$LISTEN_PORT"
-    fi
+    [ -n "$old_port" ] && close_firewall_port "$old_port"
+
+    # 删除配置（读取端口之后执行）
+    rm -rf /etc/anytls
 
     # 删除 BBR 配置
     rm -f "$BBR_CONFIG"
@@ -878,7 +820,8 @@ setup_autoupdate() {
 #!/bin/bash
 set -e
 
-ANYTLS_BIN="/usr/local/bin/anytls-go"
+ANYTLS_BIN="/usr/local/bin/anytls-server"
+META="/etc/anytls/meta"
 LOG="/var/log/anytls-autoupdate.log"
 
 log() {
@@ -887,8 +830,9 @@ log() {
 
 log "开始检查更新"
 
-latest_version=$(curl -s "https://api.github.com/repos/anytls/anytls-go/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-current_version=$("$ANYTLS_BIN" version 2>/dev/null | head -n1)
+latest_version=$(curl -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/anytls/anytls-go/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -n1)
+current_version=$(cat "$META/version" 2>/dev/null || echo "unknown")
+[ -n "$latest_version" ] || { log "获取最新版本失败"; exit 1; }
 
 if [ "$latest_version" != "$current_version" ]; then
     log "发现新版本: $current_version -> $latest_version"
@@ -897,31 +841,31 @@ if [ "$latest_version" != "$current_version" ]; then
     case "$arch" in
         x86_64) arch="amd64" ;;
         aarch64) arch="arm64" ;;
-        armv7l) arch="arm" ;;
-        s390x) arch="s390x" ;;
-        loongarch64) arch="loong64" ;;
         *) log "不支持的架构: $arch"; exit 1 ;;
     esac
 
-    url="https://github.com/anytls/anytls-go/releases/download/${latest_version}/anytls-linux-${arch}"
-    tmp_bin=$(mktemp /tmp/anytls-autoupdate-XXXXXX)
-
-    if wget -q --timeout=60 -O "$tmp_bin" "$url"; then
-        chmod +x "$tmp_bin"
-        if od -A d -t x1 -N 4 "$tmp_bin" 2>/dev/null | awk 'NR==1 { print $2, $3, $4, $5 }' | grep -q "7f 45 4c 46"; then
-            cp "$ANYTLS_BIN" "${ANYTLS_BIN}.autoupdate.bak"
-            mv "$tmp_bin" "$ANYTLS_BIN"
-            chmod +x "$ANYTLS_BIN"
-            systemctl restart anytls-server >/dev/null 2>&1 || rc-service anytls-server restart >/dev/null 2>&1
-            log "更新成功"
-            rm -f "${ANYTLS_BIN}.autoupdate.bak"
-        else
-            log "下载文件无效"
-            rm -f "$tmp_bin"
-        fi
+    release_version=${latest_version#v}
+    url="https://github.com/anytls/anytls-go/releases/download/${latest_version}/anytls_${release_version}_linux_${arch}.zip"
+    tmp_dir=$(mktemp -d /tmp/anytls-autoupdate-XXXXXX)
+    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+    wget -q --timeout=60 -O "$tmp_dir/anytls.zip" "$url" || { log "下载失败"; exit 1; }
+    unzip -q "$tmp_dir/anytls.zip" -d "$tmp_dir" || { log "解压失败"; exit 1; }
+    tmp_bin="$tmp_dir/anytls-server"
+    chmod +x "$tmp_bin"
+    magic=$(od -A d -t x1 -N 4 "$tmp_bin" 2>/dev/null | awk 'NR==1 { print $2, $3, $4, $5 }')
+    [ "$magic" = "7f 45 4c 46" ] || { log "下载文件无效"; exit 1; }
+    cp "$ANYTLS_BIN" "${ANYTLS_BIN}.autoupdate.bak"
+    mv "$tmp_bin" "$ANYTLS_BIN"
+    chmod +x "$ANYTLS_BIN"
+    if { command -v systemctl >/dev/null 2>&1 && systemctl restart anytls-server >/dev/null 2>&1 && systemctl is-active --quiet anytls-server; } || { command -v rc-service >/dev/null 2>&1 && rc-service anytls-server restart >/dev/null 2>&1 && rc-service anytls-server status 2>/dev/null | grep -q started; }; then
+        printf '%s\n' "$latest_version" > "$META/version"
+        rm -f "${ANYTLS_BIN}.autoupdate.bak"
+        log "更新成功"
     else
-        log "下载失败"
-        rm -f "$tmp_bin"
+        mv "${ANYTLS_BIN}.autoupdate.bak" "$ANYTLS_BIN"
+        systemctl restart anytls-server >/dev/null 2>&1 || rc-service anytls-server restart >/dev/null 2>&1 || true
+        log "服务验证失败，已回滚"
+        exit 1
     fi
 else
     log "已是最新版本"
@@ -1007,6 +951,7 @@ main_menu() {
     check_sys
     detect_init
     detect_network
+    [ -f "$ANYTLS_BIN" ] && load_config >/dev/null 2>&1 || true
 
     while true; do
         clear
@@ -1052,15 +997,13 @@ main_menu() {
                     echo -e "\n${BOLD}修改配置${PLAIN}"
                     echo "1. 修改端口"
                     echo "2. 修改密码"
-                    echo "3. 修改 SNI"
                     echo "0. 返回"
-                    read -rp "请选择 [0-3]: " sub_choice
+                    read -rp "请选择 [0-2]: " sub_choice
                     case "$sub_choice" in
                         1) change_port ;;
                         2) change_password ;;
-                        3) change_sni ;;
                         0) ;;
-                        *) echo -e "${RED}无效选项，请输入 0-3${PLAIN}"; sleep 1 ;;
+                        *) echo -e "${RED}无效选项，请输入 0-2${PLAIN}"; sleep 1 ;;
                     esac
                 else
                     echo -e "${YELLOW}AnyTLS 尚未安装，请先选择 1 安装${PLAIN}"

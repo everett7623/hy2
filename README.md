@@ -1,4 +1,4 @@
-# 🚀 Hysteria 2 & Shadowsocks 一键管理脚本
+# 🚀 Hysteria 2、Shadowsocks 与 AnyTLS 一键管理脚本
 
 > 功能闭环 · 极低占用 · 全系统兼容 · 交互友好
 > 无需域名，无需复杂配置，一键开启高速且安全的网络体验。
@@ -11,12 +11,13 @@
 
 ## 📖 项目简介
 
-这是一个专为 **Hysteria 2** 与 **Shadowsocks** 协议设计的 Linux 一键部署管理脚本集合，旨在将繁琐的服务器配置流程压缩到 1 分钟以内，即使没有 Linux 基础的新手也能轻松完成部署。
+这是一个面向 **Hysteria 2**、**Shadowsocks** 与 **AnyTLS** 协议的 Linux 一键部署管理脚本集合。
 
 | 协议 | 核心优势 | 适用场景 |
 | --- | --- | --- |
 | **Hysteria 2** | UDP 超速 · 自签证书 · 无需域名 | 主力节点，绝大多数网络环境 |
 | **Shadowsocks** | 支持 SS-2022 · musl 静态编译 · 全平台兼容 | 备用节点，IPv6 / 双栈环境尤佳 |
+| **AnyTLS** | TCP 传输 · TLS-in-TLS 指纹缓解 | UDP 受限网络的备用节点 |
 | **EUserv Hysteria 2** | IPv6-only 专属 · 自动适配 · Warp 集成 | EUserv 免费德鸡专用 |
 
 ---
@@ -38,7 +39,7 @@
 
 ### 统一入口（推荐）
 
-统一入口会检测当前网络和服务状态，并提供 Hysteria 2、Shadowsocks 与 EUserv IPv6 专用脚本三个选项：
+统一入口会检测当前网络和服务状态，并提供 Hysteria 2、Shadowsocks、AnyTLS 与 EUserv IPv6 专用脚本四个选项：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)
@@ -71,6 +72,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 - 加密选项：`aes-256-gcm`（经典高兼容）或 `2022-blake3-aes-256-gcm`（SS-2022 高安全）
 
 > **⚠️ SS-2022 特别提醒**：SS-2022 协议具有严格的时间防重放机制。若配置无误但仍提示超时，请务必确保手机 / 电脑本地时间与世界标准时间分秒一致。
+
+### AnyTLS（TCP 备用）
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh)
+```
+
+- 默认端口：`14444`，支持 NAT 外网端口映射。
+- 上游服务端使用临时自签证书，生成的客户端配置包含 `insecure=1` / `skip-cert-verify`。
+- 上游当前仅发布 Linux amd64 与 arm64 架构。
 
 ### EUserv 免费德鸡专用（IPv6-only）
 
@@ -115,6 +126,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
 
 # Shadowsocks
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
+
+# AnyTLS
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh)
 
 # EUserv IPv6 专用 Hysteria 2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
@@ -262,6 +276,7 @@ bash hy2.sh
 | `install.sh` | 远程统一入口，从 GitHub `main` 下载并执行子脚本 |
 | `hy2.sh` | Hysteria 2 安装与管理 |
 | `ss.sh` | Shadowsocks-Rust 安装与管理 |
+| `anytls.sh` | AnyTLS 安装与管理 |
 | `euservhy2.sh` | EUserv IPv6-only 专用 Hysteria 2 脚本 |
 | `tests/validate_scripts.sh` | Bash 语法、版本、换行、兼容规则及自动更新脚本检查 |
 | `docs/ARCHITECTURE.md` | 代码结构、兼容性约束和开发注意事项 |

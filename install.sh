@@ -1,7 +1,7 @@
 #!/bin/bash
 #====================================================================================
 # 项目：VPS 代理工具集 — 一键管理入口
-# 脚本：Hysteria2 · Shadowsocks · EUserv IPv6 HY2
+# 脚本：Hysteria2 · Shadowsocks · AnyTLS · EUserv IPv6 HY2
 # 作者：Jensfrank
 # 版本：v1.0.2
 # GitHub  : https://github.com/everett7623/hy2
@@ -140,10 +140,10 @@ get_status() {
     fi
 
     # ---- AnyTLS ----
-    if [ -f "/usr/local/bin/anytls-go" ]; then
+    if [ -f "/usr/local/bin/anytls-server" ]; then
         local _ver
-        _ver=$(/usr/local/bin/anytls-go version 2>/dev/null | head -1)
-        if service_active anytls-server /var/run/anytls.pid; then
+        _ver=$(cat /etc/anytls/meta/version 2>/dev/null || true)
+        if service_active anytls-server /run/anytls-server.pid; then
             ANYTLS_STATUS="${GREEN}● 运行中${PLAIN}${DIM} ${_ver}${PLAIN}"
         else
             ANYTLS_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} ${_ver}${PLAIN}"

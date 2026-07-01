@@ -89,13 +89,14 @@ LISTEN_PORT=""
         │
         ├── 选择 Hysteria 2 ──────> 下载 main/hy2.sh ──────> 临时文件中执行
         ├── 选择 Shadowsocks ─────> 下载 main/ss.sh ───────> 临时文件中执行
+        ├── 选择 AnyTLS ──────────> 下载 main/anytls.sh ───> 临时文件中执行
         └── 选择 EUserv IPv6 HY2 ─> 下载 main/euservhy2.sh > 临时文件中执行
 ```
 
-- `install.sh` 是统一远程入口，但三个子脚本也可独立运行。
+- `install.sh` 是统一远程入口，但四个子脚本也可独立运行。
 - 启动器不读取仓库中的本地子脚本；未推送到 GitHub `main` 的修改不会通过启动器生效。
 - 项目没有预发布分支。静态检查由 `tests/validate_scripts.sh` 和 GitHub Actions 执行；运行时行为仍需在一次性 VPS 上端到端验证。
-- 四个脚本的项目版本目前保持一致，但版本文本分散在文件头、菜单和变量中，发布时必须人工同步。
+- 五个脚本的项目版本目前保持一致，但版本文本分散在文件头、菜单和变量中，发布时必须人工同步。
 
 ## 本地验证清单
 
@@ -120,6 +121,7 @@ hy2/
 ├── install.sh          # 统一远程入口（子脚本也可独立运行）
 ├── hy2.sh              # Hysteria 2 管理
 ├── ss.sh               # Shadowsocks 管理
+├── anytls.sh           # AnyTLS 管理
 ├── euservhy2.sh        # EUserv IPv6 Hysteria 2
 ├── CHANGELOG.md        # 更新日志
 ├── CONTRIBUTING.md     # 贡献与开发流程

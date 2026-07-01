@@ -65,6 +65,13 @@ bash tests/validate_scripts.sh
 - TCP/UDP 监听和连接测试结果合理。
 - 配置与自动更新失败可回滚。
 
+### `anytls.sh`
+
+- 官方 ZIP 能正确解压并只安装 `anytls-server`，amd64/arm64 映射正确。
+- systemd 与 OpenRC 使用 `-l`、`-p` 参数启动，TCP 端口实际监听。
+- NAT 外网端口、IPv6 URI 方括号及 `insecure=1` 节点信息正确。
+- 端口/密码修改、升级和自动更新失败时可回滚，卸载会清理旧防火墙规则。
+
 ### `euservhy2.sh`
 
 - 非 systemd 或无全局 IPv6 时明确拒绝。

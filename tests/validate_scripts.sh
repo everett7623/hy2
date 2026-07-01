@@ -52,6 +52,13 @@ for script in $SCRIPTS; do
         anytls.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
             grep -q "AnyTLS Management Script ${EXPECTED_VERSION}" "$script"
+            grep -q 'ANYTLS_BIN="/usr/local/bin/anytls-server"' "$script"
+            grep -q 'anytls_${release_version}_linux_${arch}\.zip' "$script"
+            grep -q 'ExecStart=\$ANYTLS_BIN -l .* -p ' "$script"
+            if grep -qE '/usr/local/bin/anytls-go|ExecStart=.* -c .*anytls' "$script"; then
+                echo "Obsolete AnyTLS binary or CLI found: $script" >&2
+                exit 1
+            fi
             ;;
     esac
 
