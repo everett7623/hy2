@@ -1,17 +1,17 @@
 #!/bin/bash
 #====================================================================================
-# 项目：AnyTLS Management Script (sing-box core)
+# 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v1.0.0
+# 版本：v1.0.3
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-01
+# 更新日期: 2026-07-02
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
-# 实现方式: 不修改 sing-box 框架，直接使用 sing-box 原生 anytls inbound
+# 实现方式: 使用 anytls/anytls-go 官方发布包，不依赖 sing-box
 #====================================================================================
 
 # ============================================================
@@ -43,6 +43,11 @@ if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
     exec bash "$0" "$@"
 fi
 
+# ============================================================
+# ANYTLS_LIB_ONLY=1：仅加载函数库，不执行任何副作用（供测试 source）
+# ============================================================
+[ "${ANYTLS_LIB_ONLY:-0}" = "1" ] && _ANYTLS_LIB_ONLY=1 || _ANYTLS_LIB_ONLY=0
+
 # --- 颜色 ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -50,16 +55,13 @@ YELLOW='\033[0;33m'
 SKYBLUE='\033[0;36m'
 PLAIN='\033[0m'
 BOLD='\033[1m'
-DIM='\033[2m'
 
 # --- 路径 ---
-SB_BIN="/usr/local/bin/sing-box"
-ANYTLS_WRAPPER="/usr/local/bin/anytls-server"
-SB_CONFIG_DIR="/etc/sing-box"
-ANYTLS_CONFIG="/etc/sing-box/anytls.json"
-ANYTLS_META="/etc/sing-box/anytls-meta"
-ANYTLS_CERT_DIR="/etc/sing-box/anytls-cert"
-SERVICE_FILE="/etc/systemd/system/anytls-server.service"
+ANYTLS_BIN="${ANYTLS_BIN:-/usr/local/bin/anytls-server}"
+ANYTLS_DIR="${ANYTLS_DIR:-/etc/anytls}"
+ANYTLS_CONFIG="${ANYTLS_CONFIG:-${ANYTLS_DIR}/config.env}"
+ANYTLS_META="${ANYTLS_META:-${ANYTLS_DIR}/meta}"
+SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/anytls-server.service}"
 OPENRC_SERVICE="/etc/init.d/anytls-server"
 AUTO_UPDATE_SCRIPT="/usr/local/bin/anytls-autoupdate.sh"
 AUTO_UPDATE_LOG="/var/log/anytls-autoupdate.log"
@@ -68,23 +70,17 @@ AUTO_UPDATE_LOG="/var/log/anytls-autoupdate.log"
 RELEASE="unknown"
 INIT_SYS="none"
 NAT_MODE=0
-IPV6_ONLY=0
 HAS_IPV4=0
 HAS_IPV6=0
 PUBLIC_IP=""
 PUBLIC_IPV6=""
+BIND_FAMILY="v4"
 LISTEN_PORT=""
 EXT_PORT=""
 PASSWORD=""
-USER_NAME="anytls"
-SNI="www.microsoft.com"
-TLS_MODE="self"
-TLS_INSECURE="true"
-CERT_PATH=""
-KEY_PATH=""
 NODE_NAME=""
-LAST_VERSION=""
 LAST_VERSION_TAG=""
+
 
 # ============================================================
 # 基础检测
@@ -132,35 +128,35 @@ install_dependencies() {
     case "$RELEASE" in
         alpine)
             apk update -q >/dev/null 2>&1
-            apk add --no-cache bash curl wget ca-certificates openssl tar gzip iproute2 procps >/dev/null 2>&1
+            apk add --no-cache bash curl wget ca-certificates unzip iproute2 procps >/dev/null 2>&1
             apk add --no-cache libqrencode >/dev/null 2>&1 || true
             ;;
         centos)
-            yum install -y curl wget ca-certificates openssl tar gzip iproute procps-ng >/dev/null 2>&1
+            yum install -y curl wget ca-certificates unzip iproute procps-ng >/dev/null 2>&1
             yum install -y qrencode >/dev/null 2>&1 || true
             ;;
         fedora|rocky)
-            dnf install -y curl wget ca-certificates openssl tar gzip iproute procps-ng >/dev/null 2>&1
+            dnf install -y curl wget ca-certificates unzip iproute procps-ng >/dev/null 2>&1
             dnf install -y qrencode >/dev/null 2>&1 || true
             ;;
         arch)
-            pacman -Sy --noconfirm curl wget ca-certificates openssl tar gzip iproute2 procps-ng >/dev/null 2>&1
+            pacman -Sy --noconfirm curl wget ca-certificates unzip iproute2 procps-ng >/dev/null 2>&1
             pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
             ;;
         *)
             if command -v apt-get >/dev/null 2>&1; then
                 apt-get update -qq >/dev/null 2>&1
-                apt-get install -y -qq curl wget ca-certificates openssl tar gzip iproute2 procps >/dev/null 2>&1
+                apt-get install -y -qq curl wget ca-certificates unzip iproute2 procps >/dev/null 2>&1
                 apt-get install -y -qq qrencode >/dev/null 2>&1 || true
             else
-                echo -e "${RED}无法识别包管理器，请手动安装 curl、wget、openssl、tar、iproute2${PLAIN}"
+                echo -e "${RED}无法识别包管理器，请手动安装 curl、wget、unzip、iproute2${PLAIN}"
                 return 1
             fi
             ;;
     esac
 
     local _missing=0 _cmd
-    for _cmd in curl wget openssl tar; do
+    for _cmd in curl wget unzip; do
         if ! command -v "$_cmd" >/dev/null 2>&1; then
             echo -e "${RED}致命错误: 缺少组件 [ $_cmd ]${PLAIN}"
             _missing=1
@@ -169,15 +165,254 @@ install_dependencies() {
     [ "$_missing" -eq 1 ] && return 1
 }
 
-valid_port() {
-    case "$1" in
-        ''|*[!0-9]*) return 1 ;;
+# ============================================================
+# 输入校验
+# ============================================================
+validate_port() {
+    local port="$1"
+    [ -z "$port" ] && return 1
+    case "$port" in
+        *[!0-9]*) return 1 ;;
     esac
-    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+    case "$port" in
+        0*) return 1 ;;
+    esac
+    awk -v p="$port" 'BEGIN { exit (p >= 1 && p <= 65535) ? 0 : 1 }'
 }
 
-valid_json_secret() {
-    ! echo "$1" | grep -qE '["\\]|[[:cntrl:]]'
+validate_password() {
+    local pw="$1"
+    local len
+    len=$(printf '%s' "$pw" | awk '{ print length }')
+    [ "$len" -lt 1 ] && return 1
+    [ "$len" -gt 128 ] && return 1
+    printf '%s' "$pw" | awk '
+    {
+        if (index($0, "\"") > 0) { exit 1 }
+        if (index($0, "\\") > 0) { exit 1 }
+        if (index($0, "$")  > 0) { exit 1 }
+        if (index($0, "`")  > 0) { exit 1 }
+        if (match($0, /[[:cntrl:]]/)) { exit 1 }
+        exit 0
+    }' || return 1
+    return 0
+}
+
+# ============================================================
+# 架构 / URL 构建
+# ============================================================
+detect_arch() {
+    local _machine="${1:-$(uname -m)}"
+    case "$_machine" in
+        x86_64)        echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        s390x)         echo "s390x" ;;
+        *)
+            echo -e "${RED}不支持的架构: ${_machine}${PLAIN}" >&2
+            return 1
+            ;;
+    esac
+}
+
+build_release_url() {
+    local _tag="$1" _arch="$2"
+    case "$_tag" in
+        latest|"") echo -e "${RED}版本标签不能为 latest，请指定具体版本号${PLAIN}" >&2; return 1 ;;
+    esac
+    case "$_arch" in
+        amd64|arm64|s390x) ;;
+        *) echo -e "${RED}不支持的架构: ${_arch}${PLAIN}" >&2; return 1 ;;
+    esac
+    local _ver="${_tag#v}"
+    printf 'https://github.com/anytls/anytls-go/releases/download/%s/anytls_%s_linux_%s.zip\n' \
+        "$_tag" "$_ver" "$_arch"
+}
+
+# ============================================================
+# 网络检测
+# ============================================================
+detect_network() {
+    echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
+    NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; BIND_FAMILY="v4"
+    local _ip _url
+
+    for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
+        _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        if echo "$_ip" | grep -q ':'; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
+    done
+
+    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then PUBLIC_IP="$_ip"; HAS_IPV4=1; break; fi
+    done
+
+    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
+        local _real_ipv4
+        _real_ipv4=$(ip -4 addr show scope global 2>/dev/null | awk '
+            /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
+            /inet / && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ { print "1"; exit }
+        ')
+        [ -z "$_real_ipv4" ] && { HAS_IPV4=0; PUBLIC_IP=""; }
+    fi
+
+    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
+        local _local_ips
+        _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '^127\.' | grep -v '^169\.254\.')
+        echo "$_local_ips" | grep -q "^${PUBLIC_IP}$" || NAT_MODE=1
+    fi
+
+    [ "$HAS_IPV4" = "0" ] && [ "$HAS_IPV6" = "1" ] && BIND_FAMILY="v6"
+    [ "$HAS_IPV6" = "1" ] && [ "$HAS_IPV4" = "1" ] && BIND_FAMILY="v4"
+
+    if   [ "$NAT_MODE"     = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
+    elif [ "$BIND_FAMILY"  = "v6" ]; then echo -e "  机器类型: ${YELLOW}纯 IPv6${PLAIN}（IPv6: ${PUBLIC_IPV6}）"
+    elif [ "$HAS_IPV6"     = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv6: ${PUBLIC_IPV6} | IPv4: ${PUBLIC_IP}）"
+    elif [ "$HAS_IPV4"     = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
+    else                                  echo -e "  机器类型: ${RED}无法检测，请手动输入节点地址${PLAIN}"
+    fi
+}
+
+open_ports() {
+    local _port=$1
+    echo -e "${YELLOW}正在自动放行 TCP 端口 ${_port}...${PLAIN}"
+
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1
+        firewall-cmd --reload >/dev/null 2>&1
+        echo -e "  ${GREEN}✓ firewalld 已放行 tcp/${_port}${PLAIN}"
+        return
+    fi
+
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
+        ufw allow "${_port}/tcp" >/dev/null 2>&1
+        echo -e "  ${GREEN}✓ ufw 已放行 tcp/${_port}${PLAIN}"
+        return
+    fi
+
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+            iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
+            ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+                ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        fi
+        if command -v netfilter-persistent >/dev/null 2>&1; then
+            netfilter-persistent save >/dev/null 2>&1
+        elif [ -f /etc/sysconfig/iptables ] && command -v service >/dev/null 2>&1; then
+            service iptables save >/dev/null 2>&1
+        fi
+        echo -e "  ${GREEN}✓ iptables 已放行 tcp/${_port}${PLAIN}"
+    fi
+}
+
+# ============================================================
+# 二进制下载 / 校验
+# ============================================================
+validate_elf() {
+    local _file="$1"
+    [ -z "$_file" ] && return 1
+    [ -f "$_file" ] || return 1
+    [ -s "$_file" ] || return 1
+    local _magic
+    _magic=$(od -A d -t x1 -N 4 "$_file" 2>/dev/null | awk 'NR==1 { print $2, $3, $4, $5 }')
+    [ "$_magic" = "7f 45 4c 46" ] && return 0
+    return 1
+}
+
+get_latest_version() {
+    echo -e "${YELLOW}正在获取 anytls-go 最新版本...${PLAIN}"
+    LAST_VERSION_TAG=$(curl -Ls --max-time 12 "https://api.github.com/repos/anytls/anytls-go/releases/latest" \
+        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+
+    if [ -z "$LAST_VERSION_TAG" ]; then
+        LAST_VERSION_TAG=$(curl -Ls --max-time 12 -o /dev/null -w "%{url_effective}" \
+            "https://github.com/anytls/anytls-go/releases/latest" | sed 's|.*/tag/||')
+    fi
+
+    [ -z "$LAST_VERSION_TAG" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && return 1
+    echo -e "${GREEN}最新版本: ${LAST_VERSION_TAG}${PLAIN}"
+}
+
+download_anytls() {
+    local _arch
+    _arch=$(detect_arch) || return 1
+
+    local _ver="${LAST_VERSION_TAG#v}"
+    local _asset="anytls_${_ver}_linux_${_arch}.zip"
+    local _gh_path="anytls/anytls-go/releases/download/${LAST_VERSION_TAG}/${_asset}"
+    local _urls=(
+        "https://github.com/${_gh_path}"
+        "https://ghproxy.com/https://github.com/${_gh_path}"
+        "https://kkgithub.com/${_gh_path}"
+        "https://gh.api.99988866.xyz/https://github.com/${_gh_path}"
+    )
+
+    local _tmp_zip _tmp_dir _ok=0 _url _host
+    _tmp_zip=$(mktemp /tmp/anytls-XXXXXX.zip) || return 1
+    _tmp_dir=$(mktemp -d /tmp/anytls-XXXXXX) || { rm -f "$_tmp_zip"; return 1; }
+
+    for _url in "${_urls[@]}"; do
+        _host=$(echo "$_url" | awk -F/ '{print $3}')
+        echo -e "${YELLOW}正在下载 ${_asset}（来源: ${_host}）${PLAIN}"
+        if wget -q --show-progress --timeout=60 -O "$_tmp_zip" "$_url" 2>/dev/null; then
+            _ok=1; break
+        elif curl -fL --connect-timeout 15 --max-time 120 -o "$_tmp_zip" "$_url" 2>/dev/null; then
+            _ok=1; break
+        fi
+        echo -e "${YELLOW}  ↳ 失败，尝试下一个镜像...${PLAIN}"
+    done
+
+    if [ "$_ok" = "0" ]; then
+        rm -rf "$_tmp_zip" "$_tmp_dir"
+        echo -e "${RED}所有下载源均失败，请检查网络后重试${PLAIN}"
+        return 1
+    fi
+
+    unzip -q "$_tmp_zip" -d "$_tmp_dir" 2>/dev/null || {
+        rm -rf "$_tmp_zip" "$_tmp_dir"
+        echo -e "${RED}解压失败，下载文件可能损坏，请重试${PLAIN}"
+        return 1
+    }
+
+    local _bin
+    _bin=$(find "$_tmp_dir" -type f -name "anytls-server" | head -1)
+    [ -z "$_bin" ] && _bin=$(find "$_tmp_dir" -type f -name "anytls" | head -1)
+    if [ -z "$_bin" ]; then
+        rm -rf "$_tmp_zip" "$_tmp_dir"
+        echo -e "${RED}未在压缩包中找到 anytls-server 二进制${PLAIN}"
+        return 1
+    fi
+
+    chmod +x "$_bin"
+    if ! validate_elf "$_bin"; then
+        rm -rf "$_tmp_zip" "$_tmp_dir"
+        echo -e "${RED}二进制 ELF 校验失败（文件损坏或架构不匹配）${PLAIN}"
+        return 1
+    fi
+
+    mv -f "$_bin" "$ANYTLS_BIN"
+    chmod +x "$ANYTLS_BIN"
+    rm -rf "$_tmp_zip" "$_tmp_dir"
+    echo -e "${GREEN}anytls-server 安装完成: $("$ANYTLS_BIN" version 2>/dev/null | head -1)${PLAIN}"
+}
+
+ensure_anytls_bin() {
+    if [ -x "$ANYTLS_BIN" ]; then
+        return 0
+    fi
+    get_latest_version || return 1
+    download_anytls || return 1
+}
+
+# ============================================================
+# 监听地址 / URI 构建
+# ============================================================
+listen_address() {
+    if [ "${BIND_FAMILY:-v4}" = "v6" ]; then
+        printf '[::]:' && printf '%s' "${LISTEN_PORT:-}"
+    else
+        printf '0.0.0.0:' && printf '%s' "${LISTEN_PORT:-}"
+    fi
 }
 
 uri_encode() {
@@ -185,26 +420,119 @@ uri_encode() {
     if command -v python3 >/dev/null 2>&1; then
         printf '%s' "$_in" | python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')" 2>/dev/null && return
     fi
-    for ((_i=0; _i<${#_in}; _i++)); do
+    local _len="${#_in}"
+    _i=0
+    while [ "$_i" -lt "$_len" ]; do
         _c="${_in:$_i:1}"
         case "$_c" in
             [a-zA-Z0-9.~_-]) _out="${_out}${_c}" ;;
+            ' ') _out="${_out}%20" ;;
             *) _hex=$(printf '%s' "$_c" | od -An -tx1 | awk '{ for (i=1; i<=NF; i++) printf "%%%s", toupper($i) }'); _out="${_out}${_hex}" ;;
         esac
+        _i=$(( _i + 1 ))
     done
     printf '%s' "$_out"
+}
+
+render_uri() {
+    local _server="$1" _port="$2" _password="$3" _name="$4"
+    local _host="$_server"
+    echo "$_server" | grep -q ':' && _host="[${_server}]"
+    local _enc_name
+    _enc_name=$(uri_encode "$_name")
+    printf 'anytls://%s@%s:%s/?insecure=1#%s\n' "$_password" "$_host" "$_port" "$_enc_name"
+}
+
+# ============================================================
+# 配置写入 / 读取
+# ============================================================
+write_config() {
+    mkdir -p "$ANYTLS_DIR" "$ANYTLS_META"
+    cat > "$ANYTLS_CONFIG" <<CFG
+LISTEN_PORT=${LISTEN_PORT}
+EXT_PORT=${EXT_PORT}
+PASSWORD=${PASSWORD}
+NAT_MODE=${NAT_MODE}
+BIND_FAMILY=${BIND_FAMILY}
+CFG
+    printf '%s' "$PUBLIC_IP"   > "$ANYTLS_META/public_ip"
+    printf '%s' "$PUBLIC_IPV6" > "$ANYTLS_META/public_ipv6"
+}
+
+read_config() {
+    [ -f "$ANYTLS_CONFIG" ] || return 1
+    # shellcheck source=/dev/null
+    . "$ANYTLS_CONFIG"
+    [ -z "${PUBLIC_IP:-}"   ] && PUBLIC_IP=$(cat "$ANYTLS_META/public_ip"   2>/dev/null || true)
+    [ -z "${PUBLIC_IPV6:-}" ] && PUBLIC_IPV6=$(cat "$ANYTLS_META/public_ipv6" 2>/dev/null || true)
+}
+
+read_config_live() {
+    read_config || return 1
+    if [ -z "${PUBLIC_IP:-}" ] && [ -z "${PUBLIC_IPV6:-}" ]; then
+        PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]') || true
+        PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]') || true
+    fi
 }
 
 # ============================================================
 # 服务管理
 # ============================================================
+write_systemd_service() {
+    local _listen
+    _listen=$(listen_address)
+    cat > "$SYSTEMD_SERVICE" <<SVC
+[Unit]
+Description=AnyTLS Server
+After=network.target nss-lookup.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=${ANYTLS_BIN} -l ${_listen} -p ${PASSWORD}
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+SVC
+    chmod 600 "$SYSTEMD_SERVICE"
+}
+
+write_openrc_service() {
+    cat > "$OPENRC_SERVICE" <<'SVCHEAD'
+#!/sbin/openrc-run
+
+name="anytls-server"
+description="AnyTLS Server"
+SVCHEAD
+    cat >> "$OPENRC_SERVICE" <<SVC
+command="${ANYTLS_BIN}"
+command_args="-l $(listen_address) -p ${PASSWORD}"
+command_background=true
+pidfile="/var/run/anytls-server.pid"
+output_log="/var/log/anytls-server.log"
+error_log="/var/log/anytls-server.log"
+
+depend() {
+    need net
+    after firewall
+}
+SVC
+    chmod +x "$OPENRC_SERVICE"
+}
+
 service_start() {
     if [ "$INIT_SYS" = "systemd" ]; then
         systemctl start anytls-server
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service anytls-server start
     else
-        nohup "$SB_BIN" run -c "$ANYTLS_CONFIG" >/var/log/anytls-server.log 2>&1 &
+        local _listen
+        _listen=$(listen_address)
+        nohup "$ANYTLS_BIN" -l "$_listen" -p "$PASSWORD" >/var/log/anytls-server.log 2>&1 &
         echo $! > /var/run/anytls-server.pid
     fi
 }
@@ -216,7 +544,7 @@ service_stop() {
         rc-service anytls-server stop 2>/dev/null
     else
         [ -f /var/run/anytls-server.pid ] && kill "$(cat /var/run/anytls-server.pid)" 2>/dev/null && rm -f /var/run/anytls-server.pid
-        pkill -f "sing-box run -c ${ANYTLS_CONFIG}" 2>/dev/null
+        pkill -f "anytls-server" 2>/dev/null || true
     fi
 }
 
@@ -266,349 +594,6 @@ service_logs() {
     fi
 }
 
-setup_systemd_service() {
-    cat > "$SERVICE_FILE" <<SVC
-[Unit]
-Description=AnyTLS Server (sing-box)
-After=network.target nss-lookup.target
-Wants=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=${SB_BIN} run -c ${ANYTLS_CONFIG}
-Restart=on-failure
-RestartSec=5s
-LimitNOFILE=1048576
-
-[Install]
-WantedBy=multi-user.target
-SVC
-}
-
-setup_openrc_service() {
-    cat > "$OPENRC_SERVICE" <<'SVCHEAD'
-#!/sbin/openrc-run
-
-name="anytls-server"
-description="AnyTLS Server (sing-box)"
-SVCHEAD
-    cat >> "$OPENRC_SERVICE" <<SVC
-command="${SB_BIN}"
-command_args="run -c ${ANYTLS_CONFIG}"
-command_background=true
-pidfile="/var/run/anytls-server.pid"
-output_log="/var/log/anytls-server.log"
-error_log="/var/log/anytls-server.log"
-
-depend() {
-    need net
-    after firewall
-}
-SVC
-    chmod +x "$OPENRC_SERVICE"
-}
-
-write_wrapper() {
-    cat > "$ANYTLS_WRAPPER" <<WRAP
-#!/bin/sh
-exec ${SB_BIN} run -c ${ANYTLS_CONFIG} "\$@"
-WRAP
-    chmod +x "$ANYTLS_WRAPPER"
-}
-
-# ============================================================
-# 网络检测 / 防火墙
-# ============================================================
-detect_network() {
-    echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
-    NAT_MODE=0; IPV6_ONLY=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""
-    local _ip _url
-
-    for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
-        _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -q ':'; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
-    done
-
-    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then PUBLIC_IP="$_ip"; HAS_IPV4=1; break; fi
-    done
-
-    # 过滤 WARP / 隧道虚拟 IPv4，避免把出站 IP 当作入站地址
-    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
-        local _real_ipv4
-        _real_ipv4=$(ip -4 addr show scope global 2>/dev/null | awk '
-            /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
-            /inet / && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ { print "1"; exit }
-        ')
-        [ -z "$_real_ipv4" ] && { HAS_IPV4=0; PUBLIC_IP=""; }
-    fi
-
-    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
-        local _local_ips
-        _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '^127\.' | grep -v '^169\.254\.')
-        echo "$_local_ips" | grep -q "^${PUBLIC_IP}$" || NAT_MODE=1
-    fi
-
-    [ "$HAS_IPV4" = "0" ] && [ "$HAS_IPV6" = "1" ] && IPV6_ONLY=1
-
-    if   [ "$NAT_MODE"  = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
-    elif [ "$IPV6_ONLY" = "1" ]; then echo -e "  机器类型: ${YELLOW}纯 IPv6${PLAIN}（IPv6: ${PUBLIC_IPV6}）"
-    elif [ "$HAS_IPV6"  = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv6: ${PUBLIC_IPV6} | IPv4: ${PUBLIC_IP}）"
-    elif [ "$HAS_IPV4"  = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
-    else                               echo -e "  机器类型: ${RED}无法检测，请手动输入节点地址${PLAIN}"
-    fi
-}
-
-open_ports() {
-    local _port=$1
-    echo -e "${YELLOW}正在自动放行 TCP 端口 ${_port}...${PLAIN}"
-
-    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-        echo -e "  ${GREEN}✓ firewalld 已放行 tcp/${_port}${PLAIN}"
-        return
-    fi
-
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
-        ufw allow "${_port}/tcp" >/dev/null 2>&1
-        echo -e "  ${GREEN}✓ ufw 已放行 tcp/${_port}${PLAIN}"
-        return
-    fi
-
-    if command -v iptables >/dev/null 2>&1; then
-        iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-            iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
-        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
-            ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-                ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
-        fi
-        if command -v netfilter-persistent >/dev/null 2>&1; then
-            netfilter-persistent save >/dev/null 2>&1
-        elif [ -f /etc/sysconfig/iptables ] && command -v service >/dev/null 2>&1; then
-            service iptables save >/dev/null 2>&1
-        fi
-        echo -e "  ${GREEN}✓ iptables 已放行 tcp/${_port}${PLAIN}"
-    fi
-}
-
-# ============================================================
-# sing-box 获取 / 安装
-# ============================================================
-get_latest_version() {
-    echo -e "${YELLOW}正在获取 sing-box 最新版本...${PLAIN}"
-    LAST_VERSION_TAG=$(curl -Ls --max-time 12 "https://api.github.com/repos/SagerNet/sing-box/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
-
-    if [ -z "$LAST_VERSION_TAG" ]; then
-        LAST_VERSION_TAG=$(curl -Ls --max-time 12 -o /dev/null -w "%{url_effective}" \
-            "https://github.com/SagerNet/sing-box/releases/latest" | sed 's|.*/tag/||')
-    fi
-
-    [ -z "$LAST_VERSION_TAG" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && return 1
-    LAST_VERSION="${LAST_VERSION_TAG#v}"
-    echo -e "${GREEN}最新版本: ${LAST_VERSION_TAG}${PLAIN}"
-}
-
-download_singbox() {
-    local _arch
-    case $(uname -m) in
-        x86_64)          _arch="amd64" ;;
-        aarch64|arm64)   _arch="arm64" ;;
-        armv7l|armv7)    _arch="armv7" ;;
-        armv6l|armv6)    _arch="armv6" ;;
-        s390x)           _arch="s390x" ;;
-        loongarch64)     _arch="loong64" ;;
-        *) echo -e "${RED}不支持的架构: $(uname -m)${PLAIN}" && return 1 ;;
-    esac
-
-    local _asset="sing-box-${LAST_VERSION}-linux-${_arch}.tar.gz"
-    local _url="https://github.com/SagerNet/sing-box/releases/download/${LAST_VERSION_TAG}/${_asset}"
-    local _tmp_archive _tmp_dir
-    _tmp_archive=$(mktemp /tmp/sing-box-XXXXXX.tar.gz) || return 1
-    _tmp_dir=$(mktemp -d /tmp/sing-box-XXXXXX) || { rm -f "$_tmp_archive"; return 1; }
-
-    echo -e "${YELLOW}正在下载 ${_asset}...${PLAIN}"
-    if ! wget -q --show-progress --timeout=30 -O "$_tmp_archive" "$_url" 2>/dev/null; then
-        if ! curl -fL --connect-timeout 20 --max-time 90 -o "$_tmp_archive" "$_url" 2>/dev/null; then
-            rm -rf "$_tmp_archive" "$_tmp_dir"
-            echo -e "${RED}下载失败: ${_url}${PLAIN}"
-            return 1
-        fi
-    fi
-
-    tar -xzf "$_tmp_archive" -C "$_tmp_dir" >/dev/null 2>&1 || {
-        rm -rf "$_tmp_archive" "$_tmp_dir"
-        echo -e "${RED}解压失败，下载文件可能无效${PLAIN}"
-        return 1
-    }
-
-    local _bin
-    _bin=$(find "$_tmp_dir" -type f -name sing-box | head -1)
-    [ -z "$_bin" ] && { rm -rf "$_tmp_archive" "$_tmp_dir"; echo -e "${RED}未找到 sing-box 二进制${PLAIN}"; return 1; }
-
-    chmod +x "$_bin"
-    if ! "$_bin" version >/dev/null 2>&1; then
-        rm -rf "$_tmp_archive" "$_tmp_dir"
-        echo -e "${RED}sing-box 二进制验证失败${PLAIN}"
-        return 1
-    fi
-
-    mv -f "$_bin" "$SB_BIN"
-    chmod +x "$SB_BIN"
-    rm -rf "$_tmp_archive" "$_tmp_dir"
-    echo -e "${GREEN}sing-box 安装完成: $($SB_BIN version 2>/dev/null | head -1)${PLAIN}"
-}
-
-ensure_singbox() {
-    if [ -x "$SB_BIN" ]; then
-        return 0
-    fi
-    if command -v sing-box >/dev/null 2>&1; then
-        local _found
-        _found=$(command -v sing-box)
-        if [ "$_found" != "$SB_BIN" ]; then
-            ln -sf "$_found" "$SB_BIN" 2>/dev/null || cp -f "$_found" "$SB_BIN"
-        fi
-        [ -x "$SB_BIN" ] && return 0
-    fi
-
-    get_latest_version || return 1
-    download_singbox || return 1
-}
-
-# ============================================================
-# 配置写入 / 读取
-# ============================================================
-generate_self_signed_cert() {
-    mkdir -p "$ANYTLS_CERT_DIR"
-    CERT_PATH="${ANYTLS_CERT_DIR}/cert.pem"
-    KEY_PATH="${ANYTLS_CERT_DIR}/key.pem"
-
-    echo -e "${YELLOW}正在生成自签 TLS 证书...${PLAIN}"
-    if echo "$SNI" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-        openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-            -keyout "$KEY_PATH" -out "$CERT_PATH" \
-            -subj "/CN=${SNI}" -addext "subjectAltName=IP:${SNI}" >/dev/null 2>&1
-    else
-        openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-            -keyout "$KEY_PATH" -out "$CERT_PATH" \
-            -subj "/CN=${SNI}" -addext "subjectAltName=DNS:${SNI}" >/dev/null 2>&1
-    fi
-
-    chmod 600 "$KEY_PATH" 2>/dev/null
-    [ -s "$CERT_PATH" ] && [ -s "$KEY_PATH" ] || { echo -e "${RED}证书生成失败${PLAIN}"; return 1; }
-}
-
-write_config() {
-    mkdir -p "$SB_CONFIG_DIR" "$ANYTLS_META"
-    local _listen="0.0.0.0"
-    [ "$HAS_IPV6" = "1" ] && _listen="::"
-
-    cat > "$ANYTLS_CONFIG" <<JSON
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "anytls",
-      "tag": "anytls-in",
-      "listen": "${_listen}",
-      "listen_port": ${LISTEN_PORT},
-      "users": [
-        {
-          "name": "${USER_NAME}",
-          "password": "${PASSWORD}"
-        }
-      ],
-      "padding_scheme": [
-        "stop=8",
-        "0=30-30",
-        "1=100-400",
-        "2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000",
-        "3=9-9,500-1000",
-        "4=500-1000",
-        "5=500-1000",
-        "6=500-1000",
-        "7=500-1000"
-      ],
-      "tls": {
-        "enabled": true,
-        "server_name": "${SNI}",
-        "certificate_path": "${CERT_PATH}",
-        "key_path": "${KEY_PATH}",
-        "min_version": "1.2",
-        "alpn": [
-          "h2",
-          "http/1.1"
-        ]
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "final": "direct"
-  }
-}
-JSON
-}
-
-save_meta() {
-    mkdir -p "$ANYTLS_META"
-    printf '%s' "$NAT_MODE"     > "$ANYTLS_META/nat_mode"
-    printf '%s' "$LISTEN_PORT"  > "$ANYTLS_META/listen_port"
-    printf '%s' "$EXT_PORT"     > "$ANYTLS_META/ext_port"
-    printf '%s' "$PASSWORD"     > "$ANYTLS_META/password"
-    printf '%s' "$USER_NAME"    > "$ANYTLS_META/user_name"
-    printf '%s' "$SNI"          > "$ANYTLS_META/sni"
-    printf '%s' "$TLS_MODE"     > "$ANYTLS_META/tls_mode"
-    printf '%s' "$TLS_INSECURE" > "$ANYTLS_META/tls_insecure"
-    printf '%s' "$CERT_PATH"    > "$ANYTLS_META/cert_path"
-    printf '%s' "$KEY_PATH"     > "$ANYTLS_META/key_path"
-    printf '%s' "$PUBLIC_IP"    > "$ANYTLS_META/public_ip"
-    printf '%s' "$PUBLIC_IPV6"  > "$ANYTLS_META/public_ipv6"
-}
-
-read_config_vars() {
-    [ ! -f "$ANYTLS_CONFIG" ] && return 1
-
-    if [ -d "$ANYTLS_META" ]; then
-        NAT_MODE=$(cat "$ANYTLS_META/nat_mode" 2>/dev/null); NAT_MODE=${NAT_MODE:-0}
-        LISTEN_PORT=$(cat "$ANYTLS_META/listen_port" 2>/dev/null)
-        EXT_PORT=$(cat "$ANYTLS_META/ext_port" 2>/dev/null)
-        PASSWORD=$(cat "$ANYTLS_META/password" 2>/dev/null)
-        USER_NAME=$(cat "$ANYTLS_META/user_name" 2>/dev/null)
-        SNI=$(cat "$ANYTLS_META/sni" 2>/dev/null)
-        TLS_MODE=$(cat "$ANYTLS_META/tls_mode" 2>/dev/null)
-        TLS_INSECURE=$(cat "$ANYTLS_META/tls_insecure" 2>/dev/null)
-        CERT_PATH=$(cat "$ANYTLS_META/cert_path" 2>/dev/null)
-        KEY_PATH=$(cat "$ANYTLS_META/key_path" 2>/dev/null)
-        PUBLIC_IP=$(cat "$ANYTLS_META/public_ip" 2>/dev/null)
-        PUBLIC_IPV6=$(cat "$ANYTLS_META/public_ipv6" 2>/dev/null)
-    fi
-
-    [ -z "$LISTEN_PORT" ] && LISTEN_PORT=$(grep '"listen_port"' "$ANYTLS_CONFIG" | grep -oE '[0-9]+' | head -1)
-    [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
-    [ -z "$PASSWORD" ] && PASSWORD=$(grep -A4 '"users"' "$ANYTLS_CONFIG" | grep '"password"' | awk -F'"' '{print $4}' | head -1)
-    [ -z "$USER_NAME" ] && USER_NAME="anytls"
-    [ -z "$SNI" ] && SNI=$(grep '"server_name"' "$ANYTLS_CONFIG" | awk -F'"' '{print $4}' | head -1)
-    [ -z "$TLS_INSECURE" ] && TLS_INSECURE="true"
-
-    if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
-        PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
-        PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
-    fi
-}
-
 # ============================================================
 # 安装 / 修改
 # ============================================================
@@ -617,49 +602,22 @@ configure_anytls() {
 
     if [ "$NAT_MODE" = "1" ]; then
         read -r -p "请输入本机监听端口 [默认 38888]: " LISTEN_PORT
-        [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="38888"
-        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="38888"
+        validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         read -r -p "请输入对外转发端口 [留空=与监听端口相同]: " EXT_PORT
-        [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
-        valid_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return 1; }
+        [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
+        validate_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         echo -e "${YELLOW}提示：请确保宿主机已将 TCP ${EXT_PORT} 转发到本机 TCP ${LISTEN_PORT}${PLAIN}"
     else
         read -r -p "请输入端口 [默认 38888]: " LISTEN_PORT
-        [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="38888"
-        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="38888"
+        validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         EXT_PORT="$LISTEN_PORT"
     fi
 
-    read -r -p "请输入用户名 [默认 anytls]: " USER_NAME
-    [[ -z "$USER_NAME" ]] && USER_NAME="anytls"
-    valid_json_secret "$USER_NAME" || { echo -e "${RED}用户名不能包含双引号、反斜杠或控制字符${PLAIN}"; return 1; }
-
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
-    [[ -z "$PASSWORD" ]] && PASSWORD=$(openssl rand -base64 24 | tr -d ' \n\r')
-    valid_json_secret "$PASSWORD" || { echo -e "${RED}密码不能包含双引号、反斜杠或控制字符${PLAIN}"; return 1; }
-
-    read -r -p "请输入 SNI / 证书域名 [默认 www.microsoft.com]: " SNI
-    [[ -z "$SNI" ]] && SNI="www.microsoft.com"
-    valid_json_secret "$SNI" || { echo -e "${RED}SNI 不能包含双引号、反斜杠或控制字符${PLAIN}"; return 1; }
-
-    echo ""
-    echo -e "${YELLOW}请选择 TLS 证书方式：${PLAIN}"
-    echo -e " 1. 自签证书（默认，客户端需 insecure/skip-cert-verify=true）"
-    echo -e " 2. 已有真实证书（推荐域名节点，客户端可关闭 insecure）"
-    read -r -p "请输入选项 [1/2，默认 1]: " _tls_choice
-
-    if [ "$_tls_choice" = "2" ]; then
-        TLS_MODE="custom"
-        TLS_INSECURE="false"
-        read -r -p "请输入证书 fullchain 路径: " CERT_PATH
-        read -r -p "请输入私钥 private key 路径: " KEY_PATH
-        [ -s "$CERT_PATH" ] || { echo -e "${RED}证书文件不存在或为空${PLAIN}"; return 1; }
-        [ -s "$KEY_PATH" ] || { echo -e "${RED}私钥文件不存在或为空${PLAIN}"; return 1; }
-    else
-        TLS_MODE="self"
-        TLS_INSECURE="true"
-        generate_self_signed_cert || return 1
-    fi
+    [ -z "$PASSWORD" ] && PASSWORD=$(openssl rand -base64 24 | tr -d ' \n\r/+=' | cut -c1-32)
+    validate_password "$PASSWORD" || { echo -e "${RED}密码包含非法字符${PLAIN}"; return 1; }
 
     NODE_NAME="AnyTLS-$(hostname 2>/dev/null | tr -d '\n\r')"
     [ "$NODE_NAME" = "AnyTLS-" ] && NODE_NAME="AnyTLS-Node"
@@ -668,26 +626,18 @@ configure_anytls() {
 install_anytls() {
     install_dependencies || return
     detect_network
-    ensure_singbox || return
+    ensure_anytls_bin || return
     configure_anytls || return
     write_config
 
-    if ! "$SB_BIN" check -c "$ANYTLS_CONFIG" >/tmp/anytls-check.log 2>&1; then
-        echo -e "${RED}sing-box 配置检查失败：${PLAIN}"
-        cat /tmp/anytls-check.log
-        read -r -p "按回车键返回主菜单..." _tmp
-        return
-    fi
-
-    save_meta
-    write_wrapper
-    open_ports "$LISTEN_PORT"
-
-    if   [ "$INIT_SYS" = "systemd" ]; then setup_systemd_service
-    elif [ "$INIT_SYS" = "openrc"  ]; then setup_openrc_service
+    if [ "$INIT_SYS" = "systemd" ]; then
+        write_systemd_service
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        write_openrc_service
     fi
 
     service_enable
+    open_ports "$LISTEN_PORT"
     if service_is_active; then service_restart; else service_start; fi
 
     sleep 2
@@ -705,60 +655,39 @@ install_anytls() {
 
 change_config() {
     if [ ! -f "$ANYTLS_CONFIG" ]; then
-        echo -e "${RED}未安装 AnyTLS${PLAIN}"
-        sleep 2
-        return
+        echo -e "${RED}未安装 AnyTLS${PLAIN}"; sleep 2; return
     fi
-    read_config_vars
+    read_config
     detect_network
 
     echo -e "\n${YELLOW}修改 AnyTLS 配置，留空则保留原值。${PLAIN}"
     read -r -p "监听端口 [当前 ${LISTEN_PORT}]: " _port
-    if [ -n "$_port" ]; then valid_port "$_port" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }; LISTEN_PORT="$_port"; fi
-
-    read -r -p "对外端口 [当前 ${EXT_PORT:-$LISTEN_PORT}]: " _ext
-    if [ -n "$_ext" ]; then valid_port "$_ext" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }; EXT_PORT="$_ext"; fi
-    [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
-
-    read -r -p "用户名 [当前 ${USER_NAME}]: " _user
-    [ -n "$_user" ] && USER_NAME="$_user"
-    valid_json_secret "$USER_NAME" || { echo -e "${RED}用户名不能包含特殊字符${PLAIN}"; sleep 2; return; }
-
-    read -r -p "连接密码 [当前已隐藏，留空保留]: " _pass
-    [ -n "$_pass" ] && PASSWORD="$_pass"
-    valid_json_secret "$PASSWORD" || { echo -e "${RED}密码不能包含特殊字符${PLAIN}"; sleep 2; return; }
-
-    read -r -p "SNI / 证书域名 [当前 ${SNI}]: " _sni
-    [ -n "$_sni" ] && SNI="$_sni"
-    valid_json_secret "$SNI" || { echo -e "${RED}SNI 不能包含特殊字符${PLAIN}"; sleep 2; return; }
-
-    echo ""
-    echo -e "${YELLOW}证书方式：${PLAIN}"
-    echo -e " 1. 保持当前证书"
-    echo -e " 2. 重新生成自签证书"
-    echo -e " 3. 改用已有真实证书"
-    read -r -p "请输入选项 [1/2/3，默认 1]: " _cert_choice
-    case "$_cert_choice" in
-        2) TLS_MODE="self"; TLS_INSECURE="true"; generate_self_signed_cert || return ;;
-        3)
-            TLS_MODE="custom"; TLS_INSECURE="false"
-            read -r -p "请输入证书 fullchain 路径: " CERT_PATH
-            read -r -p "请输入私钥 private key 路径: " KEY_PATH
-            [ -s "$CERT_PATH" ] || { echo -e "${RED}证书文件不存在或为空${PLAIN}"; sleep 2; return; }
-            [ -s "$KEY_PATH" ] || { echo -e "${RED}私钥文件不存在或为空${PLAIN}"; sleep 2; return; }
-            ;;
-    esac
-
-    write_config
-    if ! "$SB_BIN" check -c "$ANYTLS_CONFIG" >/tmp/anytls-check.log 2>&1; then
-        echo -e "${RED}配置检查失败：${PLAIN}"
-        cat /tmp/anytls-check.log
-        read -r -p "按回车键返回..." _tmp
-        return
+    if [ -n "$_port" ]; then
+        validate_port "$_port" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }
+        LISTEN_PORT="$_port"
     fi
 
-    save_meta
-    write_wrapper
+    read -r -p "对外端口 [当前 ${EXT_PORT:-$LISTEN_PORT}]: " _ext
+    if [ -n "$_ext" ]; then
+        validate_port "$_ext" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }
+        EXT_PORT="$_ext"
+    fi
+    [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
+
+    read -r -p "连接密码 [留空保留原密码]: " _pass
+    if [ -n "$_pass" ]; then
+        validate_password "$_pass" || { echo -e "${RED}密码包含非法字符${PLAIN}"; sleep 2; return; }
+        PASSWORD="$_pass"
+    fi
+
+    write_config
+
+    if [ "$INIT_SYS" = "systemd" ]; then
+        write_systemd_service
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        write_openrc_service
+    fi
+
     open_ports "$LISTEN_PORT"
     service_restart
     sleep 1
@@ -772,91 +701,46 @@ _show_node() {
     local _server="$1" _port="$2" _tag="$3"
     [ -z "$_server" ] && return
 
-    local _display_server="$_server"
-    echo "$_server" | grep -q ':' && _display_server="[${_server}]"
-
-    local _date _node _insecure_yaml _insecure_json _singbox_client _mihomo_yaml _surfboard _link _encoded _qr_url
+    local _date _node _uri
     _date=$(date +%m%d)
     _node="AnyTLS-${_tag}-${_date}"
-    _insecure_yaml="false"
-    _insecure_json="false"
-    if [ "$TLS_INSECURE" = "true" ]; then
-        _insecure_yaml="true"
-        _insecure_json="true"
-    fi
 
-    _singbox_client=$(cat <<JSON
-{
-  "type": "anytls",
-  "tag": "${_node}",
-  "server": "${_server}",
-  "server_port": ${_port},
-  "password": "${PASSWORD}",
-  "idle_session_check_interval": "30s",
-  "idle_session_timeout": "30s",
-  "min_idle_session": 5,
-  "tls": {
-    "enabled": true,
-    "server_name": "${SNI}",
-    "insecure": ${_insecure_json}
-  }
-}
-JSON
-)
+    _uri=$(render_uri "$_server" "$_port" "$PASSWORD" "$_node")
 
-    _mihomo_yaml="  - {name: '${_node}', type: anytls, server: '${_server}', port: ${_port}, password: '${PASSWORD}', sni: '${SNI}', skip-cert-verify: ${_insecure_yaml}}"
-    _surfboard="${_node} = anytls, ${_server}, ${_port}, ${PASSWORD}, ${_insecure_yaml}, ${SNI}, , true"
-    _link="anytls://${PASSWORD}@${_display_server}:${_port}?sni=${SNI}&insecure=${_insecure_yaml}#${_node}"
-    _encoded=$(uri_encode "$_link")
-    _qr_url="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
+    local _display_server="$_server"
+    echo "$_server" | grep -q ':' && _display_server="[${_server}]"
 
     echo -e "\n${GREEN}${_node}${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "${BOLD}地址${PLAIN}: ${YELLOW}${_server}${PLAIN}"
     echo -e "${BOLD}端口${PLAIN}: ${YELLOW}${_port}${PLAIN}"
-    echo -e "${BOLD}SNI ${PLAIN}: ${YELLOW}${SNI}${PLAIN}"
-    echo -e "${BOLD}TLS ${PLAIN}: ${YELLOW}$([ "$TLS_INSECURE" = "true" ] && echo "自签证书 / skip-cert-verify=true" || echo "真实证书 / skip-cert-verify=false")${PLAIN}"
+    echo -e "${BOLD}密码${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}sing-box outbound 配置:${PLAIN}"
-    echo "$_singbox_client"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Mihomo / Clash Meta 参考配置:${PLAIN}"
-    echo "$_mihomo_yaml"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Surfboard 参考配置:${PLAIN}"
-    echo "$_surfboard"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}实验性 anytls:// 分享链接（不同客户端支持不一致）:${PLAIN}"
-    echo "  $_link"
+    echo -e "${GREEN}分享链接:${PLAIN}"
+    echo "  $_uri"
     if command -v qrencode >/dev/null 2>&1; then
-        echo -e "${GREEN}扫码导入（终端二维码，仅当客户端支持 anytls:// 时有效）:${PLAIN}"
-        qrencode -t ANSIUTF8 -m 2 "$_link"
+        echo -e "${GREEN}终端二维码:${PLAIN}"
+        qrencode -t ANSIUTF8 -m 2 "$_uri"
     fi
     echo -e "${GREEN}二维码图片链接:${PLAIN}"
-    echo "  $_qr_url"
+    local _enc_uri
+    _enc_uri=$(uri_encode "$_uri")
+    echo "  https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_enc_uri}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
 show_config() {
-    read_config_vars || { echo -e "${RED}未找到 AnyTLS 配置${PLAIN}"; sleep 2; return; }
+    read_config_live || { echo -e "${RED}未找到 AnyTLS 配置${PLAIN}"; sleep 2; return; }
 
     echo -e "\n${GREEN}AnyTLS 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    echo -e "  ${BOLD}核心${PLAIN}: $($SB_BIN version 2>/dev/null | head -1)"
     echo -e "  ${BOLD}配置${PLAIN}: ${ANYTLS_CONFIG}"
     echo -e "  ${BOLD}监听端口${PLAIN}: ${LISTEN_PORT}"
     echo -e "  ${BOLD}对外端口${PLAIN}: ${EXT_PORT}"
-    echo -e "  ${BOLD}用户名${PLAIN}: ${USER_NAME}"
     echo -e "  ${BOLD}密码${PLAIN}: ${PASSWORD}"
-    echo -e "  ${BOLD}SNI${PLAIN}: ${SNI}"
-    echo -e "  ${BOLD}证书${PLAIN}: ${CERT_PATH}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    [ -n "$PUBLIC_IP" ] && _show_node "$PUBLIC_IP" "$EXT_PORT" "IPv4"
+    [ -n "$PUBLIC_IP"   ] && _show_node "$PUBLIC_IP"   "$EXT_PORT" "IPv4"
     [ -n "$PUBLIC_IPV6" ] && _show_node "$PUBLIC_IPV6" "$EXT_PORT" "IPv6"
 
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
@@ -872,49 +756,45 @@ show_config() {
 # ============================================================
 upgrade_anytls() {
     install_dependencies || return
-    ensure_singbox || return
     get_latest_version || return
-    download_singbox || return
-    write_wrapper
-    if [ -f "$ANYTLS_CONFIG" ] && ! "$SB_BIN" check -c "$ANYTLS_CONFIG" >/tmp/anytls-check.log 2>&1; then
-        echo -e "${RED}升级后配置检查失败：${PLAIN}"
-        cat /tmp/anytls-check.log
-        read -r -p "按回车返回..." _tmp
-        return
-    fi
-    service_restart
-    echo -e "${GREEN}✓ sing-box / AnyTLS 已升级并重启${PLAIN}"
+    download_anytls || return
+    if service_is_active; then service_restart; fi
+    echo -e "${GREEN}✓ anytls-server 已升级${PLAIN}"
     sleep 2
 }
 
 uninstall_anytls() {
-    echo -e "${RED}警告：这将删除 AnyTLS 服务、配置、证书和 meta。${PLAIN}"
-    echo -e "${YELLOW}默认不会删除 sing-box 二进制，避免影响你其他 sing-box 服务。${PLAIN}"
+    echo -e "${RED}警告：这将删除 AnyTLS 服务、配置和二进制。${PLAIN}"
     read -r -p "确认卸载 AnyTLS？[y/N]: " _confirm
-    [[ ! "$_confirm" =~ ^[yY]$ ]] && echo "已取消。" && sleep 1 && return
+    case "$_confirm" in
+        [yY]) ;;
+        *) echo "已取消。"; sleep 1; return ;;
+    esac
 
     service_stop
     service_disable
-    rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$ANYTLS_WRAPPER" "$AUTO_UPDATE_SCRIPT"
+    rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$ANYTLS_BIN"
     rm -f /var/run/anytls-server.pid
-    rm -rf "$ANYTLS_CONFIG" "$ANYTLS_META" "$ANYTLS_CERT_DIR"
+    rm -rf "$ANYTLS_DIR"
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
     echo -e "${GREEN}✓ AnyTLS 已卸载${PLAIN}"
     sleep 2
 }
 
 setup_auto_update() {
-    cat > "$AUTO_UPDATE_SCRIPT" <<AUTO
+    cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
 #!/bin/bash
-LOG_FILE="${AUTO_UPDATE_LOG}"
-echo "[\$(date '+%F %T')] start anytls sing-box update" >> "\$LOG_FILE"
-bash "$0" --upgrade-noninteractive >> "\$LOG_FILE" 2>&1
-AUTO
+LOG_FILE=/var/log/anytls-autoupdate.log
+echo "[$(date '+%F %T')] start anytls-go update" >> "$LOG_FILE"
+SCRIPT_PATH=$(realpath "$0" 2>/dev/null || echo "$0")
+ANYTLS_SCRIPT=/usr/local/bin/anytls-autoupdate.sh
+bash "$ANYTLS_SCRIPT" --upgrade-noninteractive >> "$LOG_FILE" 2>&1 || true
+AUTOUPDATE_EOF
     chmod +x "$AUTO_UPDATE_SCRIPT"
 
     if command -v crontab >/dev/null 2>&1; then
         (crontab -l 2>/dev/null | grep -v "$AUTO_UPDATE_SCRIPT"; echo "17 4 * * 1 $AUTO_UPDATE_SCRIPT") | crontab -
-        echo -e "${GREEN}✓ 已设置每周一 04:17 自动升级 sing-box 核心${PLAIN}"
+        echo -e "${GREEN}✓ 已设置每周一 04:17 自动升级 anytls-server${PLAIN}"
     else
         echo -e "${YELLOW}系统未安装 crontab，请手动安装 cron 后再设置自动升级${PLAIN}"
     fi
@@ -927,7 +807,7 @@ show_system_info() {
     echo -e " 主机名: $(hostname 2>/dev/null)"
     echo -e " 内核  : $(uname -r)"
     echo -e " 架构  : $(uname -m)"
-    command -v "$SB_BIN" >/dev/null 2>&1 && echo -e " 核心  : $($SB_BIN version 2>/dev/null | head -1)"
+    command -v "$ANYTLS_BIN" >/dev/null 2>&1 && echo -e " 核心  : $("$ANYTLS_BIN" version 2>/dev/null | head -1)"
     echo -e " 内存  : $(awk '/MemAvailable/ {printf "%.0f MB available", $2/1024}' /proc/meminfo 2>/dev/null)"
     echo -e " 磁盘  : $(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')"
     echo -e " 负载  : $(uptime 2>/dev/null | awk -F'load average:' '{print $2}' | xargs)"
@@ -943,22 +823,13 @@ server_tools_menu() {
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 1. 查看系统信息"
         echo -e " 2. 查看 AnyTLS 日志"
-        echo -e " 3. 检查 sing-box 配置"
-        echo -e " 4. 设置每周自动升级 sing-box"
+        echo -e " 3. 设置每周自动升级"
         echo -e " 0. 返回"
-        read -r -p "请输入选项 [0-4]: " choice
+        read -r -p "请输入选项 [0-3]: " choice
         case "$choice" in
             1) show_system_info ;;
             2) service_logs; read -r -p "按回车返回..." _tmp ;;
-            3)
-                if [ -f "$ANYTLS_CONFIG" ]; then
-                    "$SB_BIN" check -c "$ANYTLS_CONFIG"
-                else
-                    echo -e "${RED}未找到配置${PLAIN}"
-                fi
-                read -r -p "按回车返回..." _tmp
-                ;;
-            4) setup_auto_update ;;
+            3) setup_auto_update ;;
             0|q|quit|exit) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -1007,16 +878,16 @@ main_menu() {
             STATUS="${RED}未安装${PLAIN}"
         fi
         _ver_line=""
-        if [ -x "$SB_BIN" ]; then
-            _ver_line=" ($($SB_BIN version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1))"
+        if [ -x "$ANYTLS_BIN" ]; then
+            _ver_line=" ($("$ANYTLS_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1))"
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  AnyTLS Management Script v1.0.0${PLAIN}"
+        echo -e "${GREEN}  AnyTLS Management Script v1.0.3${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
-        echo -e " 实现    : ${YELLOW}sing-box 原生 AnyTLS inbound${PLAIN}"
+        echo -e " 实现    : ${YELLOW}anytls/anytls-go 官方二进制${PLAIN}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " Seedloc博客 : https://seedloc.com"
         echo -e " VPSknow网站 : https://vpsknow.com"
@@ -1027,7 +898,7 @@ main_menu() {
         echo -e " 1. 安装 / 重装 AnyTLS"
         echo -e " 2. 查看节点信息 / 链接"
         echo -e " 3. 管理 AnyTLS（启动 / 停止 / 重启 / 日志 / 修改）"
-        echo -e " 4. 升级 sing-box 核心"
+        echo -e " 4. 升级 anytls-server"
         echo -e " 5. 卸载 AnyTLS"
         echo -e " 6. 服务器工具"
         echo -e " 0. 退出"
@@ -1054,16 +925,19 @@ if [ "${1:-}" = "--upgrade-noninteractive" ]; then
     detect_init
     install_dependencies || exit 1
     get_latest_version || exit 1
-    download_singbox || exit 1
-    write_wrapper
-    [ -f "$ANYTLS_CONFIG" ] && "$SB_BIN" check -c "$ANYTLS_CONFIG" || exit 1
-    service_restart
+    download_anytls || exit 1
+    if [ -f "$ANYTLS_CONFIG" ]; then
+        read_config || true
+        service_is_active && service_restart || true
+    fi
     exit 0
 fi
 
 # ============================================================
-# 入口
+# 入口（ANYTLS_LIB_ONLY=1 时跳过）
 # ============================================================
+[ "$_ANYTLS_LIB_ONLY" = "1" ] && return 0
+
 check_root
 check_sys
 detect_init
