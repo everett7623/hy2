@@ -41,7 +41,6 @@ graph TD
     SS --> GH_SS["GitHub API<br>shadowsocks-rust"]
     ANYTLS --> GH_AT["GitHub API<br>anytls/anytls-go"]
 ```
-
 ### 执行流程
 
 ```mermaid
@@ -516,4 +515,3 @@ tests/
 └── helpers/
     └── generators.bash     # 新增：随机输入生成器
 ```
-
