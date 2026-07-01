@@ -127,42 +127,43 @@ install_dependencies() {
     echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
     case "$RELEASE" in
         alpine)
-            apk update -q >/dev/null 2>&1
-            apk add --no-cache bash curl wget ca-certificates unzip iproute2 procps >/dev/null 2>&1
+            apk update -q
+            apk add --no-cache bash curl wget ca-certificates unzip iproute2 procps
             apk add --no-cache libqrencode >/dev/null 2>&1 || true
             ;;
         centos)
-            yum install -y curl wget ca-certificates unzip iproute procps-ng >/dev/null 2>&1
+            yum install -y curl wget ca-certificates unzip iproute procps-ng
             yum install -y qrencode >/dev/null 2>&1 || true
             ;;
         fedora|rocky)
-            dnf install -y curl wget ca-certificates unzip iproute procps-ng >/dev/null 2>&1
+            dnf install -y curl wget ca-certificates unzip iproute procps-ng
             dnf install -y qrencode >/dev/null 2>&1 || true
             ;;
         arch)
-            pacman -Sy --noconfirm curl wget ca-certificates unzip iproute2 procps-ng >/dev/null 2>&1
+            pacman -Sy --noconfirm curl wget ca-certificates unzip iproute2 procps-ng
             pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
             ;;
         *)
             if command -v apt-get >/dev/null 2>&1; then
-                apt-get update -qq >/dev/null 2>&1
-                apt-get install -y -qq curl wget ca-certificates unzip iproute2 procps >/dev/null 2>&1
-                apt-get install -y -qq qrencode >/dev/null 2>&1 || true
+                apt-get update -qq
+                apt-get install -y curl wget ca-certificates unzip iproute2 procps
+                apt-get install -y qrencode >/dev/null 2>&1 || true
             else
-                echo -e "${RED}无法识别包管理器，请手动安装 curl、wget、unzip、iproute2${PLAIN}"
+                echo -e "${RED}无法识别包管理器，请手动安装 curl wget unzip iproute2${PLAIN}"
                 return 1
             fi
             ;;
     esac
 
     local _missing=0 _cmd
-    for _cmd in curl wget unzip; do
+    for _cmd in curl wget; do
         if ! command -v "$_cmd" >/dev/null 2>&1; then
-            echo -e "${RED}致命错误: 缺少组件 [ $_cmd ]${PLAIN}"
+            echo -e "${RED}致命错误: 缺少组件 [ $_cmd ]，请手动安装后重试${PLAIN}"
             _missing=1
         fi
     done
     [ "$_missing" -eq 1 ] && return 1
+    return 0
 }
 
 # ============================================================
@@ -368,7 +369,15 @@ download_anytls() {
         return 1
     fi
 
-    unzip -q "$_tmp_zip" -d "$_tmp_dir" 2>/dev/null || {
+    if ! command -v unzip >/dev/null 2>&1; then
+        rm -rf "$_tmp_zip" "$_tmp_dir"
+        echo -e "${RED}缺少 unzip 命令，请先安装：${PLAIN}"
+        echo -e "  Debian/Ubuntu: ${YELLOW}apt-get install -y unzip${PLAIN}"
+        echo -e "  CentOS/Rocky:  ${YELLOW}yum install -y unzip${PLAIN}"
+        echo -e "  Alpine:        ${YELLOW}apk add unzip${PLAIN}"
+        return 1
+    fi
+    unzip -q "$_tmp_zip" -d "$_tmp_dir" || {
         rm -rf "$_tmp_zip" "$_tmp_dir"
         echo -e "${RED}解压失败，下载文件可能损坏，请重试${PLAIN}"
         return 1
