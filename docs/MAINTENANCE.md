@@ -1,5 +1,12 @@
 # 维护与故障边界
 
+## AnyTLS 上游边界
+
+- 唯一二进制上游是 `https://github.com/anytls/anytls-go`，使用 `anytls-server`，不切换到 sing-box。
+- 发布包格式为 `anytls_<version>_linux_<amd64|arm64>.zip`；上游命名变化时必须同步行为测试。
+- 配置位于 `/etc/anytls/config.env`，写入值必须先通过脚本校验。
+- 自动测试不替代真实 VPS 的服务启动、防火墙和客户端连通性验证。
+
 ## 维护重点
 
 本项目的高风险边界依次为：

@@ -4,8 +4,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-SCRIPTS="install.sh hy2.sh ss.sh euservhy2.sh"
-EXPECTED_VERSION="v1.0.2"
+SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
+EXPECTED_VERSION="v1.0.3"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -46,6 +46,12 @@ for script in $SCRIPTS; do
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
             grep -q "Shadowsocks-Rust Management Script ${EXPECTED_VERSION}" "$script"
             ;;
+        anytls.sh)
+            grep -q "# 版本：${EXPECTED_VERSION}" "$script"
+            grep -q "AnyTLS Management Script ${EXPECTED_VERSION}" "$script"
+            grep -q 'github.com/anytls/anytls-go/releases/download' "$script"
+            grep -q 'ANYTLS_LIB_ONLY' "$script"
+            ;;
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
             ;;
@@ -57,7 +63,7 @@ for script in $SCRIPTS; do
     fi
 done
 
-for script in hy2.sh ss.sh; do
+for script in hy2.sh ss.sh anytls.sh; do
     tmp=$(mktemp)
     awk '
         /cat > "\$AUTO_UPDATE_SCRIPT" <<'\''AUTOUPDATE_EOF'\''/ {
@@ -78,7 +84,9 @@ for script in hy2.sh ss.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="1.0.1"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="1.0.3"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
+
+bash tests/validate_anytls.sh
 
 echo "Static script validation passed."

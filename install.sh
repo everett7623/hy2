@@ -1,14 +1,14 @@
 #!/bin/bash
 #====================================================================================
 # 项目：VPS 代理工具集 — 一键管理入口
-# 脚本：Hysteria2 · Shadowsocks · EUserv IPv6 HY2
+# 脚本：Hysteria2 · Shadowsocks · AnyTLS · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v1.0.2
+# 版本：v1.0.3
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-06-30
+# 更新日期: 2026-07-01
 #====================================================================================
 
 # ============================================================
@@ -55,6 +55,7 @@ DIM='\033[2m'
 BASE_URL="https://raw.githubusercontent.com/everett7623/hy2/main"
 HY2_URL="${BASE_URL}/hy2.sh"
 SS_URL="${BASE_URL}/ss.sh"
+ANYTLS_URL="${BASE_URL}/anytls.sh"
 EUSERV_URL="${BASE_URL}/euservhy2.sh"
 
 # ============================================================
@@ -106,6 +107,17 @@ get_status() {
         fi
     else
         SS_STATUS="${RED}● 未安装${PLAIN}"
+    fi
+
+    # ---- AnyTLS ----
+    if [ -x "/usr/local/bin/anytls-server" ]; then
+        if service_active anytls-server /var/run/anytls-server.pid; then
+            ANYTLS_STATUS="${GREEN}● 运行中${PLAIN}"
+        else
+            ANYTLS_STATUS="${YELLOW}● 已停止${PLAIN}"
+        fi
+    else
+        ANYTLS_STATUS="${RED}● 未安装${PLAIN}"
     fi
 
     # ---- EUserv HY2：检测 HY2 运行状态 + IPv6 环境 ----
@@ -222,7 +234,7 @@ main_menu() {
 
         # ---- 顶部信息栏 ----
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
-        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v1.0.2${PLAIN}"
+        echo -e "  ${WHITE}${BOLD}  VPS 代理工具集 · 一键管理入口${PLAIN}  ${DIM}v1.0.3${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
         echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
         echo -e "  ${DIM}博客${PLAIN}   ${SKYBLUE}seedloc.com${PLAIN}     ${DIM}│${PLAIN}  ${DIM}测评${PLAIN}  ${SKYBLUE}vpsknow.com${PLAIN}"
@@ -244,9 +256,12 @@ main_menu() {
         echo -e "  ${GREEN}${BOLD}2.${PLAIN}  ${BOLD}Shadowsocks${PLAIN}               ${DIM}SS-2022 · 全平台兼容 · 保底节点${PLAIN}"
         echo -e "     ${DIM}状态:${PLAIN} $(echo -e "$SS_STATUS")"
         echo ""
+        echo -e "  ${GREEN}${BOLD}3.${PLAIN}  ${BOLD}AnyTLS${PLAIN}                    ${DIM}TCP/TLS · 轻量部署 · 官方核心${PLAIN}"
+        echo -e "     ${DIM}状态:${PLAIN} $(echo -e "$ANYTLS_STATUS")"
+        echo ""
         echo -e "  ${WHITE}${BOLD}━━━  专用脚本  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
         echo ""
-        echo -e "  ${MAGENTA}${BOLD}3.${PLAIN}  ${BOLD}EUserv IPv6 专用 HY2${PLAIN}     ${DIM}纯 IPv6 适配 · NAT64 兜底 · WARP 集成${PLAIN}"
+        echo -e "  ${MAGENTA}${BOLD}4.${PLAIN}  ${BOLD}EUserv IPv6 专用 HY2${PLAIN}     ${DIM}纯 IPv6 适配 · NAT64 兜底 · WARP 集成${PLAIN}"
         echo -e "     ${DIM}状态:${PLAIN} $(echo -e "$EUSERV_STATUS")"
         echo ""
         echo -e "${SKYBLUE}  ───────────────────────────────────────────────────────────────────${PLAIN}"
@@ -254,13 +269,14 @@ main_menu() {
         echo ""
         echo -e "${SKYBLUE}  ═══════════════════════════════════════════════════════════════════${PLAIN}"
         echo ""
-        echo -ne "  ${WHITE}${BOLD}请输入选项 [0-3]:${PLAIN} "
+        echo -ne "  ${WHITE}${BOLD}请输入选项 [0-4]:${PLAIN} "
         read -r choice
 
         case "$choice" in
             1) run_script "Hysteria2" "$HY2_URL" ;;
             2) run_script "Shadowsocks" "$SS_URL" ;;
-            3) run_script "EUserv IPv6 HY2" "$EUSERV_URL" ;;
+            3) run_script "AnyTLS" "$ANYTLS_URL" ;;
+            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" ;;
             0|q|quit|exit)
                 echo ""
                 echo -e "  ${DIM}感谢使用 HY2 Tools，再见！${PLAIN}"
@@ -268,7 +284,7 @@ main_menu() {
                 exit 0
                 ;;
             *)
-                echo -e "  ${RED}无效选项，请输入 0-3${PLAIN}"
+                echo -e "  ${RED}无效选项，请输入 0-4${PLAIN}"
                 sleep 1
                 ;;
         esac

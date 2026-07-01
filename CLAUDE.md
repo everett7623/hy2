@@ -15,11 +15,12 @@ A collection of bash scripts for one-click deployment and management of Hysteria
 - **`install.sh`** — Remote launcher/menu. Downloads sub-scripts from the GitHub `main` branch and pipes to bash. Does NOT use local files. Bug fixes in local scripts won't take effect until pushed.
 - **`hy2.sh`** — Hysteria 2 management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, firewall auto-ports, modify bandwidth/config, terminal QR codes, server tools.
 - **`ss.sh`** — Shadowsocks-Rust management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, modify config, terminal QR codes, connection test, server tools. IPv6-first detection with WARP filtering.
+- **`anytls.sh`** — Fresh standalone implementation using official `anytls/anytls-go`, not sing-box. Supports amd64/arm64 and systemd/OpenRC/no-init.
 - **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with hy2.sh.
 
 ## `install.sh` references
 
-`install.sh` points to `hy2.sh` and `ss.sh` on the GitHub `main` branch.
+`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, and `euservhy2.sh` on the GitHub `main` branch.
 
 `install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2.sh`) rather than going through `install.sh`.
 
@@ -64,6 +65,7 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 |----------|-------------|-------------|
 | Hysteria 2 | `18888` | Custom external port supported |
 | Shadowsocks | `28888` | Custom external port supported |
+| AnyTLS | `8443` | Uses the configured public port |
 
 ## Version management
 
@@ -102,6 +104,8 @@ Do not confuse the project script version with the installed proxy version. `get
 | SS config | `/etc/shadowsocks.json` or `/etc/shadowsocks-rust/config.json` |
 | SS auto-update script | `/usr/local/bin/ss-autoupdate.sh` |
 | SS auto-update log | `/var/log/ss-autoupdate.log` |
+| AnyTLS binary | `/usr/local/bin/anytls-server` |
+| AnyTLS config | `/etc/anytls/config.env` |
 | Systemd service | `/etc/systemd/system/hysteria-server.service` |
 | OpenRC service | `/etc/init.d/hysteria-server` |
 
