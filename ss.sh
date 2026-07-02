@@ -761,6 +761,16 @@ get_country_flag() {
     esac
 }
 
+get_country_name() {
+    case "$1" in
+        US) printf 'United States' ;; DE) printf 'Germany' ;; JP) printf 'Japan' ;; SG) printf 'Singapore' ;;
+        HK) printf 'Hong Kong' ;; TW) printf 'Taiwan' ;; KR) printf 'South Korea' ;; GB) printf 'United Kingdom' ;;
+        FR) printf 'France' ;; NL) printf 'Netherlands' ;; CA) printf 'Canada' ;; AU) printf 'Australia' ;;
+        RU) printf 'Russia' ;; IN) printf 'India' ;; VN) printf 'Vietnam' ;; TH) printf 'Thailand' ;;
+        UN) printf 'Unknown' ;; *) printf 'Unknown' ;;
+    esac
+}
+
 generate_server_name() {
     local _name
     _name=$(hostname 2>/dev/null | tr -d '\n\r\t')
@@ -944,10 +954,6 @@ show_node() {
     print_copy_block "$(export_mihomo_ss "$_ip" "$_port" "$_node")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}sing-box / SFA JSON:${PLAIN}"
-    export_singbox_ss "$_ip" "$_port" "$_node"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN}Loon 配置:${PLAIN}"
     print_copy_block "$(export_loon_ss "$_ip" "$_port" "$_node")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -975,6 +981,10 @@ show_node() {
     echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
     print_copy_block "$_qr_url"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}sing-box / SFA JSON:${PLAIN}"
+    export_singbox_ss "$_ip" "$_port" "$_node"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
 # ============================================================
@@ -989,15 +999,14 @@ show_config() {
         return
     fi
 
-    local _country _flag _server_name
+    local _country _server_name
     _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
-    _flag=$(get_country_flag "$_country")
     _server_name=$(generate_server_name)
 
     echo -e "\n${GREEN}Shadowsocks 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "服务器名称: ${YELLOW}${_server_name}${PLAIN}"
-    echo -e "国家/地区: ${YELLOW}${_flag} ${_country}${PLAIN}"
+    echo -e "国家/地区: ${YELLOW}${_country} / $(get_country_name "$_country")${PLAIN}"
     [ -n "$PUBLIC_IP"   ] && echo -e "IPv4 地址 : ${YELLOW}${PUBLIC_IP}${PLAIN}"
     [ -n "$PUBLIC_IPV6" ] && echo -e "IPv6 地址 : ${YELLOW}${PUBLIC_IPV6}${PLAIN} ${GREEN}(推荐)${PLAIN}"
 

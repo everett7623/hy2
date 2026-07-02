@@ -161,6 +161,16 @@ get_country_flag() {
     esac
 }
 
+get_country_name() {
+    case "$1" in
+        US) printf 'United States' ;; DE) printf 'Germany' ;; JP) printf 'Japan' ;; SG) printf 'Singapore' ;;
+        HK) printf 'Hong Kong' ;; TW) printf 'Taiwan' ;; KR) printf 'South Korea' ;; GB) printf 'United Kingdom' ;;
+        FR) printf 'France' ;; NL) printf 'Netherlands' ;; CA) printf 'Canada' ;; AU) printf 'Australia' ;;
+        RU) printf 'Russia' ;; IN) printf 'India' ;; VN) printf 'Vietnam' ;; TH) printf 'Thailand' ;;
+        UN) printf 'Unknown' ;; *) printf 'Unknown' ;;
+    esac
+}
+
 generate_node_name() {
     local _country _server _protocol _ip_type _flag
     _country=$(printf '%s' "${1:-UN}" | tr '[:lower:]' '[:upper:]')
@@ -748,9 +758,8 @@ show_node_info() {
     local password="${NODE_PASSWORD}"
     local sni="${NODE_DOMAIN:-bing.com}"
 
-    local country flag full_node name_encoded hy2_link qr_url qrcode_png safe_password safe_sni safe_node
+    local country full_node name_encoded hy2_link qr_url qrcode_png safe_password safe_sni safe_node
     country=$(get_country_code "$ipv6_raw")
-    flag=$(get_country_flag "$country")
     full_node=$(generate_node_name "$country" "$node_name" "EUserv-HY2" "IPv6")
     name_encoded=$(uri_encode "$full_node")
     local hy2_link="hysteria2://${password}@${ipv6_bracket}:${port}/?insecure=1&sni=${sni}#${name_encoded}"
@@ -765,7 +774,7 @@ show_node_info() {
     echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo -e "服务器名称: ${CYAN}${node_name}${NC}"
-    echo -e "国家/地区: ${CYAN}${flag} ${country}${NC}"
+    echo -e "国家/地区: ${CYAN}${country} / $(get_country_name "$country")${NC}"
     echo -e "IPv6 地址 : ${CYAN}${ipv6_raw}${NC}"
     echo -e "端口 Port : ${CYAN}${port}${NC}"
     echo -e "密码 Pass : ${CYAN}${password}${NC}"
@@ -786,6 +795,33 @@ show_node_info() {
     echo ""
     echo -e "${CYAN}Mihomo / Clash Meta / Clash Verge 单行配置:${NC}"
     print_copy_block "- {name: \"${safe_node}\", type: hysteria2, server: \"${ipv6_raw}\", port: ${port}, password: \"${safe_password}\", sni: \"${safe_sni}\", skip-cert-verify: true, fast-open: true, udp: true}"
+    echo ""
+    echo -e "${CYAN}Loon 配置:${NC}"
+    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, \"${password}\", skip-cert-verify=true, sni=${sni}"
+    echo ""
+    echo -e "${CYAN}Surfboard 配置:${NC}"
+    print_copy_block "${full_node} = hysteria2, ${ipv6_raw}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
+    echo ""
+    echo -e "${CYAN}Shadowrocket 配置:${NC}"
+    print_copy_block "$hy2_link"
+    echo ""
+    echo -e "${CYAN}Quantumult X 配置:${NC}"
+    print_copy_block "Quantumult X 暂不支持该协议的配置格式。"
+    echo ""
+
+    echo -e "${CYAN}二维码:${NC}"
+    if generate_terminal_qrcode "$hy2_link"; then
+        success "终端二维码已生成"
+        qrcode_png=$(generate_local_qrcode_png "$hy2_link" 2>/dev/null || true)
+        [ -n "$qrcode_png" ] && echo -e "本地二维码图片: ${CYAN}${qrcode_png}${NC}"
+    else
+        warn "未安装 qrencode，跳过终端和本地 PNG 二维码"
+    fi
+    warn "在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。"
+    print_copy_block "$qr_url"
+    echo ""
+    echo -e "${DIM}EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
+    echo -e "${DIM}国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
     echo ""
     echo -e "${CYAN}sing-box / SFA JSON:${NC}"
     cat <<CFG
@@ -814,33 +850,6 @@ show_node_info() {
   }
 }
 CFG
-    echo ""
-    echo -e "${CYAN}Loon 配置:${NC}"
-    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, \"${password}\", skip-cert-verify=true, sni=${sni}"
-    echo ""
-    echo -e "${CYAN}Surfboard 配置:${NC}"
-    print_copy_block "${full_node} = hysteria2, ${ipv6_raw}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
-    echo ""
-    echo -e "${CYAN}Shadowrocket 配置:${NC}"
-    print_copy_block "$hy2_link"
-    echo ""
-    echo -e "${CYAN}Quantumult X 配置:${NC}"
-    print_copy_block "Quantumult X 暂不支持该协议的配置格式。"
-    echo ""
-
-    echo -e "${CYAN}二维码:${NC}"
-    if generate_terminal_qrcode "$hy2_link"; then
-        success "终端二维码已生成"
-        qrcode_png=$(generate_local_qrcode_png "$hy2_link" 2>/dev/null || true)
-        [ -n "$qrcode_png" ] && echo -e "本地二维码图片: ${CYAN}${qrcode_png}${NC}"
-    else
-        warn "未安装 qrencode，跳过终端和本地 PNG 二维码"
-    fi
-    warn "在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。"
-    print_copy_block "$qr_url"
-    echo ""
-    echo -e "${DIM}EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
-    echo -e "${DIM}国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
     echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }

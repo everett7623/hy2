@@ -135,29 +135,29 @@ detect_init() {
 }
 
 install_dependencies() {
-    echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
+    echo -e "${YELLOW}正在检查并安装必要依赖...${PLAIN}"
     case "$RELEASE" in
         alpine)
-            apk update -q
-            apk add --no-cache bash curl wget ca-certificates tar openssl iproute2 procps
+            apk update -q >/dev/null 2>&1
+            apk add --no-cache bash curl wget ca-certificates tar openssl iproute2 procps >/dev/null 2>&1
             apk add --no-cache libqrencode >/dev/null 2>&1 || true
             ;;
         centos)
-            yum install -y curl wget ca-certificates tar openssl iproute procps-ng
+            yum install -y curl wget ca-certificates tar openssl iproute procps-ng >/dev/null 2>&1
             yum install -y qrencode >/dev/null 2>&1 || true
             ;;
         fedora|rocky)
-            dnf install -y curl wget ca-certificates tar openssl iproute procps-ng
+            dnf install -y curl wget ca-certificates tar openssl iproute procps-ng >/dev/null 2>&1
             dnf install -y qrencode >/dev/null 2>&1 || true
             ;;
         arch)
-            pacman -Sy --noconfirm curl wget ca-certificates tar openssl iproute2 procps-ng
+            pacman -Sy --noconfirm curl wget ca-certificates tar openssl iproute2 procps-ng >/dev/null 2>&1
             pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
             ;;
         *)
             if command -v apt-get >/dev/null 2>&1; then
-                apt-get update -qq
-                apt-get install -y curl wget ca-certificates tar openssl iproute2 procps
+                apt-get update -qq >/dev/null 2>&1
+                apt-get install -y -qq curl wget ca-certificates tar openssl iproute2 procps >/dev/null 2>&1
                 apt-get install -y qrencode >/dev/null 2>&1 || true
             else
                 echo -e "${RED}无法识别包管理器，请手动安装 curl wget tar openssl iproute2${PLAIN}"
@@ -609,6 +609,16 @@ get_country_flag() {
         FR) printf '🇫🇷' ;; NL) printf '🇳🇱' ;; CA) printf '🇨🇦' ;; AU) printf '🇦🇺' ;;
         RU) printf '🇷🇺' ;; IN) printf '🇮🇳' ;; VN) printf '🇻🇳' ;; TH) printf '🇹🇭' ;;
         *) printf '🌐' ;;
+    esac
+}
+
+get_country_name() {
+    case "$1" in
+        US) printf 'United States' ;; DE) printf 'Germany' ;; JP) printf 'Japan' ;; SG) printf 'Singapore' ;;
+        HK) printf 'Hong Kong' ;; TW) printf 'Taiwan' ;; KR) printf 'South Korea' ;; GB) printf 'United Kingdom' ;;
+        FR) printf 'France' ;; NL) printf 'Netherlands' ;; CA) printf 'Canada' ;; AU) printf 'Australia' ;;
+        RU) printf 'Russia' ;; IN) printf 'India' ;; VN) printf 'Vietnam' ;; TH) printf 'Thailand' ;;
+        UN) printf 'Unknown' ;; *) printf 'Unknown' ;;
     esac
 }
 
@@ -1342,10 +1352,6 @@ show_node() {
     print_copy_block "$(export_mihomo_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}sing-box / SFA JSON:${PLAIN}"
-    export_singbox_anytls "$_server" "$_port" "$_node" "$_cert_pin"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN}Loon 配置:${PLAIN}"
     print_copy_block "$(export_loon_anytls "$_server" "$_port" "$_node")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -1380,20 +1386,23 @@ show_node() {
     echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
     print_copy_block "$_qr_url"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}sing-box / SFA JSON:${PLAIN}"
+    export_singbox_anytls "$_server" "$_port" "$_node" "$_cert_pin"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
 show_config() {
     read_config_live || { echo -e "${RED}未找到 AnyTLS 配置${PLAIN}"; sleep 2; return; }
 
-    local _country _flag _server_name
+    local _country _server_name
     _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
-    _flag=$(get_country_flag "$_country")
     _server_name=$(generate_server_name)
 
     echo -e "\n${GREEN}AnyTLS 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "服务器名称: ${YELLOW}${_server_name}${PLAIN}"
-    echo -e "国家/地区: ${YELLOW}${_flag} ${_country}${PLAIN}"
+    echo -e "国家/地区: ${YELLOW}${_country} / $(get_country_name "$_country")${PLAIN}"
     [ -n "$PUBLIC_IP"   ] && echo -e "IPv4 地址 : ${YELLOW}${PUBLIC_IP}${PLAIN}"
     [ -n "$PUBLIC_IPV6" ] && echo -e "IPv6 地址 : ${YELLOW}${PUBLIC_IPV6}${PLAIN}"
     if [ "$NAT_MODE" = "1" ] && [ "$EXT_PORT" != "$LISTEN_PORT" ]; then
@@ -1703,19 +1712,20 @@ main_menu() {
             _ver_line=" ($(get_installed_version))"
         fi
 
-        echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  AnyTLS Management Script v2.0.0${PLAIN}"
-        echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
-        echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
-        echo -e " 实现    : ${YELLOW}sing-box 原生 AnyTLS 入站${PLAIN}"
-        echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
-        echo -e " Seedloc博客 : https://seedloc.com"
-        echo -e " VPSknow网站 : https://vpsknow.com"
-        echo -e " Nodeloc论坛 : https://nodeloc.com"
-        echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e " 当前状态: $STATUS${_ver_line}"
-        echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
+        echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.0${PLAIN}"
+        echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
+        echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
+        echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
+        echo -e "  作者    : ${YELLOW}Jensfrank${PLAIN}"
+        echo -e "  实现    : ${YELLOW}sing-box 原生 AnyTLS 入站${PLAIN}"
+        echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
+        echo -e "  Seedloc博客 : https://seedloc.com"
+        echo -e "  VPSknow网站 : https://vpsknow.com"
+        echo -e "  Nodeloc论坛 : https://nodeloc.com"
+        echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
+        echo -e "  当前状态: $STATUS${_ver_line}"
+        echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
         echo -e " 1. 安装 / 重装 AnyTLS"
         echo -e " 2. 查看节点信息 / 链接"
         echo -e " 3. 管理 AnyTLS（启动 / 停止 / 重启 / 日志 / 修改）"
@@ -1723,7 +1733,7 @@ main_menu() {
         echo -e " 5. 卸载 AnyTLS"
         echo -e " 6. 服务器工具"
         echo -e " 0. 退出"
-        echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e "${SKYBLUE}================================================${PLAIN}"
 
         read -r -p "请输入选项 [0-6]: " choice
         case "$choice" in

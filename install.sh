@@ -198,10 +198,25 @@ get_country_flag() {
     esac
 }
 
+get_country_name() {
+    case "$1" in
+        US) printf 'United States' ;; DE) printf 'Germany' ;; JP) printf 'Japan' ;; SG) printf 'Singapore' ;;
+        HK) printf 'Hong Kong' ;; TW) printf 'Taiwan' ;; KR) printf 'South Korea' ;; GB) printf 'United Kingdom' ;;
+        FR) printf 'France' ;; NL) printf 'Netherlands' ;; CA) printf 'Canada' ;; AU) printf 'Australia' ;;
+        RU) printf 'Russia' ;; IN) printf 'India' ;; VN) printf 'Vietnam' ;; TH) printf 'Thailand' ;;
+        UN) printf 'Unknown' ;; *) printf 'Unknown' ;;
+    esac
+}
+
 get_bbr_status() {
-    local _cc
+    local _cc _qdisc
     _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-    echo "${_cc:-}" | grep -qi bbr && printf 'enabled' || printf 'disabled'
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    if echo "${_cc:-}" | grep -qi bbr; then
+        printf '%s / %s' "${_cc}" "${_qdisc:-unknown}"
+    else
+        printf 'disabled (%s / %s)' "${_cc:-unknown}" "${_qdisc:-unknown}"
+    fi
 }
 
 get_status() {
@@ -219,7 +234,7 @@ get_status() {
     [ "$NET_IPV4" != "无" ] && _country=$(get_ip_country "$NET_IPV4" 2>/dev/null || true)
     [ -z "$_country" ] && [ "$NET_IPV6" != "无" ] && _country=$(get_ip_country "$NET_IPV6" 2>/dev/null || true)
     [ -z "$_country" ] && _country="UN"
-    COUNTRY_INFO="$(get_country_flag "$_country") ${_country}"
+    COUNTRY_INFO="${_country} / $(get_country_name "$_country")"
 
     if [ -f "/usr/local/bin/hysteria" ]; then
         _ver=$(/usr/local/bin/hysteria version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
@@ -261,10 +276,10 @@ get_status() {
 # ============================================================
 show_header() {
     clear
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${PLAIN}"
-    echo -e "${CYAN}║${WHITE}${BOLD}              Sing-box Multi-Protocol Tools v2.0             ${PLAIN}${CYAN}║${PLAIN}"
-    echo -e "${CYAN}║${DIM}        AnyTLS · Hysteria2 · Shadowsocks · EUserv HY2         ${PLAIN}${CYAN}║${PLAIN}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${PLAIN}"
+    echo -e "${SKYBLUE}${BOLD}==============================================================${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0${PLAIN}"
+    echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
+    echo -e "${SKYBLUE}${BOLD}==============================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}博客${PLAIN}   ${SKYBLUE}seedloc.com${PLAIN}     ${DIM}│${PLAIN}  ${DIM}测评${PLAIN}  ${SKYBLUE}vpsknow.com${PLAIN}"
     echo -e "  ${DIM}论坛${PLAIN}   ${SKYBLUE}nodeloc.com${PLAIN}"
@@ -273,12 +288,12 @@ show_header() {
 
 show_status_summary() {
     get_status
-    echo -e "${DIM}IPv4${PLAIN}     ${WHITE}${NET_IPV4}${PLAIN}"
-    echo -e "${DIM}IPv6${PLAIN}     ${WHITE}${NET_IPV6}${PLAIN}"
-    echo -e "${DIM}系统${PLAIN}     ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
-    echo -e "${DIM}内核${PLAIN}     ${WHITE}${KERNEL_INFO}${PLAIN}"
-    echo -e "${DIM}BBR${PLAIN}      ${WHITE}${BBR_STATUS}${PLAIN}"
-    echo -e "${DIM}国家${PLAIN}     ${WHITE}${COUNTRY_INFO}${PLAIN}"
+    echo -e "${DIM}IPv4${PLAIN}        ${WHITE}${NET_IPV4}${PLAIN}"
+    echo -e "${DIM}IPv6${PLAIN}        ${WHITE}${NET_IPV6}${PLAIN}"
+    echo -e "${DIM}系统${PLAIN}        ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
+    echo -e "${DIM}内核${PLAIN}        ${WHITE}${KERNEL_INFO}${PLAIN}"
+    echo -e "${DIM}BBR${PLAIN}         ${WHITE}${BBR_STATUS}${PLAIN}"
+    echo -e "${DIM}国家/地区${PLAIN}   ${WHITE}${COUNTRY_INFO}${PLAIN}"
     echo -e "${SKYBLUE}──────────────────────────────────────────────────────────────${PLAIN}"
     echo -e "AnyTLS          $(echo -e "$ANYTLS_STATUS")"
     echo -e "Hysteria2       $(echo -e "$HY2_STATUS")"
@@ -328,12 +343,12 @@ export_config_menu() {
         echo -e "[1] URI 分享链接"
         echo -e "[2] Throne URI"
         echo -e "[3] Mihomo / Clash Meta / Clash Verge 单行配置"
-        echo -e "[4] sing-box / SFA JSON 配置"
-        echo -e "[5] Loon 配置"
-        echo -e "[6] Surfboard 配置"
-        echo -e "[7] Shadowrocket 配置"
-        echo -e "[8] Quantumult X 配置"
-        echo -e "[9] 全部输出"
+        echo -e "[4] Loon 配置"
+        echo -e "[5] Surfboard 配置"
+        echo -e "[6] Shadowrocket 配置"
+        echo -e "[7] Quantumult X 配置"
+        echo -e "[8] 全部输出"
+        echo -e "[9] sing-box / SFA JSON 配置"
         echo -e "[0] 返回"
         echo ""
         read -r -p "请选择导出格式 [0-9]: " fmt
