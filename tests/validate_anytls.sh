@@ -48,6 +48,8 @@ LISTEN_PORT=8443; BIND_FAMILY=v6
 [ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
 
 PASSWORD=Abcdef12; SERVER_NAME=www.example.com
+shadowrocket_uri=$(export_shadowrocket_anytls 192.0.2.1 8443 'AnyTLS Test' 'TestPin+/=')
+[ "$shadowrocket_uri" = "anytls://Abcdef12@192.0.2.1:8443?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=5&insecure=0&security=tls&sni=www.example.com&tls_certificate_public_key_sha256=TestPin%2B%2F%3D&fp=chrome#AnyTLS%20Test" ]
 certificate_public_key_sha256() { printf 'TestPin+/='; }
 certificate_fingerprint_sha256() { printf 'AA:BB:CC:DD'; }
 node_output=$(show_node 192.0.2.1 8443 v4)
@@ -64,7 +66,8 @@ echo "$node_output" | grep -q 'https://github.com/chika0801/sing-box-examples/tr
 ! echo "$node_output" | grep -q '"type": "tun"'
 ! echo "$node_output" | grep -q '"inbounds"'
 ! echo "$node_output" | grep -q '"route"'
-echo "$node_output" | grep -q 'Shadowrocket 暂不支持 AnyTLS URI 导入格式'
+echo "$node_output" | grep -q 'Shadowrocket 配置'
+! echo "$node_output" | grep -q 'Shadowrocket 暂不支持 AnyTLS URI 导入格式'
 ! echo "$node_output" | grep -q '"listen_port": 2080'
 
 client_config=$(render_singbox_client_config 192.0.2.1 8443 Abcdef12 AnyTLS-Test www.example.com 'TestPin+/=')

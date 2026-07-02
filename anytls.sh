@@ -1288,7 +1288,7 @@ export_surfboard_anytls() {
 }
 
 export_shadowrocket_anytls() {
-    printf 'Shadowrocket 暂不支持 AnyTLS URI 导入格式。'
+    render_throne_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME" "${4:-}"
 }
 
 export_quantumultx_anytls() {
@@ -1348,7 +1348,7 @@ show_node() {
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
-    print_copy_block "$(export_shadowrocket_anytls)"
+    print_copy_block "$(export_shadowrocket_anytls "$_server" "$_port" "$_node" "$_cert_pin")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
