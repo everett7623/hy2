@@ -40,6 +40,12 @@ LISTEN_PORT=8443; BIND_FAMILY=v6
 [ "$(listen_address)" = "[::]:8443" ]
 [ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
 
+PASSWORD=Abcdef12; SERVER_NAME=www.example.com
+node_output=$(show_node 192.0.2.1 8443 v4)
+echo "$node_output" | grep -q '分享链接 (NekoBox / v2rayN / Shadowrocket)'
+echo "$node_output" | grep -q "type: anytls, server: '192.0.2.1', port: 8443"
+echo "$node_output" | grep -q 'sing-box 客户端 outbound 配置'
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 ANYTLS_DIR="$tmp/etc"; ANYTLS_CONFIG="$ANYTLS_DIR/anytls.json"

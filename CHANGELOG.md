@@ -12,6 +12,7 @@
 - 修复自动更新脚本递归调用自身的问题，并为 sing-box 升级增加配置校验与失败回滚
 - AnyTLS 安装时随机提供常用 SNI 默认值，并补充证书、配置校验和启动阶段的故障诊断
 - 修复配置函数在正常主机名下错误返回失败、导致输入 SNI 后直接退出安装的问题
+- AnyTLS 节点信息统一为 HY2/SS 风格，补充 Mihomo/Clash 与 sing-box 客户端配置块
 - 在完整删除旧实现后，从空文件重新开发 `anytls.sh`，不继承旧 AnyTLS 代码
 - 使用 sing-box >= 1.12.0 原生 AnyTLS 入站，不依赖 Python 运行环境
 - 支持 systemd、OpenRC 和无 init 环境，覆盖 IPv4、IPv6 与双栈监听

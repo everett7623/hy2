@@ -916,38 +916,47 @@ change_config() {
 }
 
 # ============================================================
-# 节点输出
+# 展示单个节点（IPv4 或 IPv6）
+# $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
-_show_node() {
+show_node() {
     local _server="$1" _port="$2" _tag="$3"
     [ -z "$_server" ] && return
 
-    local _date _node _uri
+    local _date _node _uri _enc_uri _qr_url _yaml_password
     _date=$(date +%m%d)
     _node="AnyTLS-${_tag}-${_date}"
 
     _uri=$(render_uri "$_server" "$_port" "$PASSWORD" "$_node" "$SERVER_NAME")
-
-    local _display_server="$_server"
-    echo "$_server" | grep -q ':' && _display_server="[${_server}]"
-
-    echo -e "\n${GREEN}${_node}${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    echo -e "${BOLD}地址${PLAIN}: ${YELLOW}${_server}${PLAIN}"
-    echo -e "${BOLD}端口${PLAIN}: ${YELLOW}${_port}${PLAIN}"
-    echo -e "${BOLD}密码${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
-    echo -e "${BOLD}SNI${PLAIN}: ${YELLOW}${SERVER_NAME}${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    echo -e "${GREEN}分享链接:${PLAIN}"
-    echo "  $_uri"
-    if command -v qrencode >/dev/null 2>&1; then
-        echo -e "${GREEN}终端二维码:${PLAIN}"
-        qrencode -t ANSIUTF8 -m 2 "$_uri"
-    fi
-    echo -e "${GREEN}二维码图片链接:${PLAIN}"
-    local _enc_uri
     _enc_uri=$(uri_encode "$_uri")
-    echo "  https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_enc_uri}"
+    _qr_url="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_enc_uri}"
+    _yaml_password=$(printf '%s' "$PASSWORD" | sed "s/'/''/g")
+
+    # ---- 分享链接 ----
+    echo -e "${GREEN} 分享链接 (NekoBox / v2rayN / Shadowrocket):${PLAIN}"
+    echo -e "  ${_uri}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # ---- 终端二维码（优先）----
+    if command -v qrencode >/dev/null 2>&1; then
+        echo -e "${GREEN} 扫码导入（终端二维码）:${PLAIN}"
+        qrencode -t ANSIUTF8 -m 2 "${_uri}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    # ---- 二维码图片链接（备用）----
+    echo -e "${GREEN} 二维码图片链接（无法扫描时用浏览器打开）:${PLAIN}"
+    echo -e "  ${_qr_url}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # ---- Mihomo / Clash Meta / Clash Verge ----
+    echo -e "${GREEN} Mihomo / Clash Meta / Clash Verge 配置:${PLAIN}"
+    echo -e "  - {name: '${_node}', type: anytls, server: '${_server}', port: ${_port}, password: '${_yaml_password}', client-fingerprint: chrome, udp: true, sni: '${SERVER_NAME}', skip-cert-verify: true}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    # ---- sing-box ----
+    echo -e "${GREEN} sing-box 客户端 outbound 配置:${PLAIN}"
+    echo -e "  {\"type\":\"anytls\",\"tag\":\"${_node}\",\"server\":\"${_server}\",\"server_port\":${_port},\"password\":\"${PASSWORD}\",\"tls\":{\"enabled\":true,\"server_name\":\"${SERVER_NAME}\",\"insecure\":true,\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}}}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -956,19 +965,35 @@ show_config() {
 
     echo -e "\n${GREEN}AnyTLS 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    echo -e "  ${BOLD}配置${PLAIN}: ${ANYTLS_CONFIG}"
-    echo -e "  ${BOLD}监听端口${PLAIN}: ${LISTEN_PORT}"
-    echo -e "  ${BOLD}对外端口${PLAIN}: ${EXT_PORT}"
-    echo -e "  ${BOLD}密码${PLAIN}: ${PASSWORD}"
-    echo -e "  ${BOLD}SNI${PLAIN}: ${SERVER_NAME}"
+    [ -n "$PUBLIC_IP"   ] && echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${PUBLIC_IP}${PLAIN}"
+    [ -n "$PUBLIC_IPV6" ] && echo -e "  ${BOLD}IPv6地址${PLAIN}: ${YELLOW}${PUBLIC_IPV6}${PLAIN}"
+    if [ "$NAT_MODE" = "1" ] && [ "$EXT_PORT" != "$LISTEN_PORT" ]; then
+        echo -e "  ${BOLD}监听端口${PLAIN}: ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
+        echo -e "  ${BOLD}对外端口${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}← 客户端连接此端口${PLAIN}"
+    else
+        echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}"
+    fi
+    echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
+    echo -e "  ${BOLD}伪装 SNI${PLAIN}: ${YELLOW}${SERVER_NAME}${PLAIN}"
+    echo -e "  ${BOLD}自签证书${PLAIN}: ${RED}Insecure / Skip Cert Verify = True${PLAIN}"
+    [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    [ -n "$PUBLIC_IP"   ] && _show_node "$PUBLIC_IP"   "$EXT_PORT" "IPv4"
-    [ -n "$PUBLIC_IPV6" ] && _show_node "$PUBLIC_IPV6" "$EXT_PORT" "IPv6"
+    if [ -n "$PUBLIC_IP" ]; then
+        echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
+        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+    fi
+    if [ -n "$PUBLIC_IPV6" ]; then
+        echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
+        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
+    fi
 
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         read -r -p "未检测到公网 IP，请手动输入节点地址: " _manual_addr
-        [ -n "$_manual_addr" ] && _show_node "$_manual_addr" "$EXT_PORT" "Manual"
+        if [ -n "$_manual_addr" ]; then
+            echo -e "${YELLOW}▼ 手动地址节点配置${PLAIN}"
+            show_node "$_manual_addr" "$EXT_PORT" "manual"
+        fi
     fi
 
     read -r -p "按回车键返回主菜单..." _tmp
