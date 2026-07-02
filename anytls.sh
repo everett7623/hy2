@@ -1071,6 +1071,44 @@ change_config() {
 # 展示单个节点（IPv4 或 IPv6）
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
+render_singbox_client_config() {
+    local _server="$1" _port="$2" _password="$3" _tag="$4" _sni="$5"
+    cat <<CFG
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "anytls",
+      "tag": "${_tag}",
+      "server": "${_server}",
+      "server_port": ${_port},
+      "password": "${_password}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${_sni}",
+        "insecure": true,
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      }
+    }
+  ]
+}
+CFG
+}
+
 show_node() {
     local _server="$1" _port="$2" _tag="$3"
     [ -z "$_server" ] && return
@@ -1111,8 +1149,8 @@ show_node() {
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- sing-box ----
-    echo -e "${GREEN} sing-box 客户端 outbound 配置:${PLAIN}"
-    echo -e "  {\"type\":\"anytls\",\"tag\":\"${_node}\",\"server\":\"${_server}\",\"server_port\":${_port},\"password\":\"${PASSWORD}\",\"tls\":{\"enabled\":true,\"server_name\":\"${SERVER_NAME}\",\"insecure\":true,\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}}}"
+    echo -e "${GREEN} sing-box 完整客户端配置（本地 SOCKS/HTTP: 127.0.0.1:2080）:${PLAIN}"
+    render_singbox_client_config "$_server" "$_port" "$PASSWORD" "$_node" "$SERVER_NAME" | sed 's/^/  /'
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
