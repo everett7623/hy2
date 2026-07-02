@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | **Hysteria 2** | UDP 超速 · 自签证书 · 无需域名 | 主力节点，绝大多数网络环境 |
 | **Shadowsocks** | 支持 SS-2022 · musl 静态编译 · 全平台兼容 | 备用节点，IPv6 / 双栈环境尤佳 |
-| **AnyTLS** | 官方 anytls-go · TCP/TLS · 无 sing-box 依赖 | 需要 TCP/TLS 传输的轻量节点 |
+| **AnyTLS** | sing-box 原生入站 · TCP/TLS · 自签证书 | 需要 TCP/TLS 传输的轻量节点 |
 | **EUserv Hysteria 2** | IPv6-only 专属 · 自动适配 · Warp 集成 | EUserv 免费德鸡专用 |
 
 ---
@@ -73,16 +73,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 
 > **⚠️ SS-2022 特别提醒**：SS-2022 协议具有严格的时间防重放机制。若配置无误但仍提示超时，请务必确保手机 / 电脑本地时间与世界标准时间分秒一致。
 
-### AnyTLS（官方核心）
+### AnyTLS（sing-box 原生入站）
 
-这是在完整删除旧代码后重新开发的独立实现，直接使用官方 `anytls/anytls-go` 的 `anytls-server`，不使用 sing-box 核心。
+脚本下载 sing-box 稳定版，通过原生 AnyTLS inbound 提供服务；Shell 负责生成 JSON、自签证书、服务 wrapper 和分享链接，运行时不依赖 Python。
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh)
 ```
 
-- 默认端口：`8443`
-- 支持架构：Linux `amd64` / `arm64`
+- 默认端口：`38888`
+- 支持架构：Linux `amd64` / `arm64` / `armv7` / `386` / `s390x`
 - 支持环境：systemd、OpenRC、无 init；IPv4、IPv6、双栈
 
 ### EUserv 免费德鸡专用（IPv6-only）
@@ -278,7 +278,7 @@ bash hy2.sh
 | `install.sh` | 远程统一入口，从 GitHub `main` 下载并执行子脚本 |
 | `hy2.sh` | Hysteria 2 安装与管理 |
 | `ss.sh` | Shadowsocks-Rust 安装与管理 |
-| `anytls.sh` | 基于官方 anytls-go 的 AnyTLS 安装与管理 |
+| `anytls.sh` | 基于 sing-box 原生入站的 AnyTLS 安装与管理 |
 | `euservhy2.sh` | EUserv IPv6-only 专用 Hysteria 2 脚本 |
 | `tests/validate_scripts.sh` | Bash 语法、版本、换行、兼容规则及自动更新脚本检查 |
 | `tests/validate_anytls.sh` | AnyTLS 输入、下载 URL、配置、URI、服务文件与 ELF 行为测试 |

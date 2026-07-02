@@ -15,7 +15,7 @@ A collection of bash scripts for one-click deployment and management of Hysteria
 - **`install.sh`** — Remote launcher/menu. Downloads sub-scripts from the GitHub `main` branch and pipes to bash. Does NOT use local files. Bug fixes in local scripts won't take effect until pushed.
 - **`hy2.sh`** — Hysteria 2 management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, firewall auto-ports, modify bandwidth/config, terminal QR codes, server tools.
 - **`ss.sh`** — Shadowsocks-Rust management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, modify config, terminal QR codes, connection test, server tools. IPv6-first detection with WARP filtering.
-- **`anytls.sh`** — Fresh standalone implementation using official `anytls/anytls-go`, not sing-box. Supports amd64/arm64 and systemd/OpenRC/no-init.
+- **`anytls.sh`** — Standalone shell management around sing-box >= 1.12.0 native AnyTLS inbound. Generates JSON, TLS certificates, wrapper and service files without Python.
 - **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with hy2.sh.
 
 ## `install.sh` references
@@ -105,7 +105,7 @@ Do not confuse the project script version with the installed proxy version. `get
 | SS auto-update script | `/usr/local/bin/ss-autoupdate.sh` |
 | SS auto-update log | `/var/log/ss-autoupdate.log` |
 | AnyTLS binary | `/usr/local/bin/anytls-server` |
-| AnyTLS config | `/etc/anytls/config.env` |
+| AnyTLS config | `/etc/sing-box/anytls.json` |
 | Systemd service | `/etc/systemd/system/hysteria-server.service` |
 | OpenRC service | `/etc/init.d/hysteria-server` |
 

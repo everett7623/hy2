@@ -97,7 +97,7 @@ LISTEN_PORT=""
 - 启动器不读取仓库中的本地子脚本；未推送到 GitHub `main` 的修改不会通过启动器生效。
 - 项目没有预发布分支。静态检查由 `tests/validate_scripts.sh` 和 GitHub Actions 执行；运行时行为仍需在一次性 VPS 上端到端验证。
 - 五个脚本的项目版本目前保持一致，但版本文本分散在文件头、菜单和变量中，发布时必须人工同步。
-- `anytls.sh` 从零实现并使用官方 `anytls-go` 服务端，不以 sing-box 为核心，仅支持 amd64/arm64 Linux 发布包。
+- `anytls.sh` 使用 sing-box >= 1.12.0 原生 AnyTLS 入站；Shell 生成 JSON、自签证书及 `anytls-server` wrapper，不依赖 Python。
 
 ## 本地验证清单
 
@@ -122,7 +122,7 @@ hy2/
 ├── install.sh          # 统一远程入口（子脚本也可独立运行）
 ├── hy2.sh              # Hysteria 2 管理
 ├── ss.sh               # Shadowsocks 管理
-├── anytls.sh           # AnyTLS 官方核心管理
+├── anytls.sh           # sing-box 原生 AnyTLS 管理
 ├── euservhy2.sh        # EUserv IPv6 Hysteria 2
 ├── CHANGELOG.md        # 更新日志
 ├── CONTRIBUTING.md     # 贡献与开发流程

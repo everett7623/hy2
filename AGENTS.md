@@ -9,7 +9,7 @@ Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant
 - `install.sh` is a **remote launcher** — it downloads scripts from `https://raw.githubusercontent.com/everett7623/hy2/main/` and pipes to bash. It does **not** use local files. Bug fixes in local scripts won't take effect until pushed to GitHub.
 - `hy2.sh` — Hysteria 2 management (install/upgrade/uninstall, BBR, auto-update, firewall, QR, server tools).
 - `ss.sh` — Shadowsocks-Rust management (install/upgrade/uninstall, BBR, auto-update, QR, connection test, IPv4/IPv6 switch).
-- `anytls.sh` — AnyTLS management via **sing-box >= 1.10.0** native anytls inbound. Downloads and manages sing-box; does NOT use a standalone `anytls-go` binary.
+- `anytls.sh` — AnyTLS management via **sing-box >= 1.12.0** native anytls inbound. Downloads and manages sing-box; does NOT use a standalone `anytls-go` binary.
 - `euservhy2.sh` — Standalone EUserv IPv6-only script. Does not share code with hy2.sh.
 
 ## Version management

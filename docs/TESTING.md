@@ -2,7 +2,7 @@
 
 ## AnyTLS 自动化验证
 
-`bash tests/validate_scripts.sh` 会执行 `tests/validate_anytls.sh`。该测试会 source 全新的 `anytls.sh`，实际验证输入校验、官方下载 URL、架构映射、IPv6 URI、配置往返、systemd 单元权限和 ELF 魔数，不再检查旧实现。
+`bash tests/validate_scripts.sh` 会执行 `tests/validate_anytls.sh`。该测试会 source `anytls.sh`，验证输入校验、sing-box 下载 URL、架构映射、IPv6 URI、JSON/元数据往返、wrapper、systemd 单元和 ELF 魔数。
 
 发布前仍需在一次性 VPS 覆盖 systemd、OpenRC 以及 IPv4、IPv6、双栈环境。上游仅提供 amd64 和 arm64 Linux 包，其他架构应明确拒绝。
 

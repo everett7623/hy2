@@ -256,7 +256,7 @@ main_menu() {
         echo -e "  ${GREEN}${BOLD}2.${PLAIN}  ${BOLD}Shadowsocks${PLAIN}               ${DIM}SS-2022 · 全平台兼容 · 保底节点${PLAIN}"
         echo -e "     ${DIM}状态:${PLAIN} $(echo -e "$SS_STATUS")"
         echo ""
-        echo -e "  ${GREEN}${BOLD}3.${PLAIN}  ${BOLD}AnyTLS${PLAIN}                    ${DIM}TCP/TLS · 轻量部署 · 官方核心${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}3.${PLAIN}  ${BOLD}AnyTLS${PLAIN}                    ${DIM}TCP/TLS · sing-box 原生入站${PLAIN}"
         echo -e "     ${DIM}状态:${PLAIN} $(echo -e "$ANYTLS_STATUS")"
         echo ""
         echo -e "  ${WHITE}${BOLD}━━━  专用脚本  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"

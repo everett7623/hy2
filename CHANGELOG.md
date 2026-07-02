@@ -8,8 +8,10 @@
 
 **全新实现 AnyTLS**
 
+- 参考已验证的 sing-box AnyTLS 入站链路，将实现迁移为纯 Shell 生成 JSON、证书与服务 wrapper
+- 修复自动更新脚本递归调用自身的问题，并为 sing-box 升级增加配置校验与失败回滚
 - 在完整删除旧实现后，从空文件重新开发 `anytls.sh`，不继承旧 AnyTLS 代码
-- 使用官方 `anytls/anytls-go` 服务端，仅下载对应架构的官方发布包
+- 使用 sing-box >= 1.12.0 原生 AnyTLS 入站，不依赖 Python 运行环境
 - 支持 systemd、OpenRC 和无 init 环境，覆盖 IPv4、IPv6 与双栈监听
 - 增加配置读写、节点 URI、升级回滚、自动更新、防火墙和完整卸载流程
 - 新增可直接 source 的测试模式及 `tests/validate_anytls.sh` 行为测试

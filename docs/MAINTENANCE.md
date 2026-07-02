@@ -2,9 +2,9 @@
 
 ## AnyTLS 上游边界
 
-- 唯一二进制上游是 `https://github.com/anytls/anytls-go`，使用 `anytls-server`，不切换到 sing-box。
-- 发布包格式为 `anytls_<version>_linux_<amd64|arm64>.zip`；上游命名变化时必须同步行为测试。
-- 配置位于 `/etc/anytls/config.env`，写入值必须先通过脚本校验。
+- 唯一二进制上游是 `https://github.com/SagerNet/sing-box`，要求版本 >= 1.12.0。
+- 发布包格式为 `sing-box-<version>-linux-<arch>.tar.gz`；上游命名变化时必须同步行为测试。
+- 配置位于 `/etc/sing-box/anytls.json`，元数据、证书分别位于 `anytls-meta/`、`anytls-cert/`。
 - 自动测试不替代真实 VPS 的服务启动、防火墙和客户端连通性验证。
 
 ## 维护重点
@@ -26,6 +26,7 @@
 | --- | --- | --- |
 | `apernet/hysteria` GitHub Releases | Hysteria 2 版本与二进制 | tag、文件名、架构名 |
 | `shadowsocks/shadowsocks-rust` Releases | SS 版本与 musl 二进制 | tag、压缩包、架构名 |
+| `SagerNet/sing-box` Releases | AnyTLS 核心与原生入站 | 最低版本、tag、压缩包、架构名 |
 | `download.hysteria.network` | Hysteria 备用下载 | URL 或可达性 |
 | GitHub API | 获取最新版本 | 限频、网络阻断 |
 | `raw.githubusercontent.com` | 分发项目脚本 | DNS、网络阻断 |

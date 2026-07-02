@@ -49,7 +49,8 @@ for script in $SCRIPTS; do
         anytls.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
             grep -q "AnyTLS Management Script ${EXPECTED_VERSION}" "$script"
-            grep -q 'github.com/anytls/anytls-go/releases/download' "$script"
+            grep -q 'github.com/SagerNet/sing-box/releases/download' "$script"
+            grep -q '"type": "anytls"' "$script"
             grep -q 'ANYTLS_LIB_ONLY' "$script"
             ;;
         euservhy2.sh)

@@ -18,34 +18,42 @@ validate_password Abcdef12._~-
 
 [ "$(detect_arch x86_64)" = amd64 ]
 [ "$(detect_arch aarch64)" = arm64 ]
-! detect_arch armv7l >/dev/null 2>&1
+[ "$(detect_arch armv7l)" = armv7 ]
+! detect_arch mips >/dev/null 2>&1
 
-[ "$(build_release_url v0.0.13 amd64)" = "https://github.com/anytls/anytls-go/releases/download/v0.0.13/anytls_0.0.13_linux_amd64.zip" ]
+[ "$(build_release_url v1.13.12 amd64)" = "https://github.com/SagerNet/sing-box/releases/download/v1.13.12/sing-box-1.13.12-linux-amd64.tar.gz" ]
 ! build_release_url latest amd64 >/dev/null 2>&1
-! build_release_url v0.0.13 armv7 >/dev/null 2>&1
+! build_release_url v1.13.12 mips >/dev/null 2>&1
+version_at_least 1.12.0 1.12.0
+version_at_least 1.13.1 1.12.0
+! version_at_least 1.11.9 1.12.0
 
-[ "$(listen_address)" = "0.0.0.0:" ]
 LISTEN_PORT=8443; BIND_FAMILY=v6
 [ "$(listen_address)" = "[::]:8443" ]
-[ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test')" = "anytls://Abcdef12@[2001:db8::1]:8443/?insecure=1#AnyTLS%20Test" ]
+[ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
-ANYTLS_DIR="$tmp/etc"; ANYTLS_CONFIG="$ANYTLS_DIR/config.env"; ANYTLS_META="$ANYTLS_DIR/meta"
+ANYTLS_DIR="$tmp/etc"; ANYTLS_CONFIG="$ANYTLS_DIR/anytls.json"
+ANYTLS_META="$ANYTLS_DIR/anytls-meta"; ANYTLS_CERT_DIR="$ANYTLS_DIR/anytls-cert"
+ANYTLS_CERT="$ANYTLS_CERT_DIR/cert.pem"; ANYTLS_KEY="$ANYTLS_CERT_DIR/private.key"
 LISTEN_PORT=8443; EXT_PORT=9443; PASSWORD=Abcdef12; NAT_MODE=1; BIND_FAMILY=v6
+SERVER_NAME=www.example.com; MANAGED_SING_BOX=1; PUBLIC_IP=""; PUBLIC_IPV6=""
 write_config
-LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4
+grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
+grep -q '"listen_port": 8443' "$ANYTLS_CONFIG"
+grep -q '"server_name": "www.example.com"' "$ANYTLS_CONFIG"
+LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4; SERVER_NAME=""; MANAGED_SING_BOX=0
 read_config
-[ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY" = "8443:9443:Abcdef12:1:v6" ]
-[ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]
+[ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$SERVER_NAME:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6:www.example.com:1" ]
 
 SYSTEMD_SERVICE="$tmp/anytls.service"; ANYTLS_BIN=/usr/local/bin/anytls-server
 write_systemd_service
-grep -q '^ExecStart=/usr/local/bin/anytls-server -l \[::\]:8443 -p Abcdef12$' "$SYSTEMD_SERVICE"
-case "$(uname -s)" in
-    MINGW*|MSYS*) ;;
-    *) [ "$(stat -c %a "$SYSTEMD_SERVICE")" = 600 ] ;;
-esac
+grep -q '^ExecStart=/usr/local/bin/anytls-server$' "$SYSTEMD_SERVICE"
+
+SING_BOX_BIN=/usr/local/bin/sing-box; ANYTLS_BIN="$tmp/anytls-server"
+write_wrapper
+grep -q '^exec "/usr/local/bin/sing-box" run -c ' "$ANYTLS_BIN"
 
 printf '\177ELFtest' > "$tmp/server"
 validate_elf "$tmp/server"
