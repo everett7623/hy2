@@ -32,12 +32,12 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 # --- 修复交互输入 ---
-if [ ! -t 0 ]; then
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ]; then
     [ -c /dev/tty ] && exec < /dev/tty
 fi
 
 # --- 修复 Windows 换行符 ---
-if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ] && [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
     sed -i 's/\r$//' "$0"
     exec bash "$0" "$@"
 fi
@@ -260,10 +260,10 @@ restore_dns() {
 }
 
 # ============================================================
-#  Banner
+#  Banne
 # ============================================================
 show_banner() {
-    clear
+    clea
     echo -e "${CYAN}"
     echo "  ███████╗██╗   ██╗███████╗███████╗██████╗ ██╗   ██╗    ██╗  ██╗██╗   ██╗██████╗ "
     echo "  ██╔════╝██║   ██║██╔════╝██╔════╝██╔══██╗██║   ██║    ██║  ██║╚██╗ ██╔╝╚════██╗"
@@ -283,7 +283,7 @@ show_banner() {
 #  修复：WARP状态实时检测；节点名显示hostname；菜单重新排序
 # ============================================================
 show_menu() {
-    show_banner
+    show_banne
 
     # ---- 实时状态检测 ----
     local hy2_status warp_status
@@ -307,7 +307,7 @@ show_menu() {
     fi
 
     # 修复：IPv4 不写死，实时获取（Warp装好后立即显示）
-    local ipv4_addr ipv6_addr
+    local ipv4_addr ipv6_add
     ipv4_addr=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null || echo "无 IPv4")
     ipv6_addr=$(_get_real_ipv6 \
         || echo "获取失败")
@@ -352,7 +352,7 @@ show_menu() {
 check_network() {
     step "检测网络环境..."
 
-    local ipv6_addr
+    local ipv6_add
     ipv6_addr=$(_get_real_ipv6)
     if [ -z "$ipv6_addr" ]; then
         error "未检测到全局 IPv6 地址，请确认 EUserv VPS 网络正常"
@@ -545,11 +545,11 @@ generate_self_signed_cert() {
     step "生成自签 TLS 证书..."
     mkdir -p "$CERT_DIR"
 
-    local ipv6_addr
+    local ipv6_add
     ipv6_addr=$(_get_real_ipv6)
 
     # 修复：-addext 在 Debian 10 老版 openssl 不支持，加版本判断
-    local openssl_ver
+    local openssl_ve
     openssl_ver=$(openssl version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1 | tr -d '.')
     local san="DNS:${domain}"
     [ -n "$ipv6_addr" ] && san="${san},IP:${ipv6_addr}"
@@ -649,7 +649,7 @@ RestartSec=5s
 LimitNOFILE=1048576
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=hysteria-server
+SyslogIdentifier=hysteria-serve
 
 [Install]
 WantedBy=multi-user.target
@@ -817,24 +817,24 @@ show_node_info() {
     cat <<CFG
 {
   "log": {
-    "level": "info",
+    "level": "debug",
     "timestamp": true
   },
   "dns": {
     "servers": [
       {
-        "type": "https",
+        "type": "udp",
         "tag": "dns_proxy",
-        "server": "1.1.1.1",
+        "server": "8.8.8.8",
         "detour": "${safe_node}"
       },
       {
         "type": "udp",
         "tag": "dns_direct",
-        "server": "223.5.5.5",
-        "detour": "direct"
+        "server": "223.5.5.5"
       }
     ],
+    "strategy": "ipv4_only",
     "final": "dns_proxy"
   },
   "inbounds": [
@@ -847,8 +847,7 @@ show_node_info() {
       ],
       "mtu": 1400,
       "auto_route": true,
-      "strict_route": true,
-      "stack": "mixed"
+      "strict_route": true
     }
   ],
   "outbounds": [
@@ -879,6 +878,10 @@ show_node_info() {
         "action": "hijack-dns"
       },
       {
+        "ip_version": 6,
+        "action": "reject"
+      },
+      {
         "ip_is_private": true,
         "action": "route",
         "outbound": "direct"
@@ -905,7 +908,7 @@ CFG
 #  主安装流程
 # ============================================================
 do_install() {
-    show_banner
+    show_banne
     echo -e "  ${WHITE}${BOLD}安装 Hysteria2（EUserv IPv6-only 专用）${NC}"
     echo -e "  ${DIM}─────────────────────────────────────────────${NC}"
     echo ""
@@ -1005,14 +1008,14 @@ do_install() {
     } > "${HY2_CONFIG_DIR}/node.conf"
 
     step "启动 Hysteria2 服务..."
-    systemctl start hysteria-server
+    systemctl start hysteria-serve
     sleep 2
 
     if systemctl is-active --quiet hysteria-server; then
         success "Hysteria2 服务启动成功！"
     else
         error "服务启动失败，日志如下:"
-        journalctl -u hysteria-server -n 20 --no-pager
+        journalctl -u hysteria-server -n 20 --no-page
         read -rp "  按 Enter 返回..." _
         return
     fi
@@ -1025,7 +1028,7 @@ do_install() {
 #  卸载
 # ============================================================
 do_uninstall() {
-    show_banner
+    show_banne
     echo -e "  ${RED}${BOLD}卸载 Hysteria2${NC}"
     echo ""
     echo -ne "  ${YELLOW}确认卸载？将删除所有配置文件 [y/N]:${NC} "
@@ -1046,7 +1049,7 @@ do_uninstall() {
 #  修改配置
 # ============================================================
 modify_config() {
-    show_banner
+    show_banne
     echo -e "  ${WHITE}${BOLD}修改配置${NC}"
     echo ""
 
@@ -1136,7 +1139,7 @@ modify_config() {
     } > "${HY2_CONFIG_DIR}/node.conf"
 
     configure_firewall "$NODE_PORT"
-    systemctl restart hysteria-server
+    systemctl restart hysteria-serve
     sleep 1
 
     if systemctl is-active --quiet hysteria-server; then
@@ -1158,7 +1161,7 @@ modify_config() {
 #  升级
 # ============================================================
 do_upgrade() {
-    show_banner
+    show_banne
     echo -e "  ${WHITE}${BOLD}升级 Hysteria2${NC}"
     echo ""
 
@@ -1167,7 +1170,7 @@ do_upgrade() {
         read -rp "  按 Enter 返回..." _; return
     fi
 
-    local cur_ver
+    local cur_ve
     cur_ver=$("$HY2_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     info "当前版本: ${cur_ver:-未知}"
 
@@ -1206,14 +1209,14 @@ do_upgrade() {
         trap __upgrade_recover EXIT INT TERM  # re-set: restore_dns 内部会清除 trap
         systemctl start hysteria-server; sleep 1
         if systemctl is-active --quiet hysteria-server; then
-            local updated_ver
+            local updated_ve
             updated_ver=$("$HY2_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             success "升级成功！当前版本: ${updated_ver}"
             rm -f "${HY2_BIN}.bak"
         else
             error "升级后服务启动失败，回滚中..."
             mv "${HY2_BIN}.bak" "$HY2_BIN"
-            systemctl start hysteria-server
+            systemctl start hysteria-serve
             warn "已回滚至旧版本 ${cur_ver}"
         fi
     else
@@ -1221,7 +1224,7 @@ do_upgrade() {
         trap __upgrade_recover EXIT INT TERM  # re-set: restore_dns 内部会清除 trap
         error "下载失败，回滚中..."
         mv "${HY2_BIN}.bak" "$HY2_BIN"
-        systemctl start hysteria-server
+        systemctl start hysteria-serve
         warn "已回滚至旧版本 ${cur_ver}"
     fi
 
@@ -1236,7 +1239,7 @@ do_upgrade() {
 #  服务管理
 # ============================================================
 manage_service() {
-    show_banner
+    show_banne
     echo -e "  ${WHITE}${BOLD}服务管理${NC}"
     echo ""
     # 显示当前状态
@@ -1270,10 +1273,10 @@ manage_service() {
 #  查看日志
 # ============================================================
 show_logs() {
-    show_banner
+    show_banne
     echo -e "  ${WHITE}${BOLD}Hysteria2 运行日志（最近 50 行）${NC}"
     echo ""
-    journalctl -u hysteria-server -n 50 --no-pager
+    journalctl -u hysteria-server -n 50 --no-page
     echo ""
     read -rp "  按 Enter 返回..." _
 }
@@ -1284,7 +1287,7 @@ show_logs() {
 # ============================================================
 run_warp_script() {
     while true; do
-        show_banner
+        show_banne
         echo -e "  ${MAGENTA}${BOLD}WARP（F大 fscarmen/warp 脚本）${NC}"
         echo -e "  ${DIM}为 EUserv IPv6-only VPS 添加 IPv4 出口${NC}"
         echo ""
@@ -1357,7 +1360,7 @@ run_warp_script() {
 # ============================================================
 system_tools() {
     while true; do
-        show_banner
+        show_banne
         echo -e "  ${WHITE}${BOLD}系统工具${NC}"
         echo ""
 
@@ -1401,7 +1404,7 @@ system_tools() {
                 cat > "$_sysctl_conf" <<EOF
 # EUserv Hysteria2 脚本写入 - BBR 优化
 net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_congestion_control = bb
 EOF
                 sysctl -p "$_sysctl_conf" >> "$LOG_FILE" 2>&1
                 local r; r=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
@@ -1500,4 +1503,6 @@ main() {
     done
 }
 
-main "$@"
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ]; then
+    main "$@"
+fi

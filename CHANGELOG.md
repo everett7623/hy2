@@ -24,6 +24,8 @@
 - 修复 AnyTLS 的 Shadowrocket 输出，改为生成可导入的 AnyTLS URI
 - 优化 AnyTLS 证书校验提示，按客户端实际输出区分严格模式和兼容模式
 - AnyTLS 依赖安装改为静默检查，减少安装页面滚动和闪屏感
+- 仅重整四个协议的 Sing-box JSON：恢复 UDP DNS、IPv4 DNS 策略、IPv6 拒绝规则及一致的出站 tag，其他客户端输出保持不变
+- 新增四协议 Sing-box JSON 结构化测试，校验 DNS detour、TUN、路由与 AnyTLS TLS 公钥锁定字段
 - 五个脚本、测试版本断言和文档同步到 v2.0.0
 
 ---
@@ -32,7 +34,7 @@
 
 **全新实现 AnyTLS**
 
-- 参考已验证的 sing-box AnyTLS 入站链路，将实现迁移为纯 Shell 生成 JSON、证书与服务 wrapper
+- 参考已验证的 sing-box AnyTLS 入站链路，将实现迁移为纯 Shell 生成 JSON、证书与服务 wrappe
 - 修复自动更新脚本递归调用自身的问题，并为 sing-box 升级增加配置校验与失败回滚
 - AnyTLS 安装时随机提供常用 SNI 默认值，并补充证书、配置校验和启动阶段的故障诊断
 - 修复配置函数在正常主机名下错误返回失败、导致输入 SNI 后直接退出安装的问题

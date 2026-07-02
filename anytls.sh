@@ -234,7 +234,7 @@ validate_server_address() {
 }
 
 random_sni() {
-    local _number
+    local _numbe
     _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
     [ -z "$_number" ] && _number=$(date +%s)
     case $((_number % 8)) in
@@ -891,7 +891,7 @@ read_config_live() {
 write_systemd_service() {
     cat > "$SYSTEMD_SERVICE" <<SVC
 [Unit]
-Description=AnyTLS Server
+Description=AnyTLS Serve
 After=network.target nss-lookup.target
 Wants=network.target
 
@@ -939,7 +939,7 @@ service_start() {
     }
     service_is_active && return 0
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl start anytls-server
+        systemctl start anytls-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service anytls-server start
     else
@@ -963,7 +963,7 @@ service_stop() {
 
 service_restart() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart anytls-server
+        systemctl restart anytls-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service anytls-server restart
     else
@@ -991,7 +991,7 @@ service_disable() {
 
 service_is_active() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet anytls-server
+        systemctl is-active --quiet anytls-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service anytls-server status 2>/dev/null | grep -q "started"
     else
@@ -1001,7 +1001,7 @@ service_is_active() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u anytls-server -n 80 --no-pager
+        journalctl -u anytls-server -n 80 --no-page
     else
         tail -n 80 /var/log/anytls-server.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
@@ -1065,7 +1065,7 @@ install_anytls() {
     }
     echo -e "${GREEN}✓ TLS 证书生成完成${PLAIN}"
     write_config
-    write_wrapper
+    write_wrappe
     echo -e "${YELLOW}正在校验 sing-box 配置...${PLAIN}"
     if ! check_config; then
         echo -e "${RED}sing-box 配置校验失败${PLAIN}"
@@ -1210,24 +1210,24 @@ render_singbox_client_config() {
     cat <<CFG
 {
   "log": {
-    "level": "info",
+    "level": "debug",
     "timestamp": true
   },
   "dns": {
     "servers": [
       {
-        "type": "https",
+        "type": "udp",
         "tag": "dns_proxy",
-        "server": "1.1.1.1",
+        "server": "8.8.8.8",
         "detour": "${_safe_tag}"
       },
       {
         "type": "udp",
         "tag": "dns_direct",
-        "server": "223.5.5.5",
-        "detour": "direct"
+        "server": "223.5.5.5"
       }
     ],
+    "strategy": "ipv4_only",
     "final": "dns_proxy"
   },
   "inbounds": [
@@ -1240,8 +1240,7 @@ render_singbox_client_config() {
       ],
       "mtu": 1400,
       "auto_route": true,
-      "strict_route": true,
-      "stack": "mixed"
+      "strict_route": true
     }
   ],
   "outbounds": [
@@ -1277,6 +1276,10 @@ render_singbox_client_config() {
       {
         "protocol": "dns",
         "action": "hijack-dns"
+      },
+      {
+        "ip_version": 6,
+        "action": "reject"
       },
       {
         "ip_is_private": true,
@@ -1481,7 +1484,7 @@ show_config() {
     fi
 
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
-        read -r -p "未检测到公网 IP，请手动输入节点地址: " _manual_addr
+        read -r -p "未检测到公网 IP，请手动输入节点地址: " _manual_add
         if [ -n "$_manual_addr" ]; then
             echo -e "${YELLOW}▼ 手动地址节点配置${PLAIN}"
             show_node "$_manual_addr" "$EXT_PORT" "manual"
@@ -1659,7 +1662,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clear
+        clea
         local _auto_status="${RED}未启用${PLAIN}"
         if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$AUTO_UPDATE_SCRIPT"; then
             _auto_status="${GREEN}已启用${PLAIN}"
@@ -1695,7 +1698,7 @@ manage_anytls() {
         return
     fi
     while true; do
-        clear
+        clea
         local STATUS
         service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
 
@@ -1746,7 +1749,7 @@ manage_anytls() {
 # ============================================================
 main_menu() {
     while true; do
-        clear
+        clea
         local STATUS _ver_line
         if [ -f "$ANYTLS_CONFIG" ] && [ -x "$ANYTLS_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
             service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"

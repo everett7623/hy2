@@ -38,11 +38,11 @@ if [ -z "$BASH_VERSION" ]; then
     fi
 fi
 
-if [ ! -t 0 ]; then
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ]; then
     [ -c /dev/tty ] && exec < /dev/tty
 fi
 
-if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ] && [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
     sed -i 's/\r$//' "$0"
     exec bash "$0" "$@"
 fi
@@ -225,7 +225,7 @@ open_ports() {
 
 service_start() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl start shadowsocks-server
+        systemctl start shadowsocks-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service shadowsocks-server start
     else
@@ -246,7 +246,7 @@ service_stop() {
 
 service_restart() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart shadowsocks-server
+        systemctl restart shadowsocks-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service shadowsocks-server restart
     else
@@ -276,7 +276,7 @@ service_disable() {
 
 service_is_active() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet shadowsocks-server
+        systemctl is-active --quiet shadowsocks-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service shadowsocks-server status 2>/dev/null | grep -q "started"
     else
@@ -286,7 +286,7 @@ service_is_active() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u shadowsocks-server -n 50 --no-pager
+        journalctl -u shadowsocks-server -n 50 --no-page
     else
         tail -n 50 /var/log/ssserver.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
@@ -295,7 +295,7 @@ service_logs() {
 setup_systemd_service() {
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Shadowsocks-Rust Server
+Description=Shadowsocks-Rust Serve
 After=network.target
 
 [Service]
@@ -415,7 +415,7 @@ download_ss() {
     echo -e "${SKYBLUE}>>> 已强制使用 musl 静态编译库，彻底免疫一切 GLIBC 报错！ <<<${PLAIN}"
 
     local _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${LAST_VERSION}/shadowsocks-${LAST_VERSION}.${_arch}.tar.xz"
-    local _tmp_archive _tmp_dir
+    local _tmp_archive _tmp_di
     _tmp_archive=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz)
     _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX)
 
@@ -842,24 +842,24 @@ export_singbox_ss() {
     cat <<CFG
 {
   "log": {
-    "level": "info",
+    "level": "debug",
     "timestamp": true
   },
   "dns": {
     "servers": [
       {
-        "type": "https",
+        "type": "udp",
         "tag": "dns_proxy",
-        "server": "1.1.1.1",
+        "server": "8.8.8.8",
         "detour": "${_tag}"
       },
       {
         "type": "udp",
         "tag": "dns_direct",
-        "server": "223.5.5.5",
-        "detour": "direct"
+        "server": "223.5.5.5"
       }
     ],
+    "strategy": "ipv4_only",
     "final": "dns_proxy"
   },
   "inbounds": [
@@ -872,8 +872,7 @@ export_singbox_ss() {
       ],
       "mtu": 1400,
       "auto_route": true,
-      "strict_route": true,
-      "stack": "mixed"
+      "strict_route": true
     }
   ],
   "outbounds": [
@@ -898,6 +897,10 @@ export_singbox_ss() {
       {
         "protocol": "dns",
         "action": "hijack-dns"
+      },
+      {
+        "ip_version": 6,
+        "action": "reject"
       },
       {
         "ip_is_private": true,
@@ -1160,7 +1163,7 @@ test_connection() {
 
 manage_ss() {
     while true; do
-        clear
+        clea
         echo -e "\n${SKYBLUE}--- 管理 Shadowsocks ---${PLAIN}"
         echo -e "1. 查看配置 (全客户端兼容)"
         echo -e "2. 重启服务"
@@ -1333,7 +1336,7 @@ detect_arch() {
 
 restart_service() {
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-        systemctl restart shadowsocks-server
+        systemctl restart shadowsocks-serve
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service shadowsocks-server restart 2>/dev/null
     fi
@@ -1538,7 +1541,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clear
+        clea
         echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
         echo -e "1. 一键开启 BBR"
         echo -e "2. 查看 BBR 状态"
@@ -1567,7 +1570,7 @@ server_tools_menu() {
 
 main_menu() {
     while true; do
-        clear
+        clea
 
         local STATUS
         if [ -f "$SS_BIN" ]; then
@@ -1578,7 +1581,7 @@ main_menu() {
 
         local _ver_line=""
         if [ -f "$SS_BIN" ]; then
-            local _ver
+            local _ve
             _ver=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             [ -n "$_ver" ] && _ver_line=" (v${_ver})"
         fi
@@ -1620,7 +1623,9 @@ main_menu() {
 # 入口
 # ============================================================
 
-check_root
-check_sys
-detect_init
-main_menu
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ]; then
+    check_root
+    check_sys
+    detect_init
+    main_menu
+fi

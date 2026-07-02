@@ -4,6 +4,8 @@
 
 `bash tests/validate_scripts.sh` 会执行 `tests/validate_anytls.sh`。该测试会 source `anytls.sh`，验证输入校验、sing-box 下载 URL、架构映射、IPv6 URI、JSON/元数据往返、wrapper、systemd 单元和 ELF 魔数。
 
+`tests/validate_singbox_exports.sh` 会调用 Hysteria2、Shadowsocks、AnyTLS 与 EUserv HY2 的真实输出函数，并使用 JSON 解析器逐字段校验完整 TUN 配置。修改 Sing-box 输出时只改对应 JSON 生成块，不得顺带调整 URI、Mihomo、Loon、Surfboard、Shadowrocket 或二维码格式。
+
 发布前仍需在一次性 VPS 覆盖 systemd、OpenRC 以及 IPv4、IPv6、双栈环境。当前脚本支持上游 Linux `amd64`、`arm64`、`armv7`、`386` 和 `s390x` 发布包，其他架构应明确拒绝。
 
 ## 测试层级

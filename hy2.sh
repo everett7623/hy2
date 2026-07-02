@@ -53,12 +53,12 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 # --- 修复交互输入 ---
-if [ ! -t 0 ]; then
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ]; then
     [ -c /dev/tty ] && exec < /dev/tty
 fi
 
 # --- 修复 Windows 换行符 ---
-if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ] && [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
     sed -i 's/\r$//' "$0"
     exec bash "$0" "$@"
 fi
@@ -145,7 +145,7 @@ detect_init() {
 
 service_start() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl start hysteria-server
+        systemctl start hysteria-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service hysteria-server start
     else
@@ -167,7 +167,7 @@ service_stop() {
 
 service_restart() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart hysteria-server
+        systemctl restart hysteria-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service hysteria-server restart
     else
@@ -195,7 +195,7 @@ service_disable() {
 
 service_is_active() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet hysteria-server
+        systemctl is-active --quiet hysteria-serve
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service hysteria-server status 2>/dev/null | grep -q "started"
     else
@@ -205,7 +205,7 @@ service_is_active() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u hysteria-server -n 50 --no-pager
+        journalctl -u hysteria-server -n 50 --no-page
     else
         tail -n 50 /var/log/hysteria.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
@@ -214,7 +214,7 @@ service_logs() {
 setup_systemd_service() {
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Hysteria 2 Server
+Description=Hysteria 2 Serve
 After=network.target
 
 [Service]
@@ -743,7 +743,7 @@ upgrade_hy2() {
         sleep 2
 
         if service_is_active; then
-            local _new_ver
+            local _new_ve
             _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
             rm -f "${HY_BIN}.bak"
@@ -952,24 +952,24 @@ export_singbox_hy2() {
     cat <<CFG
 {
   "log": {
-    "level": "info",
+    "level": "debug",
     "timestamp": true
   },
   "dns": {
     "servers": [
       {
-        "type": "https",
+        "type": "udp",
         "tag": "dns_proxy",
-        "server": "1.1.1.1",
+        "server": "8.8.8.8",
         "detour": "${_tag}"
       },
       {
         "type": "udp",
         "tag": "dns_direct",
-        "server": "223.5.5.5",
-        "detour": "direct"
+        "server": "223.5.5.5"
       }
     ],
+    "strategy": "ipv4_only",
     "final": "dns_proxy"
   },
   "inbounds": [
@@ -982,8 +982,7 @@ export_singbox_hy2() {
       ],
       "mtu": 1400,
       "auto_route": true,
-      "strict_route": true,
-      "stack": "mixed"
+      "strict_route": true
     }
   ],
   "outbounds": [
@@ -1014,6 +1013,10 @@ export_singbox_hy2() {
       {
         "protocol": "dns",
         "action": "hijack-dns"
+      },
+      {
+        "ip_version": 6,
+        "action": "reject"
       },
       {
         "ip_is_private": true,
@@ -1285,7 +1288,7 @@ change_bandwidth() {
 
 manage_hy2() {
     while true; do
-        clear
+        clea
         echo -e "\n${SKYBLUE}--- 管理 Hysteria2 ---${PLAIN}"
         echo -e "1. 查看配置 (全客户端兼容)"
         echo -e "2. 重启服务"
@@ -1438,7 +1441,7 @@ LOG="/var/log/hy2-autoupdate.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 get_latest() {
-    local _raw _ver
+    local _raw _ve
     _raw=$(curl -Ls --max-time 15 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
     # 返回完整 tag 和剥离后版本号，以 "|" 分隔
@@ -1462,14 +1465,14 @@ detect_arch() {
 
 restart_service() {
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-        systemctl restart hysteria-server
+        systemctl restart hysteria-serve
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service hysteria-server restart 2>/dev/null
     fi
 }
 
 main() {
-    local _info _tag _latest _current _arch _url _url_mirror
+    local _info _tag _latest _current _arch _url _url_mirro
     local _tmp_bin _backup _was_active=0
     _info=$(get_latest)
     _tag="${_info%%|*}"
@@ -1636,7 +1639,7 @@ show_system_info() {
     echo -e "\n${SKYBLUE}--- 系统信息 ---${PLAIN}"
 
     local _os _kernel _arch _cpu_model _cpu_cores
-    local _mem_total _mem_free _mem_used _disk _load _uptime_str
+    local _mem_total _mem_free _mem_used _disk _load _uptime_st
 
     _os=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)
     _kernel=$(uname -r)
@@ -1673,7 +1676,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clear
+        clea
         echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
         echo -e "1. 一键开启 BBR"
         echo -e "2. 查看 BBR 状态"
@@ -1702,7 +1705,7 @@ server_tools_menu() {
 
 main_menu() {
     while true; do
-        clear
+        clea
 
         local STATUS
         if [ -f "$HY_BIN" ]; then
@@ -1713,7 +1716,7 @@ main_menu() {
 
         local _ver_line=""
         if [ -f "$HY_BIN" ]; then
-            local _ver
+            local _ve
             _ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             [ -n "$_ver" ] && _ver_line=" (${_ver})"
         fi
@@ -1755,7 +1758,9 @@ main_menu() {
 # 入口
 # ============================================================
 
-check_root
-check_sys
-detect_init
-main_menu
+if [ "${EXPORT_LIB_ONLY:-0}" != "1" ]; then
+    check_root
+    check_sys
+    detect_init
+    main_menu
+fi

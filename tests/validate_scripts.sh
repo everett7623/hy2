@@ -95,5 +95,6 @@ for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
 done
 
 bash tests/validate_anytls.sh
+bash tests/validate_singbox_exports.sh
 
 echo "Static script validation passed."
