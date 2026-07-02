@@ -552,6 +552,7 @@ read_config() {
     done < "$ANYTLS_META/config.env"
     [ -z "${PUBLIC_IP:-}"   ] && PUBLIC_IP=$(cat "$ANYTLS_META/public_ip"   2>/dev/null || true)
     [ -z "${PUBLIC_IPV6:-}" ] && PUBLIC_IPV6=$(cat "$ANYTLS_META/public_ipv6" 2>/dev/null || true)
+    return 0
 }
 
 generate_certificate() {
@@ -776,6 +777,7 @@ configure_anytls() {
 
     NODE_NAME="AnyTLS-$(hostname 2>/dev/null | tr -d '\n\r')"
     [ "$NODE_NAME" = "AnyTLS-" ] && NODE_NAME="AnyTLS-Node"
+    return 0
 }
 
 install_anytls() {

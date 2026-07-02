@@ -21,6 +21,9 @@ case "$(random_sni)" in
     *) exit 1 ;;
 esac
 
+NAT_MODE=0
+printf '\n\n\n' | configure_anytls >/dev/null
+
 [ "$(detect_arch x86_64)" = amd64 ]
 [ "$(detect_arch aarch64)" = arm64 ]
 [ "$(detect_arch armv7l)" = armv7 ]
@@ -59,6 +62,8 @@ grep -q '"server_name": "www.example.com"' "$ANYTLS_CONFIG"
 LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4; SERVER_NAME=""; MANAGED_SING_BOX=0
 read_config
 [ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$SERVER_NAME:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6:www.example.com:1" ]
+PUBLIC_IP=192.0.2.1; PUBLIC_IPV6=2001:db8::1
+read_config
 
 SYSTEMD_SERVICE="$tmp/anytls.service"; ANYTLS_BIN=/usr/local/bin/anytls-server
 write_systemd_service
