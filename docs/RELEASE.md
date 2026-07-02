@@ -40,6 +40,7 @@ git diff
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh | head
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh | head
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh | head
+curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh | head
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh | head
 ```
 

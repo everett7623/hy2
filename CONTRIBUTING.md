@@ -1,6 +1,6 @@
 # 贡献与开发指南
 
-感谢参与 hy2 项目。此仓库直接向 VPS 用户分发 root 权限 Shell 脚本，改动应优先保证可恢复性、跨发行版兼容和远程执行安全。
+感谢参与 Sing-box Multi-Protocol Tools 项目。此仓库直接向 VPS 用户分发 root 权限 Shell 脚本，改动应优先保证可恢复性、跨发行版兼容和远程执行安全。
 
 ## 开发前必读
 
@@ -11,7 +11,7 @@
 
 ## 修改原则
 
-- 保持 `install.sh`、`hy2.sh`、`ss.sh`、`euservhy2.sh` 可独立执行。
+- 保持 `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`euservhy2.sh` 可独立执行。
 - 不引入共享 `source` 文件；远程启动器只下载单个脚本。
 - 保留 Bash 自举、TTY 修复和 CRLF guard。
 - 不使用 `grep -oP`、`${var,,}`、`${var^^}` 或 `head -c`。

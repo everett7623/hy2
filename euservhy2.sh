@@ -151,16 +151,6 @@ get_country_code() {
     printf '%s' "$_code"
 }
 
-get_country_flag() {
-    case "$1" in
-        US) printf '🇺🇸' ;; DE) printf '🇩🇪' ;; JP) printf '🇯🇵' ;; SG) printf '🇸🇬' ;;
-        HK) printf '🇭🇰' ;; TW) printf '🇹🇼' ;; KR) printf '🇰🇷' ;; GB) printf '🇬🇧' ;;
-        FR) printf '🇫🇷' ;; NL) printf '🇳🇱' ;; CA) printf '🇨🇦' ;; AU) printf '🇦🇺' ;;
-        RU) printf '🇷🇺' ;; IN) printf '🇮🇳' ;; VN) printf '🇻🇳' ;; TH) printf '🇹🇭' ;;
-        *) printf '🌐' ;;
-    esac
-}
-
 get_country_name() {
     case "$1" in
         US) printf 'United States' ;; DE) printf 'Germany' ;; JP) printf 'Japan' ;; SG) printf 'Singapore' ;;
@@ -172,15 +162,14 @@ get_country_name() {
 }
 
 generate_node_name() {
-    local _country _server _protocol _ip_type _flag
+    local _country _server _protocol _ip_type
     _country=$(printf '%s' "${1:-UN}" | tr '[:lower:]' '[:upper:]')
     case "$_country" in [A-Z][A-Z]) ;; *) _country="UN" ;; esac
     _server=$(trim_string "${2:-}")
     [ -z "$_server" ] && _server="EUserv-HY2"
     _protocol=$(trim_string "${3:-EUserv-HY2}")
     _ip_type=$(trim_string "${4:-IPv6}")
-    _flag=$(get_country_flag "$_country")
-    printf '%s %s | %s | %s | %s' "$_flag" "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
+    printf '%s | %s | %s | %s' "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
 }
 
 shell_json_escape() {
@@ -829,7 +818,7 @@ show_node_info() {
   "outbounds": [
     {
       "type": "hysteria2",
-      "tag": "proxy",
+      "tag": "${safe_node}",
       "server": "${ipv6_raw}",
       "server_port": ${port},
       "password": "${safe_password}",
@@ -843,7 +832,6 @@ show_node_info() {
 }
 CFG
     echo ""
-    echo 'Keep "tag": "proxy" when pasting into the TUN template.'
     echo "Path to each client configuration file: /etc/sing-box/subscribe/"
     echo "The full template can be found at:"
     echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"

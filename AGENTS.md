@@ -1,4 +1,4 @@
-# hy2 — VPS 代理工具集
+# Sing-box Multi-Protocol Tools — VPS 代理工具集
 
 ## Start here
 
@@ -58,16 +58,17 @@ Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant
 
 ## Feature matrix
 
-| Feature | hy2.sh | ss.sh |
-|---------|--------|-------|
-| BBR/tcp tuning | ✅ | ✅ |
-| Auto-update (cron) | ✅ | ✅ |
-| Firewall auto-ports | ✅ | ✅ |
-| Modify bandwidth/config | ✅ | ✅ |
-| Terminal QR code | ✅ | ✅ |
-| Upgrade sub-command | ✅ | ✅ |
-| IPv4/IPv6 switch | — | ✅ |
-| Connection test | — | ✅ |
+| Feature | hy2.sh | ss.sh | anytls.sh | euservhy2.sh |
+|---------|--------|-------|-----------|-------------|
+| BBR/tcp tuning | ✅ | ✅ | ✅ | ✅ |
+| Auto-update (cron) | ✅ | ✅ | ✅ | — |
+| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ |
+| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ |
+| Terminal QR code | ✅ | ✅ | ✅ | ✅ |
+| Sing-box client export | ✅ | ✅ | ✅ | ✅ |
+| Upgrade sub-command | ✅ | ✅ | ✅ | ✅ |
+| IPv4/IPv6 switch | — | ✅ | — | — |
+| Connection test | — | ✅ | — | — |
 
 ## SS-2022 caveat
 

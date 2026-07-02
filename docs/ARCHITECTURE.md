@@ -118,7 +118,7 @@ bash tests/validate_scripts.sh
 ## 文件结构
 
 ```
-hy2/
+sing-box-multi-protocol-tools/  # 仓库 slug 仍为 hy2，raw URL 不变
 ├── install.sh          # 统一远程入口（子脚本也可独立运行）
 ├── hy2.sh              # Hysteria 2 管理
 ├── ss.sh               # Shadowsocks 管理

@@ -87,8 +87,9 @@ done
 
 grep -q 'SCRIPT_VERSION="2.0.0"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
+! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
-    grep -q '"tag": "proxy"' "$script"
+    grep -q "printf '%s | %s | %s | %s'" "$script"
 done
 
 bash tests/validate_anytls.sh

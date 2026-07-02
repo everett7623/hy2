@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Project overview
 
-A collection of bash scripts for one-click deployment and management of Hysteria 2 and Shadowsocks proxies on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`.
+Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
 
 ## Script relationships
 
@@ -40,24 +40,25 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 8. **`service_restart()` must dispatch on `$INIT_SYS`** — use `systemctl restart` / `rc-service restart` when available instead of stop+sleep+start. The sleep-based approach is racy on slow VPS.
 9. **NAT detection requires `command -v ip` guard** — without it, missing `iproute2` causes false NAT positives.
 10. **`head -c` is non-POSIX** — use `dd bs=N count=1 2>/dev/null` for portable byte-limited reads.
-11. **`euservhy2.sh` must keep its bash bootstrap** — it was missing until v2.0.2. Don't let it regress.
+11. **`euservhy2.sh` must keep its bash bootstrap** — don't let it regress.
 
 ## Feature matrix
 
-| Feature | hy2.sh | ss.sh |
-|---------|--------|-------|
-| Install / upgrade / uninstall | ✅ | ✅ |
-| Service management (start/stop/restart) | ✅ | ✅ |
-| View logs | ✅ | ✅ |
-| Node info / share links | ✅ | ✅ |
-| BBR tuning | ✅ | ✅ |
-| Auto-update (cron @ 03:00) | ✅ | ✅ |
-| Firewall auto-ports | ✅ | ✅ |
-| Modify bandwidth/config | ✅ | ✅ |
-| Terminal QR code (qrencode) | ✅ | ✅ |
-| Server tools sub-menu | ✅ | ✅ |
-| IPv4/IPv6 switch | — | ✅ |
-| Connection test | — | ✅ |
+| Feature | hy2.sh | ss.sh | anytls.sh | euservhy2.sh |
+|---------|--------|-------|-----------|-------------|
+| Install / upgrade / uninstall | ✅ | ✅ | ✅ | ✅ |
+| Service management (start/stop/restart) | ✅ | ✅ | ✅ | ✅ |
+| View logs | ✅ | ✅ | ✅ | ✅ |
+| Node info / share links | ✅ | ✅ | ✅ | ✅ |
+| Sing-box client export | ✅ | ✅ | ✅ | ✅ |
+| BBR tuning | ✅ | ✅ | ✅ | ✅ |
+| Auto-update (cron @ 03:00) | ✅ | ✅ | ✅ | — |
+| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ |
+| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ |
+| Terminal QR code (qrencode) | ✅ | ✅ | ✅ | ✅ |
+| Server tools sub-menu | ✅ | ✅ | ✅ | ✅ |
+| IPv4/IPv6 switch | — | ✅ | — | — |
+| Connection test | — | ✅ | — | — |
 
 ## Default ports
 
@@ -69,9 +70,9 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 
 ## Version management
 
-There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). The current release policy keeps all four script versions unified, so a project release requires manually updating every script header, visible menu version, date, and `CHANGELOG.md`.
+There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). The current release policy keeps all five script versions unified, so a project release requires manually updating every script header, visible menu version, date, tests, and `CHANGELOG.md`.
 
-Do not confuse the project script version with the installed proxy version. `get_latest_version()` fetches Hysteria 2 or Shadowsocks-Rust releases from their upstream GitHub APIs at runtime; there are no dependency pins or lockfiles.
+Do not confuse the project script version with the installed proxy version. `get_latest_version()` fetches Hysteria 2, Shadowsocks-Rust, or sing-box releases from their upstream GitHub APIs at runtime; there are no dependency pins or lockfiles.
 
 ## Local development and verification
 
@@ -104,8 +105,10 @@ Do not confuse the project script version with the installed proxy version. `get
 | SS config | `/etc/shadowsocks.json` or `/etc/shadowsocks-rust/config.json` |
 | SS auto-update script | `/usr/local/bin/ss-autoupdate.sh` |
 | SS auto-update log | `/var/log/ss-autoupdate.log` |
-| AnyTLS binary | `/usr/local/bin/anytls-server` |
+| AnyTLS wrapper | `/usr/local/bin/anytls-server` |
 | AnyTLS config | `/etc/sing-box/anytls.json` |
+| AnyTLS metadata | `/etc/sing-box/anytls-meta/` |
+| AnyTLS cert/key | `/etc/sing-box/anytls-cert/` |
 | Systemd service | `/etc/systemd/system/hysteria-server.service` |
 | OpenRC service | `/etc/init.d/hysteria-server` |
 
