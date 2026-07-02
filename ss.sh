@@ -835,30 +835,92 @@ export_mihomo_ss() {
 }
 
 export_singbox_ss() {
-    local _server="$1" _port="$2" _node="$3" _pass _tag
+    local _server="$1" _port="$2" _node="$3" _safe_server _pass _tag
+    _safe_server=$(shell_json_escape "$_server")
     _pass=$(shell_json_escape "$PASSWORD")
     _tag=$(shell_json_escape "$_node")
     cat <<CFG
 {
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "dns_proxy",
+        "server": "1.1.1.1",
+        "detour": "${_tag}"
+      },
+      {
+        "type": "udp",
+        "tag": "dns_direct",
+        "server": "223.5.5.5",
+        "detour": "direct"
+      }
+    ],
+    "final": "dns_proxy"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "mtu": 1400,
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "mixed"
+    }
+  ],
   "outbounds": [
     {
       "type": "shadowsocks",
       "tag": "${_tag}",
-      "server": "${_server}",
+      "server": "${_safe_server}",
       "server_port": ${_port},
       "method": "${METHOD}",
       "password": "${_pass}"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
     }
-  ]
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "port": [443, 853],
+        "network": "udp",
+        "action": "reject"
+      }
+    ],
+    "auto_detect_interface": true,
+    "default_domain_resolver": "dns_direct",
+    "final": "${_tag}"
+  }
 }
 CFG
 }
 
 print_singbox_template_note() {
     echo ""
-    echo "Path to each client configuration file: /etc/sing-box/subscribe/"
-    echo "The full template can be found at:"
-    echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"
+    echo "以上为完整 Sing-box / SFA TUN 客户端配置，可保存为 config.json 导入。"
 }
 
 export_loon_ss() {

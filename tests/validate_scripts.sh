@@ -88,6 +88,8 @@ done
 grep -q 'SCRIPT_VERSION="2.0.0"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
+! grep -R -q 'Path to each client configuration file' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
+! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
 for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
     grep -q "printf '%s | %s | %s | %s'" "$script"
 done

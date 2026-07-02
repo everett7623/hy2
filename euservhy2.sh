@@ -747,12 +747,13 @@ show_node_info() {
     local password="${NODE_PASSWORD}"
     local sni="${NODE_DOMAIN:-bing.com}"
 
-    local country full_node name_encoded hy2_link qr_url qrcode_png safe_password safe_sni safe_node
+    local country full_node name_encoded hy2_link qr_url qrcode_png safe_ipv6 safe_password safe_sni safe_node
     country=$(get_country_code "$ipv6_raw")
     full_node=$(generate_node_name "$country" "$node_name" "EUserv-HY2" "IPv6")
     name_encoded=$(uri_encode "$full_node")
     local hy2_link="hysteria2://${password}@${ipv6_bracket}:${port}/?insecure=1&sni=${sni}#${name_encoded}"
     qr_url=$(generate_online_qrcode_url "$hy2_link")
+    safe_ipv6=$(shell_json_escape "$ipv6_raw")
     safe_password=$(shell_json_escape "$password")
     safe_sni=$(shell_json_escape "$sni")
     safe_node=$(shell_json_escape "$full_node")
@@ -815,11 +816,46 @@ show_node_info() {
     echo -e "${CYAN}Sing-box:${NC}"
     cat <<CFG
 {
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "dns_proxy",
+        "server": "1.1.1.1",
+        "detour": "${safe_node}"
+      },
+      {
+        "type": "udp",
+        "tag": "dns_direct",
+        "server": "223.5.5.5",
+        "detour": "direct"
+      }
+    ],
+    "final": "dns_proxy"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "mtu": 1400,
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "mixed"
+    }
+  ],
   "outbounds": [
     {
       "type": "hysteria2",
       "tag": "${safe_node}",
-      "server": "${ipv6_raw}",
+      "server": "${safe_ipv6}",
       "server_port": ${port},
       "password": "${safe_password}",
       "tls": {
@@ -827,14 +863,40 @@ show_node_info() {
         "server_name": "${safe_sni}",
         "insecure": true
       }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
     }
-  ]
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "port": [443, 853],
+        "network": "udp",
+        "action": "reject"
+      }
+    ],
+    "auto_detect_interface": true,
+    "default_domain_resolver": "dns_direct",
+    "final": "${safe_node}"
+  }
 }
 CFG
     echo ""
-    echo "Path to each client configuration file: /etc/sing-box/subscribe/"
-    echo "The full template can be found at:"
-    echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"
+    echo "以上为完整 Sing-box / SFA TUN 客户端配置，可保存为 config.json 导入。"
     echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }

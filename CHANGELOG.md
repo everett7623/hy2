@@ -19,8 +19,8 @@
 - 优化统一入口和 AnyTLS 菜单头部排版，BBR 状态显示实际拥塞控制与队列算法
 - 国家/地区状态改为 `DE / Germany` 这类文本格式，避免终端不支持旗帜 emoji 时显示异常
 - 节点名和 Sing-box tag 移除国旗 emoji，统一使用 `DE | hostname | 协议 | IP 类型` 纯文本
-- 客户端输出顺序调整为主流格式优先，Sing-box JSON 放到最后并改为 outbounds 片段加完整模板链接
-- Sing-box JSON 出站 `tag` 恢复为节点名，保持和客户端展示、订阅模板节点列表一致
+- 客户端输出顺序调整为主流格式优先，Sing-box JSON 放到最后并恢复为完整 TUN 客户端配置
+- Sing-box JSON 出站 `tag` 和 `route.final` 使用节点名，内置 DNS、TUN、私网直连和 UDP 443/853 拒绝规则
 - 修复 AnyTLS 的 Shadowrocket 输出，改为生成可导入的 AnyTLS URI
 - 优化 AnyTLS 证书校验提示，按客户端实际输出区分严格模式和兼容模式
 - AnyTLS 依赖安装改为静默检查，减少安装页面滚动和闪屏感

@@ -85,7 +85,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.
 - 支持架构：Linux `amd64` / `arm64` / `armv7` / `386` / `s390x`
 - 支持环境：systemd、OpenRC、无 init；IPv4、IPv6、双栈
 - 内置配置/证书/监听诊断，重装和升级失败自动回滚，并安全保留共享 sing-box 配置
-- 输出 URI、Throne、Mihomo/Clash、Loon、Surfboard、Shadowrocket/Quantumult X、Sing-box outbounds JSON 片段与二维码
+- 输出 URI、Throne、Mihomo/Clash、Loon、Surfboard、Shadowrocket/Quantumult X、完整 Sing-box/SFA TUN JSON 配置与二维码
 
 ### EUserv 免费德鸡专用（IPv6-only）
 
@@ -198,9 +198,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 ### Sing-box 输出说明
 
-脚本输出的 Sing-box 内容是 `outbounds` JSON 片段，格式参考 fscarmen/sing-box 的订阅展示和 chika0801 的 TUN 模板。它不是完整客户端配置文件；需要放入完整模板的 `outbounds` 区域，或作为 `/etc/sing-box/subscribe/` 下的客户端配置片段使用。
+脚本输出的 Sing-box 内容是完整 TUN 客户端配置，可保存为 `config.json` 或直接导入 Sing-box / SFA / SFM / SFI 等兼容客户端。
 
-输出中的 `tag` 使用当前节点名称，方便在 selector/urltest 等节点列表中直接显示；如果使用固定 `route.final: proxy` 的模板，需要自行把模板里的 `final` 改为该节点 `tag`，或把输出中的 `tag` 改为 `proxy`。
+配置内置 TUN 入站、DNS 代理解析、DNS 劫持、私网直连和 UDP 443/853 拒绝规则；`route.final` 指向当前节点 `tag`，节点名保持 `国家 | 主机名 | 协议 | IP 类型` 纯文本，避免终端或客户端不支持旗帜 emoji 时显示异常。
 
 ---
 
