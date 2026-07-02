@@ -84,8 +84,9 @@ for filename, outbound_type in expected_types.items():
     proxy = config["outbounds"][0]
     assert proxy["type"] == outbound_type
     assert proxy["tag"].startswith("🇯🇵 JP | test |")
+    expected_proxy_dns_type = "tcp" if outbound_type == "anytls" else "udp"
     assert proxy_dns == {
-        "type": "udp", "tag": "dns_proxy", "server": "8.8.8.8",
+        "type": expected_proxy_dns_type, "tag": "dns_proxy", "server": "8.8.8.8",
         "detour": proxy["tag"],
     }
     assert direct_dns == {

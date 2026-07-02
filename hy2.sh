@@ -214,7 +214,7 @@ service_logs() {
 setup_systemd_service() {
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Hysteria 2 Serve
+Description=Hysteria 2 Server
 After=network.target
 
 [Service]
@@ -743,7 +743,7 @@ upgrade_hy2() {
         sleep 2
 
         if service_is_active; then
-            local _new_ve
+            local _new_ver
             _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
             rm -f "${HY_BIN}.bak"
@@ -1299,7 +1299,7 @@ change_bandwidth() {
 
 manage_hy2() {
     while true; do
-        clea
+        clear
         echo -e "\n${SKYBLUE}--- 管理 Hysteria2 ---${PLAIN}"
         echo -e "1. 查看配置 (全客户端兼容)"
         echo -e "2. 重启服务"
@@ -1452,7 +1452,7 @@ LOG="/var/log/hy2-autoupdate.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 get_latest() {
-    local _raw _ve
+    local _raw _ver
     _raw=$(curl -Ls --max-time 15 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
         | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
     # 返回完整 tag 和剥离后版本号，以 "|" 分隔
@@ -1483,7 +1483,7 @@ restart_service() {
 }
 
 main() {
-    local _info _tag _latest _current _arch _url _url_mirro
+    local _info _tag _latest _current _arch _url _url_mirror
     local _tmp_bin _backup _was_active=0
     _info=$(get_latest)
     _tag="${_info%%|*}"
@@ -1650,7 +1650,7 @@ show_system_info() {
     echo -e "\n${SKYBLUE}--- 系统信息 ---${PLAIN}"
 
     local _os _kernel _arch _cpu_model _cpu_cores
-    local _mem_total _mem_free _mem_used _disk _load _uptime_st
+    local _mem_total _mem_free _mem_used _disk _load _uptime_str
 
     _os=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)
     _kernel=$(uname -r)
@@ -1687,7 +1687,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clea
+        clear
         echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
         echo -e "1. 一键开启 BBR"
         echo -e "2. 查看 BBR 状态"
@@ -1716,7 +1716,7 @@ server_tools_menu() {
 
 main_menu() {
     while true; do
-        clea
+        clear
 
         local STATUS
         if [ -f "$HY_BIN" ]; then
@@ -1727,7 +1727,7 @@ main_menu() {
 
         local _ver_line=""
         if [ -f "$HY_BIN" ]; then
-            local _ve
+            local _ver
             _ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             [ -n "$_ver" ] && _ver_line=" (${_ver})"
         fi

@@ -295,7 +295,7 @@ service_logs() {
 setup_systemd_service() {
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Shadowsocks-Rust Serve
+Description=Shadowsocks-Rust Server
 After=network.target
 
 [Service]
@@ -415,7 +415,7 @@ download_ss() {
     echo -e "${SKYBLUE}>>> 已强制使用 musl 静态编译库，彻底免疫一切 GLIBC 报错！ <<<${PLAIN}"
 
     local _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${LAST_VERSION}/shadowsocks-${LAST_VERSION}.${_arch}.tar.xz"
-    local _tmp_archive _tmp_di
+    local _tmp_archive _tmp_dir
     _tmp_archive=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz)
     _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX)
 
@@ -1174,7 +1174,7 @@ test_connection() {
 
 manage_ss() {
     while true; do
-        clea
+        clear
         echo -e "\n${SKYBLUE}--- 管理 Shadowsocks ---${PLAIN}"
         echo -e "1. 查看配置 (全客户端兼容)"
         echo -e "2. 重启服务"
@@ -1552,7 +1552,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clea
+        clear
         echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
         echo -e "1. 一键开启 BBR"
         echo -e "2. 查看 BBR 状态"
@@ -1581,7 +1581,7 @@ server_tools_menu() {
 
 main_menu() {
     while true; do
-        clea
+        clear
 
         local STATUS
         if [ -f "$SS_BIN" ]; then
@@ -1592,7 +1592,7 @@ main_menu() {
 
         local _ver_line=""
         if [ -f "$SS_BIN" ]; then
-            local _ve
+            local _ver
             _ver=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             [ -n "$_ver" ] && _ver_line=" (v${_ver})"
         fi

@@ -234,7 +234,7 @@ validate_server_address() {
 }
 
 random_sni() {
-    local _numbe
+    local _number
     _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
     [ -z "$_number" ] && _number=$(date +%s)
     case $((_number % 8)) in
@@ -902,7 +902,7 @@ read_config_live() {
 write_systemd_service() {
     cat > "$SYSTEMD_SERVICE" <<SVC
 [Unit]
-Description=AnyTLS Serve
+Description=AnyTLS Server
 After=network.target nss-lookup.target
 Wants=network.target
 
@@ -1227,7 +1227,7 @@ render_singbox_client_config() {
   "dns": {
     "servers": [
       {
-        "type": "udp",
+        "type": "tcp",
         "tag": "dns_proxy",
         "server": "8.8.8.8",
         "detour": "${_safe_tag}"
@@ -1495,7 +1495,7 @@ show_config() {
     fi
 
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
-        read -r -p "未检测到公网 IP，请手动输入节点地址: " _manual_add
+        read -r -p "未检测到公网 IP，请手动输入节点地址: " _manual_addr
         if [ -n "$_manual_addr" ]; then
             echo -e "${YELLOW}▼ 手动地址节点配置${PLAIN}"
             show_node "$_manual_addr" "$EXT_PORT" "manual"
@@ -1673,7 +1673,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clea
+        clear
         local _auto_status="${RED}未启用${PLAIN}"
         if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$AUTO_UPDATE_SCRIPT"; then
             _auto_status="${GREEN}已启用${PLAIN}"
@@ -1709,7 +1709,7 @@ manage_anytls() {
         return
     fi
     while true; do
-        clea
+        clear
         local STATUS
         service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
 
@@ -1760,7 +1760,7 @@ manage_anytls() {
 # ============================================================
 main_menu() {
     while true; do
-        clea
+        clear
         local STATUS _ver_line
         if [ -f "$ANYTLS_CONFIG" ] && [ -x "$ANYTLS_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
             service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"

@@ -26,6 +26,8 @@
 - AnyTLS 依赖安装改为静默检查，减少安装页面滚动和闪屏感
 - 仅重整四个协议的 Sing-box JSON：恢复 UDP DNS、IPv4 DNS 策略、IPv6 拒绝规则及一致的出站 tag，其他客户端输出保持不变
 - 新增四协议 Sing-box JSON 结构化测试，校验 DNS detour、TUN、路由与 AnyTLS TLS 公钥锁定字段
+- 修复脚本换行清理误删行尾 `r` 导致的 `clear`、服务名、变量名、wrapper、日志与 BBR 配置截断
+- AnyTLS 的代理 DNS 改用 TCP，避免 UDP DNS 经 TCP/TLS 隧道时在丢包或网络切换后长时间卡住
 - 五个脚本、测试版本断言和文档同步到 v2.0.0
 
 ---
