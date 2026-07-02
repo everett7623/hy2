@@ -81,6 +81,7 @@ HAS_IPV6=0
 PUBLIC_IP=""
 PUBLIC_IPV6=""
 BIND_FAMILY="v4"
+LISTEN_HOST="::"
 LISTEN_PORT=""
 EXT_PORT=""
 PASSWORD=""
@@ -88,6 +89,7 @@ NODE_NAME=""
 SERVER_NAME="www.example.com"
 MANAGED_SING_BOX=0
 LAST_VERSION_TAG=""
+INSTALL_BACKUP_DIR=""
 
 
 # ============================================================
@@ -207,6 +209,29 @@ validate_password() {
     return 0
 }
 
+validate_server_name() {
+    local _name="$1"
+    [ -n "$_name" ] || return 1
+    [ "${#_name}" -le 253 ] || return 1
+    printf '%s\n' "$_name" | awk -F. '
+        NF < 2 { exit 1 }
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "" || length($i) > 63 || $i !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/) exit 1
+            }
+        }
+    '
+}
+
+validate_server_address() {
+    local _address="$1"
+    [ -n "$_address" ] || return 1
+    case "$_address" in
+        *[!A-Za-z0-9.:_-]*) return 1 ;;
+    esac
+    return 0
+}
+
 random_sni() {
     local _number
     _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
@@ -271,13 +296,31 @@ version_at_least() {
 # ============================================================
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
-    NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; BIND_FAMILY="v4"
+    NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; BIND_FAMILY="v4"; LISTEN_HOST="::"
     local _ip _url
 
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
         if echo "$_ip" | grep -q ':'; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
     done
+
+    if command -v ip >/dev/null 2>&1; then
+        local _real_ipv6
+        _real_ipv6=$(ip -6 addr show scope global 2>/dev/null | awk '
+            /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
+            /inet6/ && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ {
+                addr=$2; sub(/\/.*/,"",addr)
+                if (addr !~ /^fe80:/ && addr !~ /^f[cd][0-9a-f][0-9a-f]:/ && addr !~ /^2606:4700:/) { print addr; exit }
+            }
+        ')
+        if [ -n "$_real_ipv6" ]; then
+            HAS_IPV6=1
+            [ -z "$PUBLIC_IPV6" ] && PUBLIC_IPV6="$_real_ipv6"
+        else
+            HAS_IPV6=0
+            PUBLIC_IPV6=""
+        fi
+    fi
 
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
         _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
@@ -301,6 +344,7 @@ detect_network() {
 
     [ "$HAS_IPV4" = "0" ] && [ "$HAS_IPV6" = "1" ] && BIND_FAMILY="v6"
     [ "$HAS_IPV6" = "1" ] && [ "$HAS_IPV4" = "1" ] && BIND_FAMILY="v4"
+    [ "$HAS_IPV6" = "0" ] && LISTEN_HOST="0.0.0.0"
 
     if   [ "$NAT_MODE"     = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
     elif [ "$BIND_FAMILY"  = "v6" ]; then echo -e "  机器类型: ${YELLOW}纯 IPv6${PLAIN}（IPv6: ${PUBLIC_IPV6}）"
@@ -343,6 +387,34 @@ open_ports() {
     fi
 }
 
+close_ports() {
+    local _port="$1"
+    validate_port "$_port" || return 0
+
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --remove-port="${_port}/tcp" >/dev/null 2>&1 || true
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
+        ufw delete allow "${_port}/tcp" >/dev/null 2>&1 || true
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        while iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; do
+            iptables -D INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || break
+        done
+    fi
+    if command -v ip6tables >/dev/null 2>&1; then
+        while ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; do
+            ip6tables -D INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || break
+        done
+    fi
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1 || true
+    elif [ -f /etc/sysconfig/iptables ] && command -v service >/dev/null 2>&1; then
+        service iptables save >/dev/null 2>&1 || true
+    fi
+}
+
 # ============================================================
 # 二进制下载 / 校验
 # ============================================================
@@ -367,8 +439,17 @@ get_latest_version() {
             "https://github.com/SagerNet/sing-box/releases/latest" | sed 's|.*/tag/||')
     fi
 
-    [ -z "$LAST_VERSION_TAG" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && return 1
+    if ! printf '%s\n' "$LAST_VERSION_TAG" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$'; then
+        echo -e "${RED}获取版本失败或版本标签格式异常${PLAIN}"
+        LAST_VERSION_TAG=""
+        return 1
+    fi
     echo -e "${GREEN}最新版本: ${LAST_VERSION_TAG}${PLAIN}"
+}
+
+get_installed_version() {
+    [ -x "$SING_BOX_BIN" ] || return 1
+    "$SING_BOX_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
 download_anytls() {
@@ -386,28 +467,33 @@ download_anytls() {
     )
 
     local _tmp_archive _tmp_dir _ok=0 _url _host
-    _tmp_archive=$(mktemp /tmp/sing-box-XXXXXX.tar.gz) || return 1
-    _tmp_dir=$(mktemp -d /tmp/sing-box-XXXXXX) || { rm -f "$_tmp_archive"; return 1; }
+    _tmp_dir=$(mktemp -d /tmp/sing-box-XXXXXX) || return 1
+    _tmp_archive="${_tmp_dir}/${_asset}"
 
     for _url in "${_urls[@]}"; do
         _host=$(echo "$_url" | awk -F/ '{print $3}')
         echo -e "${YELLOW}正在下载 ${_asset}（来源: ${_host}）${PLAIN}"
-        if wget -q --show-progress --timeout=60 -O "$_tmp_archive" "$_url" 2>/dev/null; then
-            _ok=1; break
-        elif curl -fL --connect-timeout 15 --max-time 120 -o "$_tmp_archive" "$_url" 2>/dev/null; then
-            _ok=1; break
+        rm -f "$_tmp_archive"
+        if wget -q --show-progress --timeout=60 -O "$_tmp_archive" "$_url" 2>/dev/null || \
+           curl -fL --connect-timeout 15 --max-time 120 -o "$_tmp_archive" "$_url" 2>/dev/null; then
+            if tar -tzf "$_tmp_archive" >/dev/null 2>&1; then
+                _ok=1
+                break
+            fi
+            echo -e "${YELLOW}  ↳ 下载内容不是有效压缩包，尝试下一个镜像...${PLAIN}"
+            continue
         fi
         echo -e "${YELLOW}  ↳ 失败，尝试下一个镜像...${PLAIN}"
     done
 
     if [ "$_ok" = "0" ]; then
-        rm -rf "$_tmp_archive" "$_tmp_dir"
+        rm -rf "$_tmp_dir"
         echo -e "${RED}所有下载源均失败，请检查网络后重试${PLAIN}"
         return 1
     fi
 
     tar -xzf "$_tmp_archive" -C "$_tmp_dir" || {
-        rm -rf "$_tmp_archive" "$_tmp_dir"
+        rm -rf "$_tmp_dir"
         echo -e "${RED}解压失败，下载文件可能损坏，请重试${PLAIN}"
         return 1
     }
@@ -415,22 +501,29 @@ download_anytls() {
     local _bin
     _bin=$(find "$_tmp_dir" -type f -name "sing-box" | head -1)
     if [ -z "$_bin" ]; then
-        rm -rf "$_tmp_archive" "$_tmp_dir"
+        rm -rf "$_tmp_dir"
         echo -e "${RED}未在压缩包中找到 sing-box 二进制${PLAIN}"
         return 1
     fi
 
     chmod +x "$_bin"
     if ! validate_elf "$_bin"; then
-        rm -rf "$_tmp_archive" "$_tmp_dir"
+        rm -rf "$_tmp_dir"
         echo -e "${RED}二进制 ELF 校验失败（文件损坏或架构不匹配）${PLAIN}"
+        return 1
+    fi
+    local _downloaded_version
+    _downloaded_version=$("$_bin" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [ "$_downloaded_version" != "$_ver" ]; then
+        rm -rf "$_tmp_dir"
+        echo -e "${RED}sing-box 执行或版本校验失败（期望 ${_ver}，得到 ${_downloaded_version:-未知}）${PLAIN}"
         return 1
     fi
 
     mv -f "$_bin" "$SING_BOX_BIN"
     chmod +x "$SING_BOX_BIN"
     MANAGED_SING_BOX=1
-    rm -rf "$_tmp_archive" "$_tmp_dir"
+    rm -rf "$_tmp_dir"
     echo -e "${GREEN}sing-box 安装完成: $("$SING_BOX_BIN" version 2>/dev/null | head -1)${PLAIN}"
 }
 
@@ -439,7 +532,7 @@ ensure_anytls_bin() {
     if [ -x "$SING_BOX_BIN" ]; then
         _preexisting=1
         local _installed_version
-        _installed_version=$("$SING_BOX_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        _installed_version=$(get_installed_version)
         if version_at_least "${_installed_version:-0.0.0}" "1.12.0"; then
             if [ -f "$ANYTLS_META/config.env" ]; then
                 MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$ANYTLS_META/config.env")
@@ -507,7 +600,7 @@ write_config() {
     {
       "type": "anytls",
       "tag": "anytls-in",
-      "listen": "::",
+      "listen": "${LISTEN_HOST}",
       "listen_port": ${LISTEN_PORT},
       "users": [{ "password": "${PASSWORD}" }],
       "padding_scheme": [],
@@ -529,6 +622,7 @@ EXT_PORT=${EXT_PORT}
 PASSWORD=${PASSWORD}
 NAT_MODE=${NAT_MODE}
 BIND_FAMILY=${BIND_FAMILY}
+LISTEN_HOST=${LISTEN_HOST}
 SERVER_NAME=${SERVER_NAME}
 MANAGED_SING_BOX=${MANAGED_SING_BOX}
 CFG
@@ -546,10 +640,19 @@ read_config() {
             PASSWORD) PASSWORD="$_value" ;;
             NAT_MODE) NAT_MODE="$_value" ;;
             BIND_FAMILY) BIND_FAMILY="$_value" ;;
+            LISTEN_HOST) LISTEN_HOST="$_value" ;;
             SERVER_NAME) SERVER_NAME="$_value" ;;
             MANAGED_SING_BOX) MANAGED_SING_BOX="$_value" ;;
         esac
     done < "$ANYTLS_META/config.env"
+    validate_port "$LISTEN_PORT" || return 1
+    validate_port "$EXT_PORT" || return 1
+    validate_password "$PASSWORD" || return 1
+    validate_server_name "$SERVER_NAME" || return 1
+    case "$NAT_MODE" in 0|1) ;; *) return 1 ;; esac
+    case "$BIND_FAMILY" in v4|v6) ;; *) return 1 ;; esac
+    case "$LISTEN_HOST" in 0.0.0.0|::) ;; *) LISTEN_HOST="::" ;; esac
+    case "$MANAGED_SING_BOX" in 0|1) ;; *) MANAGED_SING_BOX=0 ;; esac
     [ -z "${PUBLIC_IP:-}"   ] && PUBLIC_IP=$(cat "$ANYTLS_META/public_ip"   2>/dev/null || true)
     [ -z "${PUBLIC_IPV6:-}" ] && PUBLIC_IPV6=$(cat "$ANYTLS_META/public_ipv6" 2>/dev/null || true)
     return 0
@@ -613,6 +716,46 @@ check_config() {
     "$SING_BOX_BIN" check -c "$ANYTLS_CONFIG"
 }
 
+backup_current_install() {
+    INSTALL_BACKUP_DIR=$(mktemp -d /tmp/anytls-backup-XXXXXX) || return 1
+    [ ! -f "$ANYTLS_CONFIG" ] || cp -a "$ANYTLS_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
+    [ ! -d "$ANYTLS_META" ] || cp -a "$ANYTLS_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
+    [ ! -d "$ANYTLS_CERT_DIR" ] || cp -a "$ANYTLS_CERT_DIR" "$INSTALL_BACKUP_DIR/cert" || { discard_install_backup; return 1; }
+    [ ! -f "$ANYTLS_BIN" ] || cp -a "$ANYTLS_BIN" "$INSTALL_BACKUP_DIR/wrapper" || { discard_install_backup; return 1; }
+    [ ! -f "$SING_BOX_BIN" ] || cp -a "$SING_BOX_BIN" "$INSTALL_BACKUP_DIR/sing-box" || { discard_install_backup; return 1; }
+    [ ! -f "$SYSTEMD_SERVICE" ] || cp -a "$SYSTEMD_SERVICE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
+    [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
+    service_is_active && : > "$INSTALL_BACKUP_DIR/was-active" || true
+    return 0
+}
+
+discard_install_backup() {
+    [ -n "$INSTALL_BACKUP_DIR" ] && rm -rf "$INSTALL_BACKUP_DIR"
+    INSTALL_BACKUP_DIR=""
+}
+
+restore_current_install() {
+    [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
+    service_stop
+    rm -f "$ANYTLS_CONFIG" "$ANYTLS_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
+    rm -rf "$ANYTLS_META" "$ANYTLS_CERT_DIR"
+
+    [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$ANYTLS_CONFIG"
+    [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$ANYTLS_META"
+    [ -d "$INSTALL_BACKUP_DIR/cert" ] && cp -a "$INSTALL_BACKUP_DIR/cert" "$ANYTLS_CERT_DIR"
+    [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$ANYTLS_BIN"
+    if [ -f "$INSTALL_BACKUP_DIR/sing-box" ]; then
+        cp -a "$INSTALL_BACKUP_DIR/sing-box" "$SING_BOX_BIN"
+    elif [ "$MANAGED_SING_BOX" = "1" ]; then
+        rm -f "$SING_BOX_BIN"
+    fi
+    [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SYSTEMD_SERVICE"
+    [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
+    [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
+    [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
+    discard_install_backup
+}
+
 read_config_live() {
     read_config || return 1
     if [ -z "${PUBLIC_IP:-}" ] && [ -z "${PUBLIC_IPV6:-}" ]; then
@@ -655,7 +798,7 @@ SVCHEAD
     cat >> "$OPENRC_SERVICE" <<SVC
 command="${ANYTLS_BIN}"
 command_args=""
-command_background=true
+command_background="yes"
 pidfile="/var/run/anytls-server.pid"
 output_log="/var/log/anytls-server.log"
 error_log="/var/log/anytls-server.log"
@@ -669,6 +812,11 @@ SVC
 }
 
 service_start() {
+    [ -x "$ANYTLS_BIN" ] && [ -f "$ANYTLS_CONFIG" ] || {
+        echo -e "${RED}AnyTLS 尚未安装或配置不完整${PLAIN}"
+        return 1
+    }
+    service_is_active && return 0
     if [ "$INIT_SYS" = "systemd" ]; then
         systemctl start anytls-server
     elif [ "$INIT_SYS" = "openrc" ]; then
@@ -685,8 +833,10 @@ service_stop() {
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service anytls-server stop 2>/dev/null
     else
-        [ -f /var/run/anytls-server.pid ] && kill "$(cat /var/run/anytls-server.pid)" 2>/dev/null && rm -f /var/run/anytls-server.pid
-        pkill -f "anytls-server" 2>/dev/null || true
+        if [ -f /var/run/anytls-server.pid ]; then
+            kill "$(cat /var/run/anytls-server.pid)" 2>/dev/null || true
+            rm -f /var/run/anytls-server.pid
+        fi
     fi
 }
 
@@ -771,9 +921,7 @@ configure_anytls() {
     _default_sni=$(random_sni)
     read -r -p "请输入 TLS 域名/SNI [随机默认 ${_default_sni}]: " SERVER_NAME
     [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
-    case "$SERVER_NAME" in
-        *[!A-Za-z0-9.-]*|.*|*.) echo -e "${RED}SNI 域名格式无效${PLAIN}"; return 1 ;;
-    esac
+    validate_server_name "$SERVER_NAME" || { echo -e "${RED}SNI 域名格式无效${PLAIN}"; return 1; }
 
     NODE_NAME="AnyTLS-$(hostname 2>/dev/null | tr -d '\n\r')"
     [ "$NODE_NAME" = "AnyTLS-" ] && NODE_NAME="AnyTLS-Node"
@@ -783,12 +931,14 @@ configure_anytls() {
 install_anytls() {
     install_dependencies || { read -r -p "按回车键返回主菜单..." _; return; }
     detect_network
-    ensure_anytls_bin || { read -r -p "按回车键返回主菜单..." _; return; }
-    configure_anytls || { read -r -p "按回车键返回主菜单..." _; return; }
+    backup_current_install || { echo -e "${RED}无法创建安装备份，已取消操作${PLAIN}"; read -r -p "按回车键返回主菜单..." _; return; }
+    ensure_anytls_bin || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
+    configure_anytls || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
     echo -e "${YELLOW}正在生成 TLS 证书...${PLAIN}"
     generate_certificate force || {
         echo -e "${RED}生成 TLS 证书失败${PLAIN}"
         show_install_diagnostics
+        restore_current_install
         read -r -p "按回车键返回主菜单..." _
         return
     }
@@ -799,6 +949,7 @@ install_anytls() {
     if ! check_config; then
         echo -e "${RED}sing-box 配置校验失败${PLAIN}"
         show_install_diagnostics
+        restore_current_install
         read -r -p "按回车键返回主菜单..." _
         return
     fi
@@ -821,10 +972,13 @@ install_anytls() {
     else
         echo -e "${RED}✗ AnyTLS 启动失败，请查看日志：${PLAIN}"
         service_logs
+        restore_current_install
+        echo -e "${YELLOW}已恢复安装前的配置和服务${PLAIN}"
         read -r -p "按回车键返回主菜单..." _tmp
         return
     fi
 
+    discard_install_backup
     show_config
 }
 
@@ -832,8 +986,9 @@ change_config() {
     if [ ! -f "$ANYTLS_CONFIG" ]; then
         echo -e "${RED}未安装 AnyTLS${PLAIN}"; sleep 2; return
     fi
-    read_config
-    local _old_sni="$SERVER_NAME"
+    read_config || { echo -e "${RED}AnyTLS 配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
+    local _old_sni="$SERVER_NAME" _old_port="$LISTEN_PORT" _was_active=0
+    service_is_active && _was_active=1 || true
     detect_network
 
     echo -e "\n${YELLOW}修改 AnyTLS 配置，留空则保留原值。${PLAIN}"
@@ -858,11 +1013,7 @@ change_config() {
 
     read -r -p "TLS 域名/SNI [当前 ${SERVER_NAME}]: " _sni
     if [ -n "$_sni" ]; then
-        case "$_sni" in
-            *[!A-Za-z0-9.-]*|.*|*.)
-                echo -e "${RED}SNI 域名格式无效${PLAIN}"; sleep 2; return
-                ;;
-        esac
+        validate_server_name "$_sni" || { echo -e "${RED}SNI 域名格式无效${PLAIN}"; sleep 2; return; }
         SERVER_NAME="$_sni"
     fi
 
@@ -898,9 +1049,9 @@ change_config() {
     fi
 
     open_ports "$LISTEN_PORT"
-    service_restart
+    [ "$_was_active" = "1" ] && service_restart
     sleep 1
-    if ! service_is_active; then
+    if [ "$_was_active" = "1" ] && ! service_is_active; then
         mv -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG" 2>/dev/null || true
         mv -f "$ANYTLS_META/config.env.bak" "$ANYTLS_META/config.env" 2>/dev/null || true
         mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
@@ -911,6 +1062,7 @@ change_config() {
         service_logs
         return
     fi
+    [ "$_old_port" != "$LISTEN_PORT" ] && close_ports "$_old_port"
     rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" "${ANYTLS_CERT}.bak" "${ANYTLS_KEY}.bak"
     show_config
 }
@@ -922,6 +1074,10 @@ change_config() {
 show_node() {
     local _server="$1" _port="$2" _tag="$3"
     [ -z "$_server" ] && return
+    validate_server_address "$_server" || {
+        echo -e "${RED}节点地址格式无效: ${_server}${PLAIN}"
+        return 1
+    }
 
     local _date _node _uri _enc_uri _qr_url _yaml_password
     _date=$(date +%m%d)
@@ -1002,33 +1158,61 @@ show_config() {
 # ============================================================
 # 升级 / 卸载 / 工具
 # ============================================================
-upgrade_anytls() {
-    install_dependencies || { read -r -p "按回车键返回主菜单..." _; return; }
-    get_latest_version || { read -r -p "按回车键返回主菜单..." _; return; }
-    cp "$SING_BOX_BIN" "${SING_BOX_BIN}.bak" 2>/dev/null || true
-    download_anytls || { mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true; read -r -p "按回车键返回主菜单..." _; return; }
+upgrade_core() {
+    [ -f "$ANYTLS_CONFIG" ] && [ -x "$SING_BOX_BIN" ] || {
+        echo -e "${RED}AnyTLS 尚未安装，请先执行安装${PLAIN}"
+        return 1
+    }
+    read_config || { echo -e "${RED}AnyTLS 元数据不完整，无法安全升级${PLAIN}"; return 1; }
+    get_latest_version || return 1
+
+    local _current_version _latest_version _was_active=0 _was_managed="$MANAGED_SING_BOX"
+    _current_version=$(get_installed_version)
+    _latest_version="${LAST_VERSION_TAG#v}"
+    if [ -n "$_current_version" ] && [ "$_current_version" = "$_latest_version" ]; then
+        echo -e "${GREEN}sing-box 已是最新版本 ${_current_version}${PLAIN}"
+        return 0
+    fi
+
+    cp -p "$SING_BOX_BIN" "${SING_BOX_BIN}.bak" || {
+        echo -e "${RED}无法备份现有 sing-box，已取消升级${PLAIN}"
+        return 1
+    }
+    service_is_active && _was_active=1 || true
+    if ! download_anytls; then
+        mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
+        MANAGED_SING_BOX="$_was_managed"
+        return 1
+    fi
+    MANAGED_SING_BOX="$_was_managed"
     if ! check_config; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         echo -e "${RED}新版本不兼容当前配置，已回滚${PLAIN}"
-        return
+        return 1
     fi
-    if service_is_active; then
+    if [ "$_was_active" = "1" ]; then
         service_restart
         sleep 2
         if ! service_is_active; then
             mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
-            service_restart
+            service_restart || true
             echo -e "${RED}升级后服务启动失败，已回滚${PLAIN}"
-            return
+            return 1
         fi
     fi
     rm -f "${SING_BOX_BIN}.bak"
-    echo -e "${GREEN}✓ sing-box 已升级${PLAIN}"
+    echo -e "${GREEN}✓ sing-box 已从 ${_current_version:-未知版本} 升级到 ${_latest_version}${PLAIN}"
+    return 0
+}
+
+upgrade_anytls() {
+    install_dependencies || { read -r -p "按回车键返回主菜单..." _; return; }
+    upgrade_core || true
     sleep 2
 }
 
 uninstall_anytls() {
-    echo -e "${RED}警告：这将删除 AnyTLS 服务、配置和二进制。${PLAIN}"
+    echo -e "${RED}警告：这将删除 AnyTLS 服务、配置和定时更新。${PLAIN}"
     read -r -p "确认卸载 AnyTLS？[y/N]: " _confirm
     case "$_confirm" in
         [yY]) ;;
@@ -1038,10 +1222,19 @@ uninstall_anytls() {
     read_config 2>/dev/null || true
     service_stop
     service_disable
+    close_ports "${LISTEN_PORT:-}"
+    if command -v crontab >/dev/null 2>&1; then
+        crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
+    fi
     rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$ANYTLS_BIN"
-    [ "$MANAGED_SING_BOX" = "1" ] && rm -f "$SING_BOX_BIN"
+    rm -f "$ANYTLS_CONFIG" "$AUTO_UPDATE_LOG"
+    rm -rf "$ANYTLS_META" "$ANYTLS_CERT_DIR"
+    if [ ! -d "$ANYTLS_DIR" ] || rmdir "$ANYTLS_DIR" 2>/dev/null; then
+        [ "$MANAGED_SING_BOX" = "1" ] && rm -f "$SING_BOX_BIN"
+    elif [ "$MANAGED_SING_BOX" = "1" ]; then
+        echo -e "${YELLOW}检测到 /etc/sing-box 中还有其他文件，已保留共享 sing-box 二进制${PLAIN}"
+    fi
     rm -f /var/run/anytls-server.pid
-    rm -rf "$ANYTLS_DIR"
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
     echo -e "${GREEN}✓ AnyTLS 已卸载${PLAIN}"
     sleep 2
@@ -1051,23 +1244,67 @@ setup_auto_update() {
     cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
 #!/bin/bash
 LOG_FILE=/var/log/anytls-autoupdate.log
-echo "[$(date '+%F %T')] start sing-box update" >> "$LOG_FILE"
 TMP_SCRIPT=$(mktemp /tmp/anytls-update-XXXXXX.sh) || exit 1
 trap 'rm -f "$TMP_SCRIPT"' EXIT INT TERM
-curl -fsSL --connect-timeout 15 --max-time 60 \
-  https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh -o "$TMP_SCRIPT" || exit 1
-bash -n "$TMP_SCRIPT" || exit 1
-bash "$TMP_SCRIPT" --upgrade-noninteractive >> "$LOG_FILE" 2>&1
+{
+  echo "[$(date '+%F %T')] 开始检查 sing-box 更新"
+  curl -fsSL --connect-timeout 15 --max-time 60 \
+    https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh -o "$TMP_SCRIPT" || exit 1
+  bash -n "$TMP_SCRIPT" || exit 1
+  bash "$TMP_SCRIPT" --upgrade-noninteractive
+  echo "[$(date '+%F %T')] 更新检查完成"
+} >> "$LOG_FILE" 2>&1
 AUTOUPDATE_EOF
     chmod +x "$AUTO_UPDATE_SCRIPT"
 
     if command -v crontab >/dev/null 2>&1; then
         (crontab -l 2>/dev/null | grep -v "$AUTO_UPDATE_SCRIPT"; echo "17 4 * * 1 $AUTO_UPDATE_SCRIPT") | crontab -
-        echo -e "${GREEN}✓ 已设置每周一 04:17 自动升级 anytls-server${PLAIN}"
+        echo -e "${GREEN}✓ 已设置每周一 04:17 自动检查 sing-box 更新${PLAIN}"
     else
         echo -e "${YELLOW}系统未安装 crontab，请手动安装 cron 后再设置自动升级${PLAIN}"
     fi
     sleep 2
+}
+
+remove_auto_update() {
+    if command -v crontab >/dev/null 2>&1; then
+        crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
+    fi
+    rm -f "$AUTO_UPDATE_SCRIPT"
+    echo -e "${GREEN}✓ 已移除 AnyTLS 自动更新任务${PLAIN}"
+    sleep 2
+}
+
+diagnose_anytls() {
+    echo -e "\n${GREEN}AnyTLS 运行诊断${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    if ! read_config; then
+        echo -e "  ${RED}✗ 配置或元数据缺失${PLAIN}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+        return 1
+    fi
+    if check_config >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓ sing-box 配置有效${PLAIN}"
+    else
+        echo -e "  ${RED}✗ sing-box 配置无效${PLAIN}"
+        check_config 2>&1 | sed 's/^/    /'
+    fi
+    if [ -s "$ANYTLS_CERT" ] && openssl x509 -in "$ANYTLS_CERT" -noout -checkend 86400 >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓ TLS 证书有效${PLAIN}"
+    else
+        echo -e "  ${RED}✗ TLS 证书缺失、损坏或即将过期${PLAIN}"
+    fi
+    if service_is_active; then
+        echo -e "  ${GREEN}✓ AnyTLS 服务运行中${PLAIN}"
+    else
+        echo -e "  ${RED}✗ AnyTLS 服务未运行${PLAIN}"
+    fi
+    if command -v ss >/dev/null 2>&1 && ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE "(^|:|\])${LISTEN_PORT}$"; then
+        echo -e "  ${GREEN}✓ TCP ${LISTEN_PORT} 正在监听${PLAIN}"
+    else
+        echo -e "  ${YELLOW}! 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
+    fi
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
 show_system_info() {
@@ -1087,18 +1324,28 @@ show_system_info() {
 server_tools_menu() {
     while true; do
         clear
+        local _auto_status="${RED}未启用${PLAIN}"
+        if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$AUTO_UPDATE_SCRIPT"; then
+            _auto_status="${GREEN}已启用${PLAIN}"
+        fi
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e "${GREEN}  AnyTLS 工具箱${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
+        echo -e " 自动更新: ${_auto_status}"
+        echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 查看系统信息"
         echo -e " 2. 查看 AnyTLS 日志"
-        echo -e " 3. 设置每周自动升级"
+        echo -e " 3. 运行状态诊断"
+        echo -e " 4. 设置每周自动更新"
+        echo -e " 5. 移除自动更新"
         echo -e " 0. 返回"
-        read -r -p "请输入选项 [0-3]: " choice
+        read -r -p "请输入选项 [0-5]: " choice
         case "$choice" in
             1) show_system_info ;;
             2) service_logs; read -r -p "按回车返回..." _tmp ;;
-            3) setup_auto_update ;;
+            3) diagnose_anytls; read -r -p "按回车返回..." _tmp ;;
+            4) setup_auto_update ;;
+            5) remove_auto_update ;;
             0|q|quit|exit) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -1106,6 +1353,11 @@ server_tools_menu() {
 }
 
 manage_anytls() {
+    if [ ! -f "$ANYTLS_CONFIG" ] || [ ! -x "$ANYTLS_BIN" ]; then
+        echo -e "${RED}AnyTLS 尚未安装，请先执行安装${PLAIN}"
+        sleep 2
+        return
+    fi
     while true; do
         clear
         local STATUS
@@ -1123,9 +1375,28 @@ manage_anytls() {
         echo -e " 0. 返回"
         read -r -p "请输入选项 [0-5]: " choice
         case "$choice" in
-            1) service_start; sleep 1 ;;
-            2) service_stop; sleep 1 ;;
-            3) service_restart; sleep 1 ;;
+            1)
+                if service_start && sleep 1 && service_is_active; then
+                    echo -e "${GREEN}✓ AnyTLS 已启动${PLAIN}"
+                else
+                    echo -e "${RED}✗ 启动失败，请查看日志${PLAIN}"
+                fi
+                sleep 1
+                ;;
+            2)
+                service_stop
+                sleep 1
+                service_is_active && echo -e "${RED}✗ 服务仍在运行${PLAIN}" || echo -e "${GREEN}✓ AnyTLS 已停止${PLAIN}"
+                sleep 1
+                ;;
+            3)
+                if service_restart && sleep 1 && service_is_active; then
+                    echo -e "${GREEN}✓ AnyTLS 已重启${PLAIN}"
+                else
+                    echo -e "${RED}✗ 重启失败，请查看日志${PLAIN}"
+                fi
+                sleep 1
+                ;;
             4) service_logs; read -r -p "按回车返回..." _tmp ;;
             5) change_config ;;
             0|q|quit|exit) return ;;
@@ -1141,14 +1412,16 @@ main_menu() {
     while true; do
         clear
         local STATUS _ver_line
-        if [ -f "$ANYTLS_CONFIG" ]; then
+        if [ -f "$ANYTLS_CONFIG" ] && [ -x "$ANYTLS_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
             service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
+        elif [ -e "$ANYTLS_CONFIG" ] || [ -e "$ANYTLS_BIN" ]; then
+            STATUS="${YELLOW}安装不完整${PLAIN}"
         else
             STATUS="${RED}未安装${PLAIN}"
         fi
         _ver_line=""
         if [ -x "$SING_BOX_BIN" ]; then
-            _ver_line=" ($("$SING_BOX_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1))"
+            _ver_line=" ($(get_installed_version))"
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
@@ -1193,27 +1466,8 @@ if [ "${1:-}" = "--upgrade-noninteractive" ]; then
     check_sys
     detect_init
     install_dependencies || exit 1
-    get_latest_version || exit 1
-    cp "$SING_BOX_BIN" "${SING_BOX_BIN}.bak" 2>/dev/null || true
-    download_anytls || { mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true; exit 1; }
-    if [ -f "$ANYTLS_CONFIG" ]; then
-        read_config || true
-        if ! check_config; then
-            mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
-            exit 1
-        fi
-        if service_is_active; then
-            service_restart
-            sleep 2
-            if ! service_is_active; then
-                mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
-                service_restart || true
-                exit 1
-            fi
-        fi
-    fi
-    rm -f "${SING_BOX_BIN}.bak"
-    exit 0
+    upgrade_core
+    exit $?
 fi
 
 # ============================================================

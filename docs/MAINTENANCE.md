@@ -5,6 +5,7 @@
 - 唯一二进制上游是 `https://github.com/SagerNet/sing-box`，要求版本 >= 1.12.0。
 - 发布包格式为 `sing-box-<version>-linux-<arch>.tar.gz`；上游命名变化时必须同步行为测试。
 - 配置位于 `/etc/sing-box/anytls.json`，元数据、证书分别位于 `anytls-meta/`、`anytls-cert/`。
+- `/etc/sing-box` 可能由其他服务共享；卸载只能删除 AnyTLS 专属产物，目录非空时必须保留 sing-box 二进制。
 - 自动测试不替代真实 VPS 的服务启动、防火墙和客户端连通性验证。
 
 ## 维护重点

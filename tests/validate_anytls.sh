@@ -15,6 +15,13 @@ validate_port 65535
 validate_password Abcdef12._~-
 ! validate_password short
 ! validate_password 'bad password'
+validate_server_name www.example.com
+! validate_server_name localhost
+! validate_server_name bad..example.com
+! validate_server_name -bad.example.com
+validate_server_address 192.0.2.1
+validate_server_address 2001:db8::1
+! validate_server_address 'bad"address'
 
 case "$(random_sni)" in
     www.cloudflare.com|www.microsoft.com|www.apple.com|www.amazon.com|www.amd.com|www.bing.com|www.mozilla.org|www.github.com) ;;
@@ -52,7 +59,7 @@ ANYTLS_DIR="$tmp/etc"; ANYTLS_CONFIG="$ANYTLS_DIR/anytls.json"
 ANYTLS_META="$ANYTLS_DIR/anytls-meta"; ANYTLS_CERT_DIR="$ANYTLS_DIR/anytls-cert"
 ANYTLS_CERT="$ANYTLS_CERT_DIR/cert.pem"; ANYTLS_KEY="$ANYTLS_CERT_DIR/private.key"
 LISTEN_PORT=8443; EXT_PORT=9443; PASSWORD=Abcdef12; NAT_MODE=1; BIND_FAMILY=v6
-SERVER_NAME=www.example.com; MANAGED_SING_BOX=1; PUBLIC_IP=""; PUBLIC_IPV6=""
+LISTEN_HOST=::; SERVER_NAME=www.example.com; MANAGED_SING_BOX=1; PUBLIC_IP=""; PUBLIC_IPV6=""
 case "$(uname -s)" in
     MINGW*|MSYS*) ;;
     *)
@@ -64,10 +71,11 @@ esac
 write_config
 grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
 grep -q '"listen_port": 8443' "$ANYTLS_CONFIG"
+grep -q '"listen": "::"' "$ANYTLS_CONFIG"
 grep -q '"server_name": "www.example.com"' "$ANYTLS_CONFIG"
-LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4; SERVER_NAME=""; MANAGED_SING_BOX=0
+LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4; LISTEN_HOST=""; SERVER_NAME=""; MANAGED_SING_BOX=0
 read_config
-[ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$SERVER_NAME:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6:www.example.com:1" ]
+[ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6::::www.example.com:1" ]
 PUBLIC_IP=192.0.2.1; PUBLIC_IPV6=2001:db8::1
 read_config
 
@@ -78,6 +86,43 @@ grep -q '^ExecStart=/usr/local/bin/anytls-server$' "$SYSTEMD_SERVICE"
 SING_BOX_BIN=/usr/local/bin/sing-box; ANYTLS_BIN="$tmp/anytls-server"
 write_wrapper
 grep -q '^exec "/usr/local/bin/sing-box" run -c ' "$ANYTLS_BIN"
+
+# 重装备份必须能恢复原配置和二进制。
+INIT_SYS=none
+SING_BOX_BIN="$tmp/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.13.14"\n' > "$SING_BOX_BIN"
+chmod +x "$SING_BOX_BIN"
+ANYTLS_BIN="$tmp/anytls-server"
+write_wrapper
+backup_current_install
+printf 'broken' > "$ANYTLS_CONFIG"
+printf 'broken' > "$SING_BOX_BIN"
+restore_current_install
+grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
+grep -q 'sing-box version 1.13.14' "$SING_BOX_BIN"
+
+# 已是最新版时不得重复下载或替换二进制。
+get_latest_version() { LAST_VERSION_TAG=v1.13.14; return 0; }
+upgrade_output=$(upgrade_core)
+echo "$upgrade_output" | grep -q '已是最新版本 1.13.14'
+
+# 卸载只能删除 AnyTLS 产物，存在其他 sing-box 配置时必须保留目录与核心。
+printf '{}' > "$ANYTLS_DIR/other.json"
+SYSTEMD_SERVICE="$tmp/anytls.service"
+OPENRC_SERVICE="$tmp/anytls-openrc"
+AUTO_UPDATE_SCRIPT="$tmp/anytls-autoupdate.sh"
+AUTO_UPDATE_LOG="$tmp/anytls-autoupdate.log"
+MANAGED_SING_BOX=1
+sleep() { :; }
+service_stop() { :; }
+service_disable() { :; }
+close_ports() { :; }
+printf 'y\n' | uninstall_anytls >/dev/null
+[ -f "$ANYTLS_DIR/other.json" ]
+[ -f "$SING_BOX_BIN" ]
+[ ! -e "$ANYTLS_CONFIG" ]
+[ ! -e "$ANYTLS_META" ]
+[ ! -e "$ANYTLS_CERT_DIR" ]
 
 printf '\177ELFtest' > "$tmp/server"
 validate_elf "$tmp/server"
