@@ -16,6 +16,11 @@ validate_password Abcdef12._~-
 ! validate_password short
 ! validate_password 'bad password'
 
+case "$(random_sni)" in
+    www.cloudflare.com|www.microsoft.com|www.apple.com|www.amazon.com|www.amd.com|www.bing.com|www.mozilla.org|www.github.com) ;;
+    *) exit 1 ;;
+esac
+
 [ "$(detect_arch x86_64)" = amd64 ]
 [ "$(detect_arch aarch64)" = arm64 ]
 [ "$(detect_arch armv7l)" = armv7 ]
@@ -39,6 +44,14 @@ ANYTLS_META="$ANYTLS_DIR/anytls-meta"; ANYTLS_CERT_DIR="$ANYTLS_DIR/anytls-cert"
 ANYTLS_CERT="$ANYTLS_CERT_DIR/cert.pem"; ANYTLS_KEY="$ANYTLS_CERT_DIR/private.key"
 LISTEN_PORT=8443; EXT_PORT=9443; PASSWORD=Abcdef12; NAT_MODE=1; BIND_FAMILY=v6
 SERVER_NAME=www.example.com; MANAGED_SING_BOX=1; PUBLIC_IP=""; PUBLIC_IPV6=""
+case "$(uname -s)" in
+    MINGW*|MSYS*) ;;
+    *)
+        generate_certificate force
+        [ -s "$ANYTLS_CERT" ] && [ -s "$ANYTLS_KEY" ]
+        openssl x509 -in "$ANYTLS_CERT" -noout -checkend 60 >/dev/null 2>&1
+        ;;
+esac
 write_config
 grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
 grep -q '"listen_port": 8443' "$ANYTLS_CONFIG"

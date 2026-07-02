@@ -36,11 +36,13 @@ if [ -z "$BASH_VERSION" ]; then
     fi
 fi
 
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+
 [ "${ANYTLS_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ] && [ -c /dev/tty ] && exec < /dev/tty
 
-if [ -f "$0" ] && grep -q $'\r' "$0" 2>/dev/null; then
-    sed -i 's/\r$//' "$0"
-    exec bash "$0" "$@"
+if [ -f "$SCRIPT_PATH" ] && grep -q $'\r' "$SCRIPT_PATH" 2>/dev/null; then
+    sed -i 's/\r$//' "$SCRIPT_PATH"
+    exec bash "$SCRIPT_PATH" "$@"
 fi
 
 # ============================================================
@@ -203,6 +205,22 @@ validate_password() {
     _has_ctrl=$(printf '%s' "$pw" | od -An -tx1 | tr ' \n' '\n' | { grep -cE '^[01][0-9a-f]$|^7f$' 2>/dev/null || true; })
     [ "${_has_ctrl:-0}" -gt 0 ] 2>/dev/null && return 1
     return 0
+}
+
+random_sni() {
+    local _number
+    _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
+    [ -z "$_number" ] && _number=$(date +%s)
+    case $((_number % 8)) in
+        0) echo "www.cloudflare.com" ;;
+        1) echo "www.microsoft.com" ;;
+        2) echo "www.apple.com" ;;
+        3) echo "www.amazon.com" ;;
+        4) echo "www.amd.com" ;;
+        5) echo "www.bing.com" ;;
+        6) echo "www.mozilla.org" ;;
+        *) echo "www.github.com" ;;
+    esac
 }
 
 # ============================================================
@@ -537,23 +555,49 @@ read_config() {
 }
 
 generate_certificate() {
+    local _force="${1:-}" _tmp_dir _tmp_cert _tmp_key
     mkdir -p "$ANYTLS_CERT_DIR"
     chmod 700 "$ANYTLS_CERT_DIR"
-    if [ -s "$ANYTLS_CERT" ] && [ -s "$ANYTLS_KEY" ]; then
+    if [ "$_force" != "force" ] && [ -s "$ANYTLS_CERT" ] && [ -s "$ANYTLS_KEY" ]; then
         return 0
     fi
+    _tmp_dir=$(mktemp -d /tmp/anytls-cert-XXXXXX) || return 1
+    _tmp_cert="$_tmp_dir/cert.pem"
+    _tmp_key="$_tmp_dir/private.key"
     if openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
         -subj "/CN=${SERVER_NAME}" \
         -addext "subjectAltName=DNS:${SERVER_NAME}" \
-        -keyout "$ANYTLS_KEY" -out "$ANYTLS_CERT" >/dev/null 2>&1; then
+        -keyout "$_tmp_key" -out "$_tmp_cert" >/dev/null 2>&1; then
         :
     else
-        rm -f "$ANYTLS_CERT" "$ANYTLS_KEY"
+        rm -f "$_tmp_cert" "$_tmp_key"
         openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
             -subj "/CN=${SERVER_NAME}" \
-            -keyout "$ANYTLS_KEY" -out "$ANYTLS_CERT" >/dev/null 2>&1 || return 1
+            -keyout "$_tmp_key" -out "$_tmp_cert" >/dev/null 2>&1 || {
+                rm -rf "$_tmp_dir"
+                return 1
+            }
     fi
+    if [ ! -s "$_tmp_cert" ] || [ ! -s "$_tmp_key" ]; then
+        rm -rf "$_tmp_dir"
+        return 1
+    fi
+    mv -f "$_tmp_cert" "$ANYTLS_CERT"
+    mv -f "$_tmp_key" "$ANYTLS_KEY"
+    rm -rf "$_tmp_dir"
     chmod 600 "$ANYTLS_KEY" "$ANYTLS_CERT"
+}
+
+show_install_diagnostics() {
+    echo -e "${YELLOW}诊断信息:${PLAIN}"
+    echo "  sing-box: $SING_BOX_BIN"
+    "$SING_BOX_BIN" version 2>&1 | head -1 | sed 's/^/  version : /'
+    echo "  config  : $ANYTLS_CONFIG"
+    echo "  cert    : $ANYTLS_CERT"
+    echo "  key     : $ANYTLS_KEY"
+    [ -s "$ANYTLS_CONFIG" ] || echo -e "  ${RED}配置文件缺失或为空${PLAIN}"
+    [ -s "$ANYTLS_CERT" ] || echo -e "  ${RED}证书文件缺失或为空${PLAIN}"
+    [ -s "$ANYTLS_KEY" ] || echo -e "  ${RED}私钥文件缺失或为空${PLAIN}"
 }
 
 write_wrapper() {
@@ -722,8 +766,10 @@ configure_anytls() {
     fi
     validate_password "$PASSWORD" || { echo -e "${RED}密码包含非法字符（实际值: ${PASSWORD}）${PLAIN}"; return 1; }
 
-    read -r -p "请输入 TLS 域名/SNI [默认 www.example.com]: " SERVER_NAME
-    [ -z "$SERVER_NAME" ] && SERVER_NAME="www.example.com"
+    local _default_sni
+    _default_sni=$(random_sni)
+    read -r -p "请输入 TLS 域名/SNI [随机默认 ${_default_sni}]: " SERVER_NAME
+    [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
     case "$SERVER_NAME" in
         *[!A-Za-z0-9.-]*|.*|*.) echo -e "${RED}SNI 域名格式无效${PLAIN}"; return 1 ;;
     esac
@@ -737,10 +783,24 @@ install_anytls() {
     detect_network
     ensure_anytls_bin || { read -r -p "按回车键返回主菜单..." _; return; }
     configure_anytls || { read -r -p "按回车键返回主菜单..." _; return; }
-    generate_certificate || { echo -e "${RED}生成 TLS 证书失败${PLAIN}"; read -r -p "按回车键返回主菜单..." _; return; }
+    echo -e "${YELLOW}正在生成 TLS 证书...${PLAIN}"
+    generate_certificate force || {
+        echo -e "${RED}生成 TLS 证书失败${PLAIN}"
+        show_install_diagnostics
+        read -r -p "按回车键返回主菜单..." _
+        return
+    }
+    echo -e "${GREEN}✓ TLS 证书生成完成${PLAIN}"
     write_config
     write_wrapper
-    check_config || { echo -e "${RED}sing-box 配置校验失败${PLAIN}"; read -r -p "按回车键返回主菜单..." _; return; }
+    echo -e "${YELLOW}正在校验 sing-box 配置...${PLAIN}"
+    if ! check_config; then
+        echo -e "${RED}sing-box 配置校验失败${PLAIN}"
+        show_install_diagnostics
+        read -r -p "按回车键返回主菜单..." _
+        return
+    fi
+    echo -e "${GREEN}✓ sing-box 配置校验通过${PLAIN}"
 
     if [ "$INIT_SYS" = "systemd" ]; then
         write_systemd_service
@@ -750,6 +810,7 @@ install_anytls() {
 
     service_enable
     open_ports "$LISTEN_PORT"
+    echo -e "${YELLOW}正在启动 AnyTLS 服务...${PLAIN}"
     if service_is_active; then service_restart; else service_start; fi
 
     sleep 2
@@ -809,8 +870,7 @@ change_config() {
     cp "$ANYTLS_KEY" "${ANYTLS_KEY}.bak" 2>/dev/null || true
 
     if [ "$SERVER_NAME" != "$_old_sni" ]; then
-        rm -f "$ANYTLS_CERT" "$ANYTLS_KEY"
-        if ! generate_certificate; then
+        if ! generate_certificate force; then
             mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
             mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
             rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak"
