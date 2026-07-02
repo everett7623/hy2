@@ -1081,10 +1081,15 @@ render_singbox_client_config() {
   },
   "inbounds": [
     {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "127.0.0.1",
-      "listen_port": 2080
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "mtu": 9000,
+      "auto_route": true,
+      "stack": "mixed"
     }
   ],
   "outbounds": [
@@ -1104,7 +1109,10 @@ render_singbox_client_config() {
         }
       }
     }
-  ]
+  ],
+  "route": {
+    "auto_detect_interface": true
+  }
 }
 CFG
 }
@@ -1149,7 +1157,7 @@ show_node() {
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- sing-box ----
-    echo -e "${GREEN} sing-box 完整客户端配置（本地 SOCKS/HTTP: 127.0.0.1:2080）:${PLAIN}"
+    echo -e "${GREEN} sing-box for Android / SFA 完整 TUN 配置:${PLAIN}"
     render_singbox_client_config "$_server" "$_port" "$PASSWORD" "$_node" "$SERVER_NAME" | sed 's/^/  /'
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }

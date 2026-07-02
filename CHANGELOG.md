@@ -16,7 +16,7 @@
 - 完整审计 AnyTLS 安装生命周期：增加重装事务回滚、下载包/可执行校验和同版本升级跳过
 - 卸载仅清理 AnyTLS 专属文件并保留共享 sing-box，补充防火墙、cron 与日志清理
 - 修复纯 IPv4 监听地址，修改端口后清理旧规则；工具箱新增运行诊断和自动更新移除
-- 修复 sing-box 输出仅包含 outbound 片段的问题，改为可直接运行的完整 mixed 客户端配置
+- 修复 sing-box 输出仅包含 outbound 片段及 mixed 端口冲突，改为 Android/SFA 可直接运行的完整 TUN 配置
 - 在完整删除旧实现后，从空文件重新开发 `anytls.sh`，不继承旧 AnyTLS 代码
 - 使用 sing-box >= 1.12.0 原生 AnyTLS 入站，不依赖 Python 运行环境
 - 支持 systemd、OpenRC 和无 init 环境，覆盖 IPv4、IPv6 与双栈监听
