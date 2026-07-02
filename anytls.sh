@@ -1295,6 +1295,20 @@ export_quantumultx_anytls() {
     printf 'Quantumult X 暂不支持 AnyTLS 配置格式。'
 }
 
+print_certificate_verification_status() {
+    local _pin="${1:-}" _fingerprint="${2:-}"
+    echo -e "${GREEN}证书校验:${PLAIN}"
+    if [ -n "$_pin" ] || [ -n "$_fingerprint" ]; then
+        echo -e "${GREEN}[OK] 已为支持的客户端生成严格验证参数。${PLAIN}"
+        [ -n "$_pin" ] && echo "公钥 SHA256 Pin: ${_pin}"
+        [ -n "$_fingerprint" ] && echo "证书 SHA256 指纹: ${_fingerprint}"
+        echo "严格模式: Throne / Shadowrocket / Mihomo / Surfboard / Sing-box"
+        echo "兼容模式: URI / Loon / 二维码使用 skip-cert-verify=true"
+    else
+        echo -e "${YELLOW}[WARN] 未读取到证书 pin/指纹，客户端输出将使用 skip-cert-verify=true 兼容模式。${PLAIN}"
+    fi
+}
+
 show_node() {
     local _server="$1" _port="$2" _tag="$3"
     [ -z "$_server" ] && return
@@ -1355,11 +1369,7 @@ show_node() {
     print_copy_block "$(export_quantumultx_anytls)"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}证书模式:${PLAIN}"
-    echo "当前模式: skip-cert-verify=true"
-    echo "说明: 兼容性更好，但安全性较低。"
-    echo "建议: 如果客户端支持证书指纹或证书导入，优先使用严格验证模式。"
-    [ -n "$_cert_fingerprint" ] && echo "证书 SHA256 指纹: ${_cert_fingerprint}"
+    print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     echo -e "${GREEN}二维码:${PLAIN}"
@@ -1383,9 +1393,11 @@ show_node() {
 show_config() {
     read_config_live || { echo -e "${RED}未找到 AnyTLS 配置${PLAIN}"; sleep 2; return; }
 
-    local _country _server_name
+    local _country _server_name _cert_pin _cert_fingerprint
     _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
     _server_name=$(generate_server_name)
+    _cert_pin=$(certificate_public_key_sha256 2>/dev/null || true)
+    _cert_fingerprint=$(certificate_fingerprint_sha256 2>/dev/null || true)
 
     echo -e "\n${GREEN}AnyTLS 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -1402,13 +1414,10 @@ show_config() {
     echo -e "密码 Pass : ${YELLOW}${PASSWORD}${PLAIN}"
     echo -e "伪装 SNI : ${YELLOW}${SERVER_NAME}${PLAIN}"
     echo -e "TLS 指纹 : ${YELLOW}chrome${PLAIN}"
-    echo -e "证书验证 : ${RED}Insecure / Skip Cert Verify = true${PLAIN}"
+    echo -e "通用 URI : ${YELLOW}insecure=1 / skip-cert-verify=true${PLAIN}"
     [ "$NAT_MODE" = "1" ] && echo -e "机器类型 : ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    echo "证书模式:"
-    echo "当前模式: skip-cert-verify=true"
-    echo "说明: 兼容性更好，但安全性较低。"
-    echo "建议: 如果客户端支持证书指纹或证书导入，优先使用严格验证模式。"
+    print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     if [ -n "$PUBLIC_IP" ]; then
