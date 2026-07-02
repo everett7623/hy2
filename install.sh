@@ -276,30 +276,30 @@ get_status() {
 # ============================================================
 show_header() {
     clear
-    echo -e "${SKYBLUE}${BOLD}==============================================================${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0${PLAIN}"
     echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
-    echo -e "${SKYBLUE}${BOLD}==============================================================${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}博客${PLAIN}   ${SKYBLUE}seedloc.com${PLAIN}     ${DIM}│${PLAIN}  ${DIM}测评${PLAIN}  ${SKYBLUE}vpsknow.com${PLAIN}"
     echo -e "  ${DIM}论坛${PLAIN}   ${SKYBLUE}nodeloc.com${PLAIN}"
-    echo -e "${SKYBLUE}──────────────────────────────────────────────────────────────${PLAIN}"
+    echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
 }
 
 show_status_summary() {
     get_status
-    echo -e "${DIM}IPv4${PLAIN}        ${WHITE}${NET_IPV4}${PLAIN}"
-    echo -e "${DIM}IPv6${PLAIN}        ${WHITE}${NET_IPV6}${PLAIN}"
-    echo -e "${DIM}系统${PLAIN}        ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
-    echo -e "${DIM}内核${PLAIN}        ${WHITE}${KERNEL_INFO}${PLAIN}"
-    echo -e "${DIM}BBR${PLAIN}         ${WHITE}${BBR_STATUS}${PLAIN}"
-    echo -e "${DIM}国家/地区${PLAIN}   ${WHITE}${COUNTRY_INFO}${PLAIN}"
-    echo -e "${SKYBLUE}──────────────────────────────────────────────────────────────${PLAIN}"
-    echo -e "AnyTLS          $(echo -e "$ANYTLS_STATUS")"
-    echo -e "Hysteria2       $(echo -e "$HY2_STATUS")"
-    echo -e "Shadowsocks     $(echo -e "$SS_STATUS")"
-    echo -e "EUserv HY2      $(echo -e "$EUSERV_STATUS")"
-    echo -e "${SKYBLUE}──────────────────────────────────────────────────────────────${PLAIN}"
+    echo -e "  ${DIM}IPv4${PLAIN}        ${WHITE}${NET_IPV4}${PLAIN}"
+    echo -e "  ${DIM}IPv6${PLAIN}        ${WHITE}${NET_IPV6}${PLAIN}"
+    echo -e "  ${DIM}系统${PLAIN}        ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
+    echo -e "  ${DIM}内核${PLAIN}        ${WHITE}${KERNEL_INFO}${PLAIN}"
+    echo -e "  ${DIM}BBR${PLAIN}         ${WHITE}${BBR_STATUS}${PLAIN}"
+    echo -e "  ${DIM}国家/地区${PLAIN}   ${WHITE}${COUNTRY_INFO}${PLAIN}"
+    echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
+    echo -e "  AnyTLS        $(echo -e "$ANYTLS_STATUS")"
+    echo -e "  Hysteria2     $(echo -e "$HY2_STATUS")"
+    echo -e "  Shadowsocks   $(echo -e "$SS_STATUS")"
+    echo -e "  EUserv HY2    $(echo -e "$EUSERV_STATUS")"
+    echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
 }
 
 select_protocol_and_run() {
@@ -308,13 +308,13 @@ select_protocol_and_run() {
         show_header
         echo -e "${WHITE}${BOLD}${_title}${PLAIN}"
         echo ""
-        echo -e "[1] AnyTLS"
-        echo -e "[2] Hysteria2"
-        echo -e "[3] Shadowsocks"
-        echo -e "[4] EUserv IPv6-only HY2"
-        echo -e "[0] 返回"
+        echo -e "  [1] AnyTLS"
+        echo -e "  [2] Hysteria2"
+        echo -e "  [3] Shadowsocks"
+        echo -e "  [4] EUserv IPv6-only HY2"
+        echo -e "  [0] 返回"
         echo ""
-        read -r -p "请选择协议 [0-4]: " p
+        read -r -p "  请选择协议 [0-4]: " p
         case "$p" in
             1) run_script "AnyTLS" "$ANYTLS_URL"; return ;;
             2) run_script "Hysteria2" "$HY2_URL"; return ;;
@@ -340,18 +340,18 @@ export_config_menu() {
         echo -e "${WHITE}${BOLD}导出客户端配置${PLAIN}"
         echo -e "${DIM}选择格式后会加载对应协议脚本的节点详情页；协议脚本会输出当前支持的全部格式。${PLAIN}"
         echo ""
-        echo -e "[1] URI 分享链接"
-        echo -e "[2] Throne URI"
-        echo -e "[3] Mihomo / Clash Meta / Clash Verge 单行配置"
-        echo -e "[4] Loon 配置"
-        echo -e "[5] Surfboard 配置"
-        echo -e "[6] Shadowrocket 配置"
-        echo -e "[7] Quantumult X 配置"
-        echo -e "[8] 全部输出"
-        echo -e "[9] sing-box / SFA JSON 配置"
-        echo -e "[0] 返回"
+        echo -e "  [1] URI 分享链接"
+        echo -e "  [2] Throne URI"
+        echo -e "  [3] Mihomo / Clash Meta / Clash Verge 单行配置"
+        echo -e "  [4] Loon 配置"
+        echo -e "  [5] Surfboard 配置"
+        echo -e "  [6] Shadowrocket 配置"
+        echo -e "  [7] Quantumult X 配置"
+        echo -e "  [8] 全部输出"
+        echo -e "  [9] sing-box / SFA JSON 配置"
+        echo -e "  [0] 返回"
         echo ""
-        read -r -p "请选择导出格式 [0-9]: " fmt
+        read -r -p "  请选择导出格式 [0-9]: " fmt
         case "$fmt" in
             1|2|3|4|5|6|7|8|9) select_protocol_and_run "选择协议以导出配置"; return ;;
             0) return ;;
@@ -389,16 +389,16 @@ protocol_service_menu() {
             && echo -e "当前状态: ${GREEN}运行中${PLAIN}" \
             || echo -e "当前状态: ${YELLOW}未运行 / 未安装${PLAIN}"
         echo ""
-        echo -e "[1] 查看状态"
-        echo -e "[2] 启动服务"
-        echo -e "[3] 停止服务"
-        echo -e "[4] 重启服务"
-        echo -e "[5] 查看日志"
-        echo -e "[6] 查看监听端口"
-        echo -e "[7] 修改配置"
-        echo -e "[0] 返回"
+        echo -e "  [1] 查看状态"
+        echo -e "  [2] 启动服务"
+        echo -e "  [3] 停止服务"
+        echo -e "  [4] 重启服务"
+        echo -e "  [5] 查看日志"
+        echo -e "  [6] 查看监听端口"
+        echo -e "  [7] 修改配置"
+        echo -e "  [0] 返回"
         echo ""
-        read -r -p "请选择 [0-7]: " opt
+        read -r -p "  请选择 [0-7]: " opt
         case "$opt" in
             1) show_all_services; pause_return ;;
             2) service_action "$_service" start "$_pidfile" && echo -e "${GREEN}[OK] 服务已启动${PLAIN}" || echo -e "${RED}[ERROR] 启动失败${PLAIN}"; sleep 1 ;;
@@ -427,16 +427,16 @@ service_management_menu() {
         show_header
         echo -e "${WHITE}${BOLD}服务管理${PLAIN}"
         echo ""
-        echo -e "[1] AnyTLS 服务管理"
-        echo -e "[2] Hysteria2 服务管理"
-        echo -e "[3] Shadowsocks 服务管理"
-        echo -e "[4] EUserv HY2 服务管理"
-        echo -e "[5] 查看所有服务状态"
-        echo -e "[6] 查看监听端口"
-        echo -e "[7] 查看最近日志"
-        echo -e "[0] 返回"
+        echo -e "  [1] AnyTLS 服务管理"
+        echo -e "  [2] Hysteria2 服务管理"
+        echo -e "  [3] Shadowsocks 服务管理"
+        echo -e "  [4] EUserv HY2 服务管理"
+        echo -e "  [5] 查看所有服务状态"
+        echo -e "  [6] 查看监听端口"
+        echo -e "  [7] 查看最近日志"
+        echo -e "  [0] 返回"
         echo ""
-        read -r -p "请选择 [0-7]: " opt
+        read -r -p "  请选择 [0-7]: " opt
         case "$opt" in
             1) protocol_service_menu "AnyTLS" "anytls-server" "/var/run/anytls-server.pid" "/var/log/anytls-server.log" "AnyTLS" "$ANYTLS_URL" ;;
             2) protocol_service_menu "Hysteria2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "Hysteria2" "$HY2_URL" ;;
@@ -548,13 +548,13 @@ backup_restore_menu() {
         show_header
         echo -e "${WHITE}${BOLD}备份 / 恢复${PLAIN}"
         echo ""
-        echo -e "[1] 备份当前配置"
-        echo -e "[2] 查看备份列表"
-        echo -e "[3] 恢复指定备份"
-        echo -e "[4] 删除旧备份"
-        echo -e "[0] 返回"
+        echo -e "  [1] 备份当前配置"
+        echo -e "  [2] 查看备份列表"
+        echo -e "  [3] 恢复指定备份"
+        echo -e "  [4] 删除旧备份"
+        echo -e "  [0] 返回"
         echo ""
-        read -r -p "请选择 [0-4]: " opt
+        read -r -p "  请选择 [0-4]: " opt
         case "$opt" in
             1) backup_config; pause_return ;;
             2) ls -lh "$BACKUP_DIR"/backup-*.tar.gz 2>/dev/null || echo -e "${YELLOW}[WARN] 暂无备份${PLAIN}"; pause_return ;;
@@ -590,15 +590,15 @@ update_menu() {
         show_header
         echo -e "${WHITE}${BOLD}更新脚本 / 更新核心${PLAIN}"
         echo ""
-        echo -e "[1] 更新 install.sh 主入口"
-        echo -e "[2] 更新 AnyTLS / sing-box core"
-        echo -e "[3] 更新 Hysteria2 core"
-        echo -e "[4] 更新 Shadowsocks-Rust core"
-        echo -e "[5] 更新全部脚本"
-        echo -e "[6] 更新全部核心"
-        echo -e "[0] 返回"
+        echo -e "  [1] 更新 install.sh 主入口"
+        echo -e "  [2] 更新 AnyTLS / sing-box core"
+        echo -e "  [3] 更新 Hysteria2 core"
+        echo -e "  [4] 更新 Shadowsocks-Rust core"
+        echo -e "  [5] 更新全部脚本"
+        echo -e "  [6] 更新全部核心"
+        echo -e "  [0] 返回"
         echo ""
-        read -r -p "请选择 [0-6]: " opt
+        read -r -p "  请选择 [0-6]: " opt
         case "$opt" in
             1)
                 backup_config || true
@@ -633,16 +633,16 @@ uninstall_menu() {
         show_header
         echo -e "${WHITE}${BOLD}卸载协议${PLAIN}"
         echo ""
-        echo -e "[1] 卸载 AnyTLS"
-        echo -e "[2] 卸载 Hysteria2"
-        echo -e "[3] 卸载 Shadowsocks"
-        echo -e "[4] 卸载 EUserv HY2"
-        echo -e "[5] 卸载全部协议"
-        echo -e "[6] 删除所有配置"
-        echo -e "[7] 删除所有备份"
-        echo -e "[0] 返回"
+        echo -e "  [1] 卸载 AnyTLS"
+        echo -e "  [2] 卸载 Hysteria2"
+        echo -e "  [3] 卸载 Shadowsocks"
+        echo -e "  [4] 卸载 EUserv HY2"
+        echo -e "  [5] 卸载全部协议"
+        echo -e "  [6] 删除所有配置"
+        echo -e "  [7] 删除所有备份"
+        echo -e "  [0] 返回"
         echo ""
-        read -r -p "请选择 [0-7]: " opt
+        read -r -p "  请选择 [0-7]: " opt
         case "$opt" in
             1) run_script "AnyTLS" "$ANYTLS_URL" ;;
             2) run_script "Hysteria2" "$HY2_URL" ;;
@@ -688,18 +688,20 @@ main_menu() {
     while true; do
         show_header
         show_status_summary
-        echo -e "[1] 安装 / 重装协议"
-        echo -e "[2] 查看节点信息"
-        echo -e "[3] 导出客户端配置"
-        echo -e "[4] 服务管理"
-        echo -e "[5] 生成二维码"
-        echo -e "[6] 系统检测"
-        echo -e "[7] 备份 / 恢复"
-        echo -e "[8] 更新脚本 / 更新核心"
-        echo -e "[9] 卸载协议"
-        echo -e "[0] 退出"
+        echo -e "  ${WHITE}${BOLD}主菜单${PLAIN}"
         echo ""
-        read -r -p "请输入选项 [0-9]: " choice
+        echo -e "  [1] 安装 / 重装协议"
+        echo -e "  [2] 查看节点信息"
+        echo -e "  [3] 导出客户端配置"
+        echo -e "  [4] 服务管理"
+        echo -e "  [5] 生成二维码"
+        echo -e "  [6] 系统检测"
+        echo -e "  [7] 备份 / 恢复"
+        echo -e "  [8] 更新脚本 / 更新核心"
+        echo -e "  [9] 卸载协议"
+        echo -e "  [0] 退出"
+        echo ""
+        read -r -p "  请输入选项 [0-9]: " choice
 
         case "$choice" in
             1) install_menu ;;
