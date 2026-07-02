@@ -1206,35 +1206,19 @@ change_config() {
 render_singbox_client_config() {
     local _server="$1" _port="$2" _password="$3" _tag="$4" _sni="$5" _pin="${6:-}"
     local _verification
-    local _safe_password _safe_tag _safe_sni
+    local _safe_password _safe_tag _safe_sni _safe_pin
     _safe_password=$(shell_json_escape "$_password")
     _safe_tag=$(shell_json_escape "$_tag")
     _safe_sni=$(shell_json_escape "$_sni")
+    _safe_pin=$(shell_json_escape "$_pin")
     if [ -n "$_pin" ]; then
         _verification="\"insecure\": false,
-        \"certificate_public_key_sha256\": [\"${_pin}\"],"
+        \"certificate_public_key_sha256\": [\"${_safe_pin}\"],"
     else
         _verification="\"insecure\": true,"
     fi
     cat <<CFG
 {
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "mtu": 9000,
-      "auto_route": true,
-      "stack": "mixed"
-    }
-  ],
   "outbounds": [
     {
       "type": "anytls",
@@ -1255,11 +1239,7 @@ render_singbox_client_config() {
         }
       }
     }
-  ],
-  "route": {
-    "auto_detect_interface": true,
-    "final": "${_safe_tag}"
-  }
+  ]
 }
 CFG
 }
@@ -1287,6 +1267,13 @@ export_mihomo_anytls() {
 
 export_singbox_anytls() {
     render_singbox_client_config "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME" "${4:-}"
+}
+
+print_singbox_template_note() {
+    echo ""
+    echo "Path to each client configuration file: /etc/sing-box/subscribe/"
+    echo "The full template can be found at:"
+    echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"
 }
 
 export_loon_anytls() {
@@ -1387,8 +1374,9 @@ show_node() {
     print_copy_block "$_qr_url"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}sing-box / SFA JSON:${PLAIN}"
+    echo -e "${GREEN}Sing-box:${PLAIN}"
     export_singbox_anytls "$_server" "$_port" "$_node" "$_cert_pin"
+    print_singbox_template_note
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 

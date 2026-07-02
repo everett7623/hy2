@@ -348,7 +348,7 @@ export_config_menu() {
         echo -e "  [6] Shadowrocket 配置"
         echo -e "  [7] Quantumult X 配置"
         echo -e "  [8] 全部输出"
-        echo -e "  [9] sing-box / SFA JSON 配置"
+        echo -e "  [9] Sing-box JSON 配置"
         echo -e "  [0] 返回"
         echo ""
         read -r -p "  请选择导出格式 [0-9]: " fmt

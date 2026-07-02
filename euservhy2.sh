@@ -823,13 +823,9 @@ show_node_info() {
     echo -e "${DIM}EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
     echo -e "${DIM}国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
     echo ""
-    echo -e "${CYAN}sing-box / SFA JSON:${NC}"
+    echo -e "${CYAN}Sing-box:${NC}"
     cat <<CFG
 {
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
   "outbounds": [
     {
       "type": "hysteria2",
@@ -843,13 +839,13 @@ show_node_info() {
         "insecure": true
       }
     }
-  ],
-  "route": {
-    "auto_detect_interface": true,
-    "final": "${safe_node}"
-  }
+  ]
 }
 CFG
+    echo ""
+    echo "Path to each client configuration file: /etc/sing-box/subscribe/"
+    echo "The full template can be found at:"
+    echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"
     echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }

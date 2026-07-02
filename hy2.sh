@@ -961,10 +961,6 @@ export_singbox_hy2() {
     _tag=$(shell_json_escape "$_node")
     cat <<CFG
 {
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
   "outbounds": [
     {
       "type": "hysteria2",
@@ -980,13 +976,16 @@ export_singbox_hy2() {
         "insecure": true
       }
     }
-  ],
-  "route": {
-    "auto_detect_interface": true,
-    "final": "${_tag}"
-  }
+  ]
 }
 CFG
+}
+
+print_singbox_template_note() {
+    echo ""
+    echo "Path to each client configuration file: /etc/sing-box/subscribe/"
+    echo "The full template can be found at:"
+    echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"
 }
 
 export_loon_hy2() {
@@ -1062,8 +1061,9 @@ show_node() {
     print_copy_block "$_qr_url"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}sing-box / SFA JSON:${PLAIN}"
+    echo -e "${GREEN}Sing-box:${PLAIN}"
     export_singbox_hy2 "$_ip" "$_port" "$_node"
+    print_singbox_template_note
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
