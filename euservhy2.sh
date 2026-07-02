@@ -829,7 +829,7 @@ show_node_info() {
   "outbounds": [
     {
       "type": "hysteria2",
-      "tag": "${safe_node}",
+      "tag": "proxy",
       "server": "${ipv6_raw}",
       "server_port": ${port},
       "password": "${safe_password}",
@@ -843,6 +843,7 @@ show_node_info() {
 }
 CFG
     echo ""
+    echo 'Keep "tag": "proxy" when pasting into the TUN template.'
     echo "Path to each client configuration file: /etc/sing-box/subscribe/"
     echo "The full template can be found at:"
     echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"

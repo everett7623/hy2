@@ -955,16 +955,15 @@ export_mihomo_hy2() {
 }
 
 export_singbox_hy2() {
-    local _server="$1" _port="$2" _node="$3" _pass _sni _tag
+    local _server="$1" _port="$2" _node="$3" _pass _sni
     _pass=$(shell_json_escape "$PASSWORD")
     _sni=$(shell_json_escape "$SNI")
-    _tag=$(shell_json_escape "$_node")
     cat <<CFG
 {
   "outbounds": [
     {
       "type": "hysteria2",
-      "tag": "${_tag}",
+      "tag": "proxy",
       "server": "${_server}",
       "server_port": ${_port},
       "password": "${_pass}",
@@ -983,6 +982,7 @@ CFG
 
 print_singbox_template_note() {
     echo ""
+    echo 'Keep "tag": "proxy" when pasting into the TUN template.'
     echo "Path to each client configuration file: /etc/sing-box/subscribe/"
     echo "The full template can be found at:"
     echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"

@@ -85,7 +85,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.
 - 支持架构：Linux `amd64` / `arm64` / `armv7` / `386` / `s390x`
 - 支持环境：systemd、OpenRC、无 init；IPv4、IPv6、双栈
 - 内置配置/证书/监听诊断，重装和升级失败自动回滚，并安全保留共享 sing-box 配置
-- 输出 URI、Throne、Mihomo/Clash、Loon、Surfboard、Shadowrocket/Quantumult X、Sing-box JSON 片段与二维码
+- 输出 URI、Throne、Mihomo/Clash、Loon、Surfboard、Shadowrocket/Quantumult X、Sing-box TUN 模板 JSON 片段与二维码
 
 ### EUserv 免费德鸡专用（IPv6-only）
 

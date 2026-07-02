@@ -846,15 +846,14 @@ export_mihomo_ss() {
 }
 
 export_singbox_ss() {
-    local _server="$1" _port="$2" _node="$3" _pass _tag
+    local _server="$1" _port="$2" _node="$3" _pass
     _pass=$(shell_json_escape "$PASSWORD")
-    _tag=$(shell_json_escape "$_node")
     cat <<CFG
 {
   "outbounds": [
     {
       "type": "shadowsocks",
-      "tag": "${_tag}",
+      "tag": "proxy",
       "server": "${_server}",
       "server_port": ${_port},
       "method": "${METHOD}",
@@ -867,6 +866,7 @@ CFG
 
 print_singbox_template_note() {
     echo ""
+    echo 'Keep "tag": "proxy" when pasting into the TUN template.'
     echo "Path to each client configuration file: /etc/sing-box/subscribe/"
     echo "The full template can be found at:"
     echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"

@@ -1206,9 +1206,8 @@ change_config() {
 render_singbox_client_config() {
     local _server="$1" _port="$2" _password="$3" _tag="$4" _sni="$5" _pin="${6:-}"
     local _verification
-    local _safe_password _safe_tag _safe_sni _safe_pin
+    local _safe_password _safe_sni _safe_pin
     _safe_password=$(shell_json_escape "$_password")
-    _safe_tag=$(shell_json_escape "$_tag")
     _safe_sni=$(shell_json_escape "$_sni")
     _safe_pin=$(shell_json_escape "$_pin")
     if [ -n "$_pin" ]; then
@@ -1222,7 +1221,7 @@ render_singbox_client_config() {
   "outbounds": [
     {
       "type": "anytls",
-      "tag": "${_safe_tag}",
+      "tag": "proxy",
       "server": "${_server}",
       "server_port": ${_port},
       "password": "${_safe_password}",
@@ -1271,6 +1270,7 @@ export_singbox_anytls() {
 
 print_singbox_template_note() {
     echo ""
+    echo 'Keep "tag": "proxy" when pasting into the TUN template.'
     echo "Path to each client configuration file: /etc/sing-box/subscribe/"
     echo "The full template can be found at:"
     echo "https://github.com/chika0801/sing-box-examples/tree/main/Tun"
