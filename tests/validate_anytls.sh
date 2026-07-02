@@ -1,5 +1,6 @@
 #!/bin/bash
 set -eu
+trap 'echo "AnyTLS validation failed at line $LINENO" >&2' ERR
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -66,9 +67,11 @@ echo "$node_output" | grep -q '严格模式: Throne / Shadowrocket / Mihomo / Su
 echo "$node_output" | grep -q 'Sing-box'
 echo "$node_output" | grep -q '"outbounds"'
 echo "$node_output" | grep -q '"type": "anytls"'
-echo "$node_output" | grep -q '"tag": "UN | .* | AnyTLS | IPv4"'
+case "$node_output" in
+    *'"tag": "🌐 UN | '*' | AnyTLS | IPv4"'*) ;;
+    *) echo "AnyTLS flag tag missing" >&2; exit 1 ;;
+esac
 ! echo "$node_output" | grep -q '"tag": "proxy"'
-! echo "$node_output" | grep -q '🌐'
 echo "$node_output" | grep -q '以上为完整 Sing-box / SFA TUN 客户端配置'
 echo "$node_output" | grep -q '"dns"'
 echo "$node_output" | grep -q '"inbounds"'

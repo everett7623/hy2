@@ -18,7 +18,7 @@
 - 统一入口新增配置备份/恢复、服务状态、监听端口、最近日志和系统检测页面
 - 优化统一入口和 AnyTLS 菜单头部排版，BBR 状态显示实际拥塞控制与队列算法
 - 国家/地区状态改为 `DE / Germany` 这类文本格式，避免终端不支持旗帜 emoji 时显示异常
-- 节点名和 Sing-box tag 移除国旗 emoji，统一使用 `DE | hostname | 协议 | IP 类型` 纯文本
+- 节点名和 Sing-box tag 增加国旗并保留国家代码，统一使用 `🇩🇪 DE | hostname | 协议 | IP 类型`
 - 客户端输出顺序调整为主流格式优先，Sing-box JSON 放到最后并恢复为完整 TUN 客户端配置
 - Sing-box JSON 出站 `tag` 和 `route.final` 使用节点名，内置 DNS、TUN、私网直连和 UDP 443/853 拒绝规则
 - 修复 AnyTLS 的 Shadowrocket 输出，改为生成可导入的 AnyTLS URI
@@ -34,7 +34,7 @@
 
 **全新实现 AnyTLS**
 
-- 参考已验证的 sing-box AnyTLS 入站链路，将实现迁移为纯 Shell 生成 JSON、证书与服务 wrappe
+- 参考已验证的 sing-box AnyTLS 入站链路，将实现迁移为纯 Shell 生成 JSON、证书与服务 wrapper
 - 修复自动更新脚本递归调用自身的问题，并为 sing-box 升级增加配置校验与失败回滚
 - AnyTLS 安装时随机提供常用 SNI 默认值，并补充证书、配置校验和启动阶段的故障诊断
 - 修复配置函数在正常主机名下错误返回失败、导致输入 SNI 后直接退出安装的问题

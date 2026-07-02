@@ -145,7 +145,7 @@ detect_init() {
 
 service_start() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl start hysteria-serve
+        systemctl start hysteria-server
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service hysteria-server start
     else
@@ -167,7 +167,7 @@ service_stop() {
 
 service_restart() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart hysteria-serve
+        systemctl restart hysteria-server
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service hysteria-server restart
     else
@@ -195,7 +195,7 @@ service_disable() {
 
 service_is_active() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet hysteria-serve
+        systemctl is-active --quiet hysteria-server
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service hysteria-server status 2>/dev/null | grep -q "started"
     else
@@ -205,7 +205,7 @@ service_is_active() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u hysteria-server -n 50 --no-page
+        journalctl -u hysteria-server -n 50 --no-pager
     else
         tail -n 50 /var/log/hysteria.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
@@ -867,6 +867,16 @@ get_country_name() {
     esac
 }
 
+get_country_flag() {
+    case "$1" in
+        US) printf '🇺🇸' ;; DE) printf '🇩🇪' ;; JP) printf '🇯🇵' ;; SG) printf '🇸🇬' ;;
+        HK) printf '🇭🇰' ;; TW) printf '🇹🇼' ;; KR) printf '🇰🇷' ;; GB) printf '🇬🇧' ;;
+        FR) printf '🇫🇷' ;; NL) printf '🇳🇱' ;; CA) printf '🇨🇦' ;; AU) printf '🇦🇺' ;;
+        RU) printf '🇷🇺' ;; IN) printf '🇮🇳' ;; VN) printf '🇻🇳' ;; TH) printf '🇹🇭' ;;
+        *) printf '🌐' ;;
+    esac
+}
+
 generate_server_name() {
     local _name
     _name=$(hostname 2>/dev/null | tr -d '\n\r\t')
@@ -876,14 +886,15 @@ generate_server_name() {
 }
 
 generate_node_name() {
-    local _country _server _protocol _ip_type
+    local _country _flag _server _protocol _ip_type
     _country=$(printf '%s' "${1:-UN}" | tr '[:lower:]' '[:upper:]')
     case "$_country" in [A-Z][A-Z]) ;; *) _country="UN" ;; esac
+    _flag=$(get_country_flag "$_country")
     _server=$(trim_string "${2:-}")
     [ -z "$_server" ] && _server=$(generate_server_name)
     _protocol=$(trim_string "${3:-Hysteria2}")
     _ip_type=$(trim_string "${4:-IPv4}")
-    printf '%s | %s | %s | %s' "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
+    printf '%s %s | %s | %s | %s' "$_flag" "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
 }
 
 format_ipv6_for_uri() {
@@ -1465,7 +1476,7 @@ detect_arch() {
 
 restart_service() {
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-        systemctl restart hysteria-serve
+        systemctl restart hysteria-server
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service hysteria-server restart 2>/dev/null
     fi

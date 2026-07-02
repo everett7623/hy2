@@ -161,15 +161,26 @@ get_country_name() {
     esac
 }
 
+get_country_flag() {
+    case "$1" in
+        US) printf '🇺🇸' ;; DE) printf '🇩🇪' ;; JP) printf '🇯🇵' ;; SG) printf '🇸🇬' ;;
+        HK) printf '🇭🇰' ;; TW) printf '🇹🇼' ;; KR) printf '🇰🇷' ;; GB) printf '🇬🇧' ;;
+        FR) printf '🇫🇷' ;; NL) printf '🇳🇱' ;; CA) printf '🇨🇦' ;; AU) printf '🇦🇺' ;;
+        RU) printf '🇷🇺' ;; IN) printf '🇮🇳' ;; VN) printf '🇻🇳' ;; TH) printf '🇹🇭' ;;
+        *) printf '🌐' ;;
+    esac
+}
+
 generate_node_name() {
-    local _country _server _protocol _ip_type
+    local _country _flag _server _protocol _ip_type
     _country=$(printf '%s' "${1:-UN}" | tr '[:lower:]' '[:upper:]')
     case "$_country" in [A-Z][A-Z]) ;; *) _country="UN" ;; esac
+    _flag=$(get_country_flag "$_country")
     _server=$(trim_string "${2:-}")
     [ -z "$_server" ] && _server="EUserv-HY2"
     _protocol=$(trim_string "${3:-EUserv-HY2}")
     _ip_type=$(trim_string "${4:-IPv6}")
-    printf '%s | %s | %s | %s' "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
+    printf '%s %s | %s | %s | %s' "$_flag" "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
 }
 
 shell_json_escape() {
@@ -649,7 +660,7 @@ RestartSec=5s
 LimitNOFILE=1048576
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=hysteria-serve
+SyslogIdentifier=hysteria-server
 
 [Install]
 WantedBy=multi-user.target
@@ -1008,14 +1019,14 @@ do_install() {
     } > "${HY2_CONFIG_DIR}/node.conf"
 
     step "启动 Hysteria2 服务..."
-    systemctl start hysteria-serve
+    systemctl start hysteria-server
     sleep 2
 
     if systemctl is-active --quiet hysteria-server; then
         success "Hysteria2 服务启动成功！"
     else
         error "服务启动失败，日志如下:"
-        journalctl -u hysteria-server -n 20 --no-page
+        journalctl -u hysteria-server -n 20 --no-pager
         read -rp "  按 Enter 返回..." _
         return
     fi
@@ -1139,7 +1150,7 @@ modify_config() {
     } > "${HY2_CONFIG_DIR}/node.conf"
 
     configure_firewall "$NODE_PORT"
-    systemctl restart hysteria-serve
+    systemctl restart hysteria-server
     sleep 1
 
     if systemctl is-active --quiet hysteria-server; then
@@ -1216,7 +1227,7 @@ do_upgrade() {
         else
             error "升级后服务启动失败，回滚中..."
             mv "${HY2_BIN}.bak" "$HY2_BIN"
-            systemctl start hysteria-serve
+            systemctl start hysteria-server
             warn "已回滚至旧版本 ${cur_ver}"
         fi
     else
@@ -1224,7 +1235,7 @@ do_upgrade() {
         trap __upgrade_recover EXIT INT TERM  # re-set: restore_dns 内部会清除 trap
         error "下载失败，回滚中..."
         mv "${HY2_BIN}.bak" "$HY2_BIN"
-        systemctl start hysteria-serve
+        systemctl start hysteria-server
         warn "已回滚至旧版本 ${cur_ver}"
     fi
 
@@ -1276,7 +1287,7 @@ show_logs() {
     show_banne
     echo -e "  ${WHITE}${BOLD}Hysteria2 运行日志（最近 50 行）${NC}"
     echo ""
-    journalctl -u hysteria-server -n 50 --no-page
+    journalctl -u hysteria-server -n 50 --no-pager
     echo ""
     read -rp "  按 Enter 返回..." _
 }

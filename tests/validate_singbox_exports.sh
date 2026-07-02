@@ -10,27 +10,32 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 (
     EXPORT_LIB_ONLY=1
     . ./hy2.sh
+    [ "$(generate_node_name JP test Hysteria2 IPv4)" = '🇯🇵 JP | test | Hysteria2 | IPv4' ]
     PASSWORD='hy2-password'; SNI='example.com'; BW_UP=50; BW_DOWN=100
-    export_singbox_hy2 '192.0.2.1' 443 'JP | test | Hysteria2 | IPv4'
+    export_singbox_hy2 '192.0.2.1' 443 '🇯🇵 JP | test | Hysteria2 | IPv4'
 ) > "$tmp/hy2.json"
 
 (
     EXPORT_LIB_ONLY=1
     . ./ss.sh
+    [ "$(generate_node_name JP test Shadowsocks IPv4)" = '🇯🇵 JP | test | Shadowsocks | IPv4' ]
     PASSWORD='ss-password'; METHOD='aes-256-gcm'
-    export_singbox_ss '192.0.2.2' 8388 'JP | test | Shadowsocks | IPv4'
+    export_singbox_ss '192.0.2.2' 8388 '🇯🇵 JP | test | Shadowsocks | IPv4'
 ) > "$tmp/ss.json"
 
 (
     ANYTLS_LIB_ONLY=1
     . ./anytls.sh
+    [ "$(generate_node_name JP test AnyTLS IPv4)" = '🇯🇵 JP | test | AnyTLS | IPv4' ]
+    [ "$(generate_node_name UN test AnyTLS IPv4)" = '🌐 UN | test | AnyTLS | IPv4' ]
     render_singbox_client_config '192.0.2.3' 8443 'anytls-password' \
-        'JP | test | AnyTLS | IPv4' 'addons.mozilla.org' 'TestPin+/='
+        '🇯🇵 JP | test | AnyTLS | IPv4' 'addons.mozilla.org' 'TestPin+/='
 ) > "$tmp/anytls.json"
 
 (
     EXPORT_LIB_ONLY=1
     . ./euservhy2.sh
+    [ "$(generate_node_name JP test EUserv-HY2 IPv6)" = '🇯🇵 JP | test | EUserv-HY2 | IPv6' ]
     HY2_CONFIG_DIR="$tmp/euserv"
     LOG_FILE="$tmp/euserv.log"
     mkdir -p "$HY2_CONFIG_DIR"
@@ -78,6 +83,7 @@ for filename, outbound_type in expected_types.items():
     proxy_dns, direct_dns = config["dns"]["servers"]
     proxy = config["outbounds"][0]
     assert proxy["type"] == outbound_type
+    assert proxy["tag"].startswith("🇯🇵 JP | test |")
     assert proxy_dns == {
         "type": "udp", "tag": "dns_proxy", "server": "8.8.8.8",
         "detour": proxy["tag"],
