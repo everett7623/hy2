@@ -17,6 +17,7 @@
 - 卸载仅清理 AnyTLS 专属文件并保留共享 sing-box，补充防火墙、cron 与日志清理
 - 修复纯 IPv4 监听地址，修改端口后清理旧规则；工具箱新增运行诊断和自动更新移除
 - 修复 sing-box 输出仅包含 outbound 片段及 mixed 端口冲突，改为 Android/SFA 可直接运行的完整 TUN 配置
+- 新增 Throne AnyTLS 导入链接，并为 Throne、sing-box 与 Mihomo 输出证书公钥/指纹锁定
 - 在完整删除旧实现后，从空文件重新开发 `anytls.sh`，不继承旧 AnyTLS 代码
 - 使用 sing-box >= 1.12.0 原生 AnyTLS 入站，不依赖 Python 运行环境
 - 支持 systemd、OpenRC 和无 init 环境，覆盖 IPv4、IPv6 与双栈监听

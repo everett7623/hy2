@@ -587,6 +587,32 @@ render_uri() {
         "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
 }
 
+certificate_public_key_sha256() {
+    [ -s "$ANYTLS_CERT" ] || return 1
+    openssl x509 -in "$ANYTLS_CERT" -pubkey -noout 2>/dev/null \
+        | openssl pkey -pubin -outform DER 2>/dev/null \
+        | openssl dgst -sha256 -binary 2>/dev/null \
+        | base64 | tr -d ' \n\r'
+}
+
+certificate_fingerprint_sha256() {
+    [ -s "$ANYTLS_CERT" ] || return 1
+    openssl x509 -in "$ANYTLS_CERT" -noout -fingerprint -sha256 2>/dev/null \
+        | awk -F= 'NF == 2 { print $2 }'
+}
+
+render_throne_uri() {
+    local _server="$1" _port="$2" _password="$3" _name="$4" _sni="$5" _pin="$6"
+    local _host="$_server" _enc_password _enc_name _enc_sni _enc_pin
+    echo "$_server" | grep -q ':' && _host="[${_server}]"
+    _enc_password=$(uri_encode "$_password")
+    _enc_name=$(uri_encode "$_name")
+    _enc_sni=$(uri_encode "$_sni")
+    _enc_pin=$(uri_encode "$_pin")
+    printf 'anytls://%s@%s:%s?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=5&insecure=0&security=tls&sni=%s&tls_certificate_public_key_sha256=%s&fp=chrome#%s\n' \
+        "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_pin" "$_enc_name"
+}
+
 # ============================================================
 # 配置写入 / 读取
 # ============================================================
@@ -1072,7 +1098,14 @@ change_config() {
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
 render_singbox_client_config() {
-    local _server="$1" _port="$2" _password="$3" _tag="$4" _sni="$5"
+    local _server="$1" _port="$2" _password="$3" _tag="$4" _sni="$5" _pin="${6:-}"
+    local _verification
+    if [ -n "$_pin" ]; then
+        _verification="\"insecure\": false,
+        \"certificate_public_key_sha256\": [\"${_pin}\"],"
+    else
+        _verification="\"insecure\": true,"
+    fi
     cat <<CFG
 {
   "log": {
@@ -1099,10 +1132,13 @@ render_singbox_client_config() {
       "server": "${_server}",
       "server_port": ${_port},
       "password": "${_password}",
+      "idle_session_check_interval": "30s",
+      "idle_session_timeout": "30s",
+      "min_idle_session": 5,
       "tls": {
         "enabled": true,
         "server_name": "${_sni}",
-        "insecure": true,
+        ${_verification}
         "utls": {
           "enabled": true,
           "fingerprint": "chrome"
@@ -1125,7 +1161,7 @@ show_node() {
         return 1
     }
 
-    local _date _node _uri _enc_uri _qr_url _yaml_password
+    local _date _node _uri _enc_uri _qr_url _yaml_password _cert_pin _cert_fingerprint _throne_uri
     _date=$(date +%m%d)
     _node="AnyTLS-${_tag}-${_date}"
 
@@ -1133,6 +1169,9 @@ show_node() {
     _enc_uri=$(uri_encode "$_uri")
     _qr_url="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_enc_uri}"
     _yaml_password=$(printf '%s' "$PASSWORD" | sed "s/'/''/g")
+    _cert_pin=$(certificate_public_key_sha256 2>/dev/null || true)
+    _cert_fingerprint=$(certificate_fingerprint_sha256 2>/dev/null || true)
+    [ -n "$_cert_pin" ] && _throne_uri=$(render_throne_uri "$_server" "$_port" "$PASSWORD" "$_node" "$SERVER_NAME" "$_cert_pin")
 
     # ---- 分享链接 ----
     echo -e "${GREEN} 分享链接 (NekoBox / v2rayN / Shadowrocket):${PLAIN}"
@@ -1151,14 +1190,28 @@ show_node() {
     echo -e "  ${_qr_url}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
+    # ---- Throne ----
+    echo -e "${GREEN} Throne（Windows / Linux / macOS）导入链接:${PLAIN}"
+    if [ -n "$_throne_uri" ]; then
+        echo -e "  ${_throne_uri}"
+        echo -e "  ${GREEN}证书公钥已锁定，无需跳过证书验证${PLAIN}"
+    else
+        echo -e "  ${YELLOW}证书指纹读取失败，请使用上方通用链接导入${PLAIN}"
+    fi
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
     # ---- Mihomo / Clash Meta / Clash Verge ----
     echo -e "${GREEN} Mihomo / Clash Meta / Clash Verge 配置:${PLAIN}"
-    echo -e "  - {name: '${_node}', type: anytls, server: '${_server}', port: ${_port}, password: '${_yaml_password}', client-fingerprint: chrome, udp: true, sni: '${SERVER_NAME}', skip-cert-verify: true}"
+    if [ -n "$_cert_fingerprint" ]; then
+        echo -e "  - {name: '${_node}', type: anytls, server: '${_server}', port: ${_port}, password: '${_yaml_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 5, sni: '${SERVER_NAME}', skip-cert-verify: false, fingerprint: '${_cert_fingerprint}'}"
+    else
+        echo -e "  - {name: '${_node}', type: anytls, server: '${_server}', port: ${_port}, password: '${_yaml_password}', client-fingerprint: chrome, udp: true, sni: '${SERVER_NAME}', skip-cert-verify: true}"
+    fi
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     # ---- sing-box ----
     echo -e "${GREEN} sing-box for Android / SFA 完整 TUN 配置:${PLAIN}"
-    render_singbox_client_config "$_server" "$_port" "$PASSWORD" "$_node" "$SERVER_NAME" | sed 's/^/  /'
+    render_singbox_client_config "$_server" "$_port" "$PASSWORD" "$_node" "$SERVER_NAME" "$_cert_pin" | sed 's/^/  /'
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
