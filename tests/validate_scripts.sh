@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v1.0.3"
+EXPECTED_VERSION="v2.0.0"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -36,7 +36,7 @@ for script in $SCRIPTS; do
     case "$script" in
         install.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
-            grep -q "VPS 代理工具集 · 一键管理入口.*${EXPECTED_VERSION}" "$script"
+            grep -q "Sing-box Multi-Protocol Tools v2.0" "$script"
             ;;
         hy2.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
@@ -85,7 +85,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="1.0.3"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.0"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 
 bash tests/validate_anytls.sh

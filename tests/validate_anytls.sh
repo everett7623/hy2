@@ -51,14 +51,16 @@ PASSWORD=Abcdef12; SERVER_NAME=www.example.com
 certificate_public_key_sha256() { printf 'TestPin+/='; }
 certificate_fingerprint_sha256() { printf 'AA:BB:CC:DD'; }
 node_output=$(show_node 192.0.2.1 8443 v4)
-echo "$node_output" | grep -q '分享链接 (NekoBox / v2rayN / Shadowrocket)'
-echo "$node_output" | grep -q 'Throne（Windows / Linux / macOS）导入链接'
+echo "$node_output" | grep -q 'URI 分享链接'
+echo "$node_output" | grep -q 'Throne URI'
 echo "$node_output" | grep -q 'tls_certificate_public_key_sha256=TestPin%2B%2F%3D'
-echo "$node_output" | grep -q "type: anytls, server: '192.0.2.1', port: 8443"
-echo "$node_output" | grep -q "skip-cert-verify: false, fingerprint: 'AA:BB:CC:DD'"
-echo "$node_output" | grep -q 'sing-box for Android / SFA 完整 TUN 配置'
+echo "$node_output" | grep -q 'type: anytls, server: 192.0.2.1, port: 8443'
+echo "$node_output" | grep -q 'skip-cert-verify: false, fingerprint: "AA:BB:CC:DD"'
+echo "$node_output" | grep -q 'sing-box / SFA JSON'
 echo "$node_output" | grep -q '"type": "tun"'
 echo "$node_output" | grep -q '"auto_route": true'
+echo "$node_output" | grep -q '"final": '
+echo "$node_output" | grep -q 'Shadowrocket 暂不支持 AnyTLS URI 导入格式'
 ! echo "$node_output" | grep -q '"listen_port": 2080'
 
 client_config=$(render_singbox_client_config 192.0.2.1 8443 Abcdef12 AnyTLS-Test www.example.com 'TestPin+/=')
@@ -66,6 +68,7 @@ echo "$client_config" | grep -q '"outbounds"'
 echo "$client_config" | grep -q '"type": "anytls"'
 echo "$client_config" | grep -q '"min_idle_session": 5'
 echo "$client_config" | grep -q '"auto_detect_interface": true'
+echo "$client_config" | grep -q '"final": "AnyTLS-Test"'
 echo "$client_config" | grep -q '"certificate_public_key_sha256": \["TestPin+/="\]'
 
 tmp=$(mktemp -d)

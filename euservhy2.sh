@@ -3,8 +3,8 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v1.0.3
-#  更新时间: 2026-06-30
+#  版本: v2.0.0
+#  更新时间: 2026-07-02
 # ============================================================
 
 # ============================================================
@@ -61,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="1.0.3"
+SCRIPT_VERSION="2.0.0"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -103,6 +103,99 @@ get_node_name() {
         hn="EUserv-HY2"
     fi
     echo "$hn"
+}
+
+trim_string() {
+    printf '%s' "$1" | tr -d '\r\n\t' | awk '{$1=$1; print}'
+}
+
+print_copy_block() {
+    printf '%s\n' "$1"
+}
+
+uri_encode() {
+    local _in="$1"
+    if command -v python3 >/dev/null 2>&1; then
+        if printf '%s' "$_in" | python3 -c \
+            "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=''), end='')" 2>/dev/null; then
+            return
+        fi
+    fi
+    local _out="" _i=0 _c _hex
+    local _len=${#_in}
+    while [ $_i -lt $_len ]; do
+        _c="${_in:_i:1}"
+        case "$_c" in
+            [a-zA-Z0-9.~_-]) _out="${_out}${_c}" ;;
+            *) _hex=$(printf '%s' "$_c" | od -An -tx1 | awk '{ for (i=1; i<=NF; i++) printf "%%%s", toupper($i) }'); _out="${_out}${_hex}" ;;
+        esac
+        _i=$((_i + 1))
+    done
+    printf '%s' "$_out"
+}
+
+get_ip_country() {
+    local _ip="$1" _code=""
+    [ -z "$_ip" ] && return 1
+    _code=$(curl -s --connect-timeout 3 --max-time 4 "https://ipapi.co/${_ip}/country/" 2>/dev/null \
+        | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]' | awk '/^[A-Z][A-Z]$/ { print; exit }')
+    [ -z "$_code" ] && _code=$(curl -s --connect-timeout 3 --max-time 4 "https://ipinfo.io/${_ip}/country" 2>/dev/null \
+        | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]' | awk '/^[A-Z][A-Z]$/ { print; exit }')
+    [ -n "$_code" ] && printf '%s' "$_code"
+}
+
+get_country_code() {
+    local _ip="$1" _code=""
+    [ -n "$_ip" ] && _code=$(get_ip_country "$_ip" 2>/dev/null || true)
+    [ -z "$_code" ] && _code="UN"
+    printf '%s' "$_code"
+}
+
+get_country_flag() {
+    case "$1" in
+        US) printf '🇺🇸' ;; DE) printf '🇩🇪' ;; JP) printf '🇯🇵' ;; SG) printf '🇸🇬' ;;
+        HK) printf '🇭🇰' ;; TW) printf '🇹🇼' ;; KR) printf '🇰🇷' ;; GB) printf '🇬🇧' ;;
+        FR) printf '🇫🇷' ;; NL) printf '🇳🇱' ;; CA) printf '🇨🇦' ;; AU) printf '🇦🇺' ;;
+        RU) printf '🇷🇺' ;; IN) printf '🇮🇳' ;; VN) printf '🇻🇳' ;; TH) printf '🇹🇭' ;;
+        *) printf '🌐' ;;
+    esac
+}
+
+generate_node_name() {
+    local _country _server _protocol _ip_type _flag
+    _country=$(printf '%s' "${1:-UN}" | tr '[:lower:]' '[:upper:]')
+    case "$_country" in [A-Z][A-Z]) ;; *) _country="UN" ;; esac
+    _server=$(trim_string "${2:-}")
+    [ -z "$_server" ] && _server="EUserv-HY2"
+    _protocol=$(trim_string "${3:-EUserv-HY2}")
+    _ip_type=$(trim_string "${4:-IPv6}")
+    _flag=$(get_country_flag "$_country")
+    printf '%s %s | %s | %s | %s' "$_flag" "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
+}
+
+shell_json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+generate_terminal_qrcode() {
+    local _data="$1"
+    command -v qrencode >/dev/null 2>&1 || return 1
+    qrencode -t ANSIUTF8 -m 2 "$_data"
+}
+
+generate_local_qrcode_png() {
+    local _data="$1" _dir="/root/singbox-tools/qrcode" _file
+    command -v qrencode >/dev/null 2>&1 || return 1
+    mkdir -p "$_dir" 2>/dev/null || return 1
+    _file="${_dir}/euserv-hy2-ipv6.png"
+    qrencode -o "$_file" "$_data" 2>/dev/null || return 1
+    printf '%s' "$_file"
+}
+
+generate_online_qrcode_url() {
+    local _data="$1" _encoded
+    _encoded=$(uri_encode "$_data")
+    printf 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=%s' "$_encoded"
 }
 
 valid_domain() {
@@ -645,53 +738,110 @@ show_node_info() {
 
     local ipv6_raw ipv6_bracket
     ipv6_raw=$(_get_real_ipv6)
+    if [ -z "$ipv6_raw" ]; then
+        warn "未检测到真实公网 IPv6 地址"
+        return
+    fi
     ipv6_bracket="[${ipv6_raw}]"
 
     local port="${NODE_PORT}"
     local password="${NODE_PASSWORD}"
     local sni="${NODE_DOMAIN:-bing.com}"
 
-    # URI 的 # 备注也用 hostname，特殊字符 URL encode
-    local name_encoded
-    name_encoded=$(python3 -c \
-        "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" \
-        "$node_name" 2>/dev/null || echo "$node_name")
-
+    local country flag full_node name_encoded hy2_link qr_url qrcode_png safe_password safe_sni safe_node
+    country=$(get_country_code "$ipv6_raw")
+    flag=$(get_country_flag "$country")
+    full_node=$(generate_node_name "$country" "$node_name" "EUserv-HY2" "IPv6")
+    name_encoded=$(uri_encode "$full_node")
     local hy2_link="hysteria2://${password}@${ipv6_bracket}:${port}/?insecure=1&sni=${sni}#${name_encoded}"
+    qr_url=$(generate_online_qrcode_url "$hy2_link")
+    safe_password=$(shell_json_escape "$password")
+    safe_sni=$(shell_json_escape "$sni")
+    safe_node=$(shell_json_escape "$full_node")
 
     echo ""
-    echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}${BOLD}          🎉 Hysteria2 节点信息 (EUserv IPv6)${NC}"
-    echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}${BOLD}          Hysteria2 节点信息 (EUserv IPv6)${NC}"
+    echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    echo -e "  ${CYAN}节点名称:${NC}     ${node_name}"
-    echo -e "  ${CYAN}服务器 IPv6:${NC}  ${ipv6_raw}"
-    echo -e "  ${CYAN}端口:${NC}         ${port}"
-    echo -e "  ${CYAN}密码:${NC}         ${password}"
-    echo -e "  ${CYAN}SNI:${NC}          ${sni}"
-    echo -e "  ${CYAN}跳过证书验证:${NC} true（自签证书）"
-    echo -e "  ${CYAN}协议:${NC}         UDP / QUIC"
+    echo -e "服务器名称: ${CYAN}${node_name}${NC}"
+    echo -e "国家/地区: ${CYAN}${flag} ${country}${NC}"
+    echo -e "IPv6 地址 : ${CYAN}${ipv6_raw}${NC}"
+    echo -e "端口 Port : ${CYAN}${port}${NC}"
+    echo -e "密码 Pass : ${CYAN}${password}${NC}"
+    echo -e "伪装 SNI : ${CYAN}${sni}${NC}"
+    echo -e "证书验证 : ${RED}Insecure / Skip Cert Verify = true${NC}"
+    echo -e "协议传输 : ${CYAN}UDP / QUIC${NC}"
     echo ""
-    echo -e "  ${YELLOW}${BOLD}━━━ 节点链接 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}${BOLD}━━━ IPv6 节点 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    echo -e "  ${WHITE}${hy2_link}${NC}"
+    echo -e "${CYAN}节点名称:${NC}"
+    print_copy_block "$full_node"
+    echo ""
+    echo -e "${CYAN}URI 分享链接:${NC}"
+    print_copy_block "$hy2_link"
+    echo ""
+    echo -e "${CYAN}Throne URI:${NC}"
+    print_copy_block "Throne 暂不支持该协议的 URI 导入格式。"
+    echo ""
+    echo -e "${CYAN}Mihomo / Clash Meta / Clash Verge 单行配置:${NC}"
+    print_copy_block "- {name: \"${safe_node}\", type: hysteria2, server: \"${ipv6_raw}\", port: ${port}, password: \"${safe_password}\", sni: \"${safe_sni}\", skip-cert-verify: true, fast-open: true, udp: true}"
+    echo ""
+    echo -e "${CYAN}sing-box / SFA JSON:${NC}"
+    cat <<CFG
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "${safe_node}",
+      "server": "${ipv6_raw}",
+      "server_port": ${port},
+      "password": "${safe_password}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${safe_sni}",
+        "insecure": true
+      }
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "final": "${safe_node}"
+  }
+}
+CFG
+    echo ""
+    echo -e "${CYAN}Loon 配置:${NC}"
+    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, \"${password}\", skip-cert-verify=true, sni=${sni}"
+    echo ""
+    echo -e "${CYAN}Surfboard 配置:${NC}"
+    print_copy_block "${full_node} = hysteria2, ${ipv6_raw}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
+    echo ""
+    echo -e "${CYAN}Shadowrocket 配置:${NC}"
+    print_copy_block "$hy2_link"
+    echo ""
+    echo -e "${CYAN}Quantumult X 配置:${NC}"
+    print_copy_block "Quantumult X 暂不支持该协议的配置格式。"
     echo ""
 
-    if command -v qrencode &>/dev/null; then
-        echo -e "  ${YELLOW}━━━ 扫码导入 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-        qrencode -t ANSIUTF8 -m 2 "${hy2_link}"
-        echo ""
+    echo -e "${CYAN}二维码:${NC}"
+    if generate_terminal_qrcode "$hy2_link"; then
+        success "终端二维码已生成"
+        qrcode_png=$(generate_local_qrcode_png "$hy2_link" 2>/dev/null || true)
+        [ -n "$qrcode_png" ] && echo -e "本地二维码图片: ${CYAN}${qrcode_png}${NC}"
+    else
+        warn "未安装 qrencode，跳过终端和本地 PNG 二维码"
     fi
-
-    echo -e "  ${YELLOW}${BOLD}━━━ Clash Meta / Mihomo 单行格式 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    warn "在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。"
+    print_copy_block "$qr_url"
     echo ""
-    # 单行 {} 格式，方便直接粘贴到 Clash 配置
-    echo -e "  ${WHITE}- {name: \"${node_name}\", type: hysteria2, server: ${ipv6_raw}, port: ${port}, password: \"${password}\", sni: ${sni}, skip-cert-verify: true, fast-open: true, udp: true}${NC}"
-    echo ""
-    echo -e "  ${DIM}⚠ EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
-    echo -e "  ${DIM}⚠ 国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
-    echo -e "  ${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${DIM}EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
+    echo -e "${DIM}国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
+    echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }
 

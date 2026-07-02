@@ -65,7 +65,7 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 |----------|-------------|-------------|
 | Hysteria 2 | `18888` | Custom external port supported |
 | Shadowsocks | `28888` | Custom external port supported |
-| AnyTLS | `8443` | Uses the configured public port |
+| AnyTLS | `38888` | Uses the configured public port |
 
 ## Version management
 

@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v1.0.3
+# 版本：v2.0.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-01
+# 更新日期: 2026-07-02
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
@@ -54,6 +54,8 @@ YELLOW='\033[0;33m'
 SKYBLUE='\033[0;36m'
 PLAIN='\033[0m'
 BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
 
 # --- 路径 ---
 SS_BIN="/usr/local/bin/ssserver"
@@ -723,6 +725,163 @@ uri_encode() {
     printf '%s' "$_out"
 }
 
+trim_string() {
+    printf '%s' "$1" | tr -d '\r\n\t' | awk '{$1=$1; print}'
+}
+
+print_copy_block() {
+    printf '%s\n' "$1"
+}
+
+get_ip_country() {
+    local _ip="$1" _code=""
+    [ -z "$_ip" ] && return 1
+    _code=$(curl -s --connect-timeout 3 --max-time 4 "https://ipapi.co/${_ip}/country/" 2>/dev/null \
+        | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]' | awk '/^[A-Z][A-Z]$/ { print; exit }')
+    [ -z "$_code" ] && _code=$(curl -s --connect-timeout 3 --max-time 4 "https://ipinfo.io/${_ip}/country" 2>/dev/null \
+        | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]' | awk '/^[A-Z][A-Z]$/ { print; exit }')
+    [ -n "$_code" ] && printf '%s' "$_code"
+}
+
+get_country_code() {
+    local _ipv4="$1" _ipv6="$2" _code=""
+    [ -n "$_ipv4" ] && _code=$(get_ip_country "$_ipv4" 2>/dev/null || true)
+    [ -z "$_code" ] && [ -n "$_ipv6" ] && _code=$(get_ip_country "$_ipv6" 2>/dev/null || true)
+    [ -z "$_code" ] && _code="UN"
+    printf '%s' "$_code"
+}
+
+get_country_flag() {
+    case "$1" in
+        US) printf '🇺🇸' ;; DE) printf '🇩🇪' ;; JP) printf '🇯🇵' ;; SG) printf '🇸🇬' ;;
+        HK) printf '🇭🇰' ;; TW) printf '🇹🇼' ;; KR) printf '🇰🇷' ;; GB) printf '🇬🇧' ;;
+        FR) printf '🇫🇷' ;; NL) printf '🇳🇱' ;; CA) printf '🇨🇦' ;; AU) printf '🇦🇺' ;;
+        RU) printf '🇷🇺' ;; IN) printf '🇮🇳' ;; VN) printf '🇻🇳' ;; TH) printf '🇹🇭' ;;
+        *) printf '🌐' ;;
+    esac
+}
+
+generate_server_name() {
+    local _name
+    _name=$(hostname 2>/dev/null | tr -d '\n\r\t')
+    _name=$(trim_string "$_name")
+    [ -z "$_name" ] && _name="server.$(printf '%06X' "$(( (RANDOM << 1) ^ RANDOM ))")"
+    printf '%s' "$_name"
+}
+
+generate_node_name() {
+    local _country _server _protocol _ip_type _flag
+    _country=$(printf '%s' "${1:-UN}" | tr '[:lower:]' '[:upper:]')
+    case "$_country" in [A-Z][A-Z]) ;; *) _country="UN" ;; esac
+    _server=$(trim_string "${2:-}")
+    [ -z "$_server" ] && _server=$(generate_server_name)
+    _protocol=$(trim_string "${3:-Shadowsocks}")
+    _ip_type=$(trim_string "${4:-IPv4}")
+    _flag=$(get_country_flag "$_country")
+    printf '%s %s | %s | %s | %s' "$_flag" "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
+}
+
+format_ipv6_for_uri() {
+    echo "$1" | grep -q ':' && printf '[%s]' "$1" || printf '%s' "$1"
+}
+
+format_server_for_yaml() {
+    echo "$1" | grep -q ':' && printf '"%s"' "$1" || printf '%s' "$1"
+}
+
+shell_json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+generate_terminal_qrcode() {
+    local _data="$1"
+    command -v qrencode >/dev/null 2>&1 || return 1
+    qrencode -t ANSIUTF8 -m 2 "$_data"
+}
+
+generate_local_qrcode_png() {
+    local _data="$1" _protocol="$2" _ip_type="$3" _dir="/root/singbox-tools/qrcode" _slug _file
+    command -v qrencode >/dev/null 2>&1 || return 1
+    _slug=$(printf '%s' "$_protocol" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-')
+    mkdir -p "$_dir" 2>/dev/null || return 1
+    _file="${_dir}/${_slug}-${_ip_type}.png"
+    qrencode -o "$_file" "$_data" 2>/dev/null || return 1
+    printf '%s' "$_file"
+}
+
+generate_online_qrcode_url() {
+    local _data="$1" _encoded
+    _encoded=$(uri_encode "$_data")
+    printf 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=%s' "$_encoded"
+}
+
+export_uri_ss() {
+    local _server="$1" _port="$2" _node="$3" _host _credentials _node_encoded
+    _host=$(format_ipv6_for_uri "$_server")
+    _credentials=$(printf "%s:%s" "$METHOD" "$PASSWORD" | base64 | tr -d ' \n\r')
+    _node_encoded=$(uri_encode "$_node")
+    printf 'ss://%s@%s:%s#%s' "$_credentials" "$_host" "$_port" "$_node_encoded"
+}
+
+export_throne_ss() {
+    printf 'Throne 暂不支持该协议的 URI 导入格式。'
+}
+
+export_mihomo_ss() {
+    local _server="$1" _port="$2" _node="$3" _yaml_server _pass _safe_node
+    _yaml_server=$(format_server_for_yaml "$_server")
+    _pass=$(shell_json_escape "$PASSWORD")
+    _safe_node=$(shell_json_escape "$_node")
+    printf '%s' "- {name: \"${_safe_node}\", type: ss, server: ${_yaml_server}, port: ${_port}, cipher: ${METHOD}, password: \"${_pass}\", udp: true}"
+}
+
+export_singbox_ss() {
+    local _server="$1" _port="$2" _node="$3" _pass _tag
+    _pass=$(shell_json_escape "$PASSWORD")
+    _tag=$(shell_json_escape "$_node")
+    cat <<CFG
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "${_tag}",
+      "server": "${_server}",
+      "server_port": ${_port},
+      "method": "${METHOD}",
+      "password": "${_pass}"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "final": "${_tag}"
+  }
+}
+CFG
+}
+
+export_loon_ss() {
+    local _server="$1" _port="$2" _node="$3"
+    printf '%s = Shadowsocks, %s, %s, %s, "%s"' "$_node" "$_server" "$_port" "$METHOD" "$PASSWORD"
+}
+
+export_surfboard_ss() {
+    local _server="$1" _port="$2" _node="$3"
+    printf '%s = ss, %s, %s, encrypt-method=%s, password=%s, udp-relay=true' "$_node" "$_server" "$_port" "$METHOD" "$PASSWORD"
+}
+
+export_shadowrocket_ss() {
+    export_uri_ss "$1" "$2" "$3"
+}
+
+export_quantumultx_ss() {
+    local _server="$1" _port="$2" _node="$3"
+    printf 'shadowsocks=%s:%s, method=%s, password=%s, fast-open=false, udp-relay=true, tag=%s' "$_server" "$_port" "$METHOD" "$PASSWORD" "$_node"
+}
+
 # ============================================================
 # 读取配置变量
 # ============================================================
@@ -758,57 +917,63 @@ read_config_vars() {
 
 show_node() {
     local _ip="$1" _port="$2" _tag="$3"
-    local _host="$_ip"
-    echo "$_ip" | grep -q ':' && _host="[${_ip}]"
+    local _ip_type _country _server_name _node _uri _qr_url _png
+    case "$_tag" in
+        v6|IPv6|ipv6) _ip_type="IPv6" ;;
+        *)            _ip_type="IPv4" ;;
+    esac
+    _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
+    _server_name=$(generate_server_name)
+    _node=$(generate_node_name "$_country" "$_server_name" "Shadowsocks" "$_ip_type")
+    _uri=$(export_uri_ss "$_ip" "$_port" "$_node")
+    _qr_url=$(generate_online_qrcode_url "$_uri")
 
-    local _date
-    _date=$(date +%m%d)
-    local _node="SS-${_tag}-${_date}"
-    echo "$METHOD" | grep -q "2022" && _node="SS22-${_tag}-${_date}"
-
-    local _credentials
-    _credentials=$(printf "%s:%s" "$METHOD" "$PASSWORD" | base64 | tr -d ' \n\r')
-    local _link="ss://${_credentials}@${_host}:${_port}#${_node}"
-
-    local _encoded
-    _encoded=$(uri_encode "$_link")
-    local _qr_url="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${_encoded}"
-
-    # ---- 分享链接 ----
-    echo -e "${GREEN} 分享链接 (SIP002 标准):${PLAIN}"
-    echo -e "  ${_link}"
+    echo -e "${YELLOW}节点名称:${PLAIN}"
+    print_copy_block "$_node"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # ---- 终端二维码（优先）----
-    if command -v qrencode >/dev/null 2>&1; then
-        echo -e "${GREEN} 扫码导入（终端二维码）:${PLAIN}"
-        qrencode -t ANSIUTF8 -m 2 "${_link}"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    echo -e "${GREEN}URI 分享链接:${PLAIN}"
+    print_copy_block "$_uri"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}Throne URI:${PLAIN}"
+    print_copy_block "$(export_throne_ss)"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
+    print_copy_block "$(export_mihomo_ss "$_ip" "$_port" "$_node")"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}sing-box / SFA JSON:${PLAIN}"
+    export_singbox_ss "$_ip" "$_port" "$_node"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}Loon 配置:${PLAIN}"
+    print_copy_block "$(export_loon_ss "$_ip" "$_port" "$_node")"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}Surfboard 配置:${PLAIN}"
+    print_copy_block "$(export_surfboard_ss "$_ip" "$_port" "$_node")"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
+    print_copy_block "$(export_shadowrocket_ss "$_ip" "$_port" "$_node")"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
+    print_copy_block "$(export_quantumultx_ss "$_ip" "$_port" "$_node")"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}二维码:${PLAIN}"
+    if generate_terminal_qrcode "$_uri"; then
+        echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
+        _png=$(generate_local_qrcode_png "$_uri" "shadowsocks" "$_ip_type" 2>/dev/null || true)
+        [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
+    else
+        echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
     fi
-
-    # ---- 二维码图片链接（备用）----
-    echo -e "${GREEN} 二维码图片链接（无法扫描时用浏览器打开）:${PLAIN}"
-    echo -e "  ${_qr_url}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # ---- Clash Meta / Stash / Clash Verge ----
-    echo -e "${GREEN} Clash Meta / Stash / Clash Verge 配置:${PLAIN}"
-    echo -e "  - {name: '${_node}', type: ss, server: '${_ip}', port: ${_port}, cipher: '${METHOD}', password: '${PASSWORD}', udp: true}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # ---- Surge / Surfboard ----
-    echo -e "${GREEN} Surge / Surfboard (Android) 配置:${PLAIN}"
-    echo -e "  ${_node} = ss, ${_ip}, ${_port}, encrypt-method=${METHOD}, password=${PASSWORD}, udp-relay=true"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # ---- Loon ----
-    echo -e "${GREEN} Loon 配置:${PLAIN}"
-    echo -e "  ${_node} = Shadowsocks, ${_ip}, ${_port}, ${METHOD}, \"${PASSWORD}\", udp=true"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # ---- Quantumult X ----
-    echo -e "${GREEN} Quantumult X 配置:${PLAIN}"
-    echo -e "  shadowsocks=${_ip}:${_port}, method=${METHOD}, password=${PASSWORD}, fast-open=false, udp-relay=true, tag=${_node}"
+    echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
+    print_copy_block "$_qr_url"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -824,21 +989,28 @@ show_config() {
         return
     fi
 
+    local _country _flag _server_name
+    _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
+    _flag=$(get_country_flag "$_country")
+    _server_name=$(generate_server_name)
+
     echo -e "\n${GREEN}Shadowsocks 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    [ -n "$PUBLIC_IP"   ] && echo -e "  ${BOLD}IPv4地址${PLAIN}: ${YELLOW}${PUBLIC_IP}${PLAIN}"
-    [ -n "$PUBLIC_IPV6" ] && echo -e "  ${BOLD}IPv6地址${PLAIN}: ${YELLOW}${PUBLIC_IPV6}${PLAIN} ${GREEN}(推荐)${PLAIN}"
+    echo -e "服务器名称: ${YELLOW}${_server_name}${PLAIN}"
+    echo -e "国家/地区: ${YELLOW}${_flag} ${_country}${PLAIN}"
+    [ -n "$PUBLIC_IP"   ] && echo -e "IPv4 地址 : ${YELLOW}${PUBLIC_IP}${PLAIN}"
+    [ -n "$PUBLIC_IPV6" ] && echo -e "IPv6 地址 : ${YELLOW}${PUBLIC_IPV6}${PLAIN} ${GREEN}(推荐)${PLAIN}"
 
     if [ "$NAT_MODE" = "1" ] && [ "$EXT_PORT" != "$LISTEN_PORT" ]; then
-        echo -e "  ${BOLD}监听端口${PLAIN}: ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
-        echo -e "  ${BOLD}对外端口${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}← 客户端连接此端口${PLAIN}"
+        echo -e "监听端口 : ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
+        echo -e "对外端口 : ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}← 客户端连接此端口${PLAIN}"
     else
-        echo -e "  ${BOLD}端口Port${PLAIN}: ${YELLOW}${EXT_PORT}${PLAIN}"
+        echo -e "端口 Port : ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
 
-    echo -e "  ${BOLD}密码Pass${PLAIN}: ${YELLOW}${PASSWORD}${PLAIN}"
-    echo -e "  ${BOLD}加密方式${PLAIN}: ${YELLOW}${METHOD}${PLAIN}"
-    [ "$NAT_MODE" = "1" ] && echo -e "  ${BOLD}机器类型${PLAIN}: ${YELLOW}NAT 机器${PLAIN}"
+    echo -e "密码 Pass : ${YELLOW}${PASSWORD}${PLAIN}"
+    echo -e "加密方式 : ${YELLOW}${METHOD}${PLAIN}"
+    [ "$NAT_MODE" = "1" ] && echo -e "机器类型 : ${YELLOW}NAT 机器${PLAIN}"
 
     if echo "$METHOD" | grep -q "2022"; then
         echo -e "\n${RED}⚠️ 注意：您开启了 SS-2022 协议，对时间误差极其敏感！${PLAIN}"
@@ -846,28 +1018,13 @@ show_config() {
     fi
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    # 节点配置：双栈时支持 IPv4/IPv6 切换，默认显示 IPv6
-    if [ -n "$PUBLIC_IPV6" ] && [ -n "$PUBLIC_IP" ]; then
-        echo ""
-        echo -e "  ${YELLOW}选择查看节点类型：${PLAIN}"
-        echo -e "  ${GREEN}1${PLAIN}. IPv6 ${DIM}${PUBLIC_IPV6}${NC} ${GREEN}(推荐)${PLAIN}"
-        echo -e "  ${DIM}2${PLAIN}. IPv4 ${DIM}${PUBLIC_IP}${NC}"
-        echo -ne "  ${YELLOW}请选择 [默认 1]:${NC} "
-        read -r _ip_choice
-        echo ""
-        if [ "$_ip_choice" = "2" ]; then
-            echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
-            show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
-        else
-            echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
-            show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
-        fi
-    elif [ -n "$PUBLIC_IPV6" ]; then
-        echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
-        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
-    elif [ -n "$PUBLIC_IP" ]; then
+    if [ -n "$PUBLIC_IP" ]; then
         echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
         show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+    fi
+    if [ -n "$PUBLIC_IPV6" ]; then
+        echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
+        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
     fi
 
     echo ""
@@ -1367,7 +1524,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v1.0.3${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.0${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

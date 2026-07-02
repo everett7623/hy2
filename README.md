@@ -1,4 +1,4 @@
-# 🚀 Hysteria 2、Shadowsocks 与 AnyTLS 一键管理脚本
+# 🚀 Sing-box Multi-Protocol Tools
 
 > 功能闭环 · 极低占用 · 全系统兼容 · 交互友好
 > 无需域名，无需复杂配置，一键开启高速且安全的网络体验。
@@ -11,7 +11,7 @@
 
 ## 📖 项目简介
 
-这是一个面向 **Hysteria 2**、**Shadowsocks** 与 **AnyTLS** 协议的 Linux 一键部署管理脚本集合。
+这是一个基于 **sing-box** 和主流代理协议的 Linux VPS 一键安装、管理、导出、二维码、诊断、备份与恢复工具集。
 
 | 协议 | 核心优势 | 适用场景 |
 | --- | --- | --- |
@@ -31,7 +31,7 @@
 - **🔐 Hysteria 2 免域名**：采用自签证书 + SNI 伪装 `amd.com`，自动配置 `skip-cert-verify`，零门槛开箱即用。
 - **🔐 SS 双协议自由选**：安装时可选择 100% 连通率的经典 `aes-256-gcm`，或强抗主动探测的 `2022-blake3-aes-256-gcm`（自动生成 32 字节规范密钥并尝试同步系统时间）。
 - **🔧 服务器工具内置**：一键开启 BBR 加速、定时自动更新（每天 03:00）、系统信息总览，开箱即用。
-- **📱 全客户端节点输出**：自动生成适配 Loon / Surge / Clash Meta / Stash / Shadowrocket / v2rayN / Quantumult X 等主流客户端的完整配置代码与二维码链接。
+- **📱 全客户端节点输出**：自动生成适配 Loon / Surfboard / Clash Meta / Stash / Shadowrocket / v2rayN / Quantumult X 等主流客户端的完整配置代码与二维码链接。
 
 ---
 
@@ -39,7 +39,7 @@
 
 ### 统一入口（推荐）
 
-统一入口会检测当前网络和服务状态，并提供 Hysteria 2、Shadowsocks、AnyTLS 与 EUserv IPv6 专用脚本四个选项：
+统一入口会检测当前网络和服务状态，并提供 AnyTLS、Hysteria 2、Shadowsocks 与 EUserv IPv6 专用脚本的分层管理菜单：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)
@@ -85,7 +85,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.
 - 支持架构：Linux `amd64` / `arm64` / `armv7` / `386` / `s390x`
 - 支持环境：systemd、OpenRC、无 init；IPv4、IPv6、双栈
 - 内置配置/证书/监听诊断，重装和升级失败自动回滚，并安全保留共享 sing-box 配置
-- 输出 Shadowrocket、Mihomo、sing-box Android/SFA 与 Throne 客户端配置
+- 输出 URI、Throne、Mihomo/Clash、sing-box/SFA、Loon、Surfboard、Shadowrocket/Quantumult X 支持提示与二维码
 
 ### EUserv 免费德鸡专用（IPv6-only）
 

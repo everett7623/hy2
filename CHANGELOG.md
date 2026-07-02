@@ -4,6 +4,22 @@
 
 ---
 
+## v2.0.0 (2026-07-02)
+
+**升级为 Sing-box Multi-Protocol Tools**
+
+- 统一入口升级为 `Sing-box Multi-Protocol Tools v2.0`，主菜单重构为安装、节点信息、导出、服务管理、系统检测、备份恢复、更新和卸载
+- 保留顶部作者、项目、博客、测评、论坛广告区的原有文案、链接和排序
+- AnyTLS、Hysteria2、Shadowsocks、EUserv HY2 节点名统一为 `国家 | 主机名 | 协议 | IP 类型`
+- URI、Throne、Mihomo、sing-box/SFA、Loon、Surfboard、Shadowrocket、Quantumult X 输出去除可复制内容前导空格
+- AnyTLS 保留现有安装和运行链路，仅优化节点输出、Throne 严格/兼容模式、证书安全提示和二维码隐私提示
+- Hysteria2、Shadowsocks、EUserv HY2 补充 sing-box/SFA JSON、Loon、Surfboard 与客户端支持提示
+- 按最新要求移除 Surge 输出格式
+- 统一入口新增配置备份/恢复、服务状态、监听端口、最近日志和系统检测页面
+- 五个脚本、测试版本断言和文档同步到 v2.0.0
+
+---
+
 ## v1.0.3 (2026-07-01)
 
 **全新实现 AnyTLS**
