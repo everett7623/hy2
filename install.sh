@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.0
+# 版本：v2.0.1
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-07-02
+# 更新日期: 2026-07-03
 #====================================================================================
 
 # ============================================================
@@ -277,7 +277,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.1${PLAIN}"
     echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
@@ -519,7 +519,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.0" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.1" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] 备份完成: ${_file}${PLAIN}"
 }
 

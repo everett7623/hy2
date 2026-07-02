@@ -79,7 +79,7 @@ for filename, outbound_type in expected_types.items():
     with (root / filename).open(encoding="utf-8") as stream:
         config = json.load(stream)
 
-    assert config["log"] == {"level": "debug", "timestamp": True}
+    assert config["log"] == {"level": "info", "timestamp": True}
     proxy_dns, direct_dns = config["dns"]["servers"]
     proxy = config["outbounds"][0]
     assert proxy["type"] == outbound_type
@@ -93,6 +93,7 @@ for filename, outbound_type in expected_types.items():
         "type": "udp", "tag": "dns_direct", "server": "223.5.5.5",
     }
     assert config["dns"]["strategy"] == "ipv4_only"
+    assert config["dns"]["cache_capacity"] == 4096
     assert config["dns"]["final"] == "dns_proxy"
     assert config["inbounds"][0] == {
         "type": "tun",

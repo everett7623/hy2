@@ -7,6 +7,9 @@
 ![Shell Script](https://img.shields.io/badge/Language-Shell-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 
+> 当前版本：v2.0.1（2026-07-03）
+> 本次更新：优化四协议 Sing-box / SFA TUN JSON 导出，日志级别调整为 info，并启用 DNS 缓存以降低重复解析和日志写入造成的速度损耗。
+
 ---
 
 ## 📖 项目简介

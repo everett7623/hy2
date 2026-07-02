@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.0
+# 版本：v2.0.1
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-02
+# 更新日期: 2026-07-03
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -1221,7 +1221,7 @@ render_singbox_client_config() {
     cat <<CFG
 {
   "log": {
-    "level": "debug",
+    "level": "info",
     "timestamp": true
   },
   "dns": {
@@ -1239,6 +1239,7 @@ render_singbox_client_config() {
       }
     ],
     "strategy": "ipv4_only",
+    "cache_capacity": 4096,
     "final": "dns_proxy"
   },
   "inbounds": [
@@ -1775,7 +1776,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.0${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.1${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
