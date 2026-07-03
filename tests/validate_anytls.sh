@@ -43,6 +43,14 @@ printf '\n\n\n' | configure_anytls >/dev/null
 version_at_least 1.12.0 1.12.0
 version_at_least 1.13.1 1.12.0
 ! version_at_least 1.11.9 1.12.0
+[ "$(normalize_version_tag 'https://github.com/SagerNet/sing-box/releases/tag/v1.13.14')" = "v1.13.14" ]
+[ "$(normalize_version_tag '1.13.14')" = "v1.13.14" ]
+! normalize_version_tag latest >/dev/null 2>&1
+curl() { return 1; }
+LAST_VERSION_TAG=""
+get_latest_version >/dev/null
+[ "$LAST_VERSION_TAG" = "$SING_BOX_STABLE_FALLBACK_TAG" ]
+unset -f curl
 
 LISTEN_PORT=8443; BIND_FAMILY=v6
 [ "$(listen_address)" = "[::]:8443" ]

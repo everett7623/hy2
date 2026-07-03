@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.6（2026-07-03）
-> 本次更新：统一入口可直接触发子脚本安装、节点信息、升级和卸载流程，减少二级菜单跳转。
+> 当前版本：v2.0.7（2026-07-03）
+> 本次更新：修复 AnyTLS 在 GitHub 版本接口不可达时无法获取 sing-box 最新稳定版导致安装中断的问题。
 
 ---
 
@@ -89,6 +89,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.
 - 支持架构：Linux `amd64` / `arm64` / `armv7` / `386` / `s390x`
 - 支持环境：systemd、OpenRC、无 init；IPv4、IPv6、双栈
 - 内置配置/证书/监听诊断，重装和升级失败自动回滚，并安全保留共享 sing-box 配置
+- sing-box 版本获取支持 API、跳转页、镜像页与内置稳定版兜底，降低 GitHub 网络异常导致的安装失败
 - 输出 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码
 
 ### EUserv 免费德鸡专用（IPv6-only）

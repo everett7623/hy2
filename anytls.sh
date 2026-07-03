@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.6
+# 版本：v2.0.7
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -90,6 +90,7 @@ NODE_NAME=""
 SERVER_NAME="www.example.com"
 MANAGED_SING_BOX=0
 LAST_VERSION_TAG=""
+SING_BOX_STABLE_FALLBACK_TAG="${SING_BOX_STABLE_FALLBACK_TAG:-v1.13.14}"
 INSTALL_BACKUP_DIR=""
 
 
@@ -292,6 +293,30 @@ version_at_least() {
     }'
 }
 
+normalize_version_tag() {
+    local _tag="$1"
+    _tag=$(printf '%s' "$_tag" | tr -d '[:space:]' | sed -E 's#^.*/tag/##; s#^.*/download/##; s#[?].*$##')
+    [ -n "$_tag" ] || return 1
+    case "$_tag" in
+        v*) ;;
+        *) _tag="v${_tag}" ;;
+    esac
+    printf '%s\n' "$_tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+    printf '%s' "$_tag"
+}
+
+set_latest_version_tag() {
+    local _candidate _normalized
+    for _candidate in "$@"; do
+        _normalized=$(normalize_version_tag "$_candidate" 2>/dev/null || true)
+        if [ -n "$_normalized" ]; then
+            LAST_VERSION_TAG="$_normalized"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ============================================================
 # 网络检测
 # ============================================================
@@ -432,19 +457,48 @@ validate_elf() {
 
 get_latest_version() {
     echo -e "${YELLOW}正在获取 sing-box 最新稳定版...${PLAIN}"
-    LAST_VERSION_TAG=$(curl -Ls --max-time 12 "https://api.github.com/repos/SagerNet/sing-box/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+    LAST_VERSION_TAG=""
+
+    local _candidate _page _url
+    _candidate=$(curl -fsSL --connect-timeout 8 --max-time 15 \
+        "https://api.github.com/repos/SagerNet/sing-box/releases/latest" 2>/dev/null \
+        | awk -F'"' '/"tag_name":/ { print $4; exit }' 2>/dev/null || true)
+    set_latest_version_tag "$_candidate" || true
 
     if [ -z "$LAST_VERSION_TAG" ]; then
-        LAST_VERSION_TAG=$(curl -Ls --max-time 12 -o /dev/null -w "%{url_effective}" \
-            "https://github.com/SagerNet/sing-box/releases/latest" | sed 's|.*/tag/||')
+        for _url in \
+            "https://github.com/SagerNet/sing-box/releases/latest" \
+            "https://kkgithub.com/SagerNet/sing-box/releases/latest" \
+            "https://gh-proxy.com/https://github.com/SagerNet/sing-box/releases/latest"
+        do
+            _candidate=$(curl -Ls --connect-timeout 8 --max-time 15 -o /dev/null -w "%{url_effective}" "$_url" 2>/dev/null || true)
+            set_latest_version_tag "$_candidate" && break
+        done
     fi
 
-    if ! printf '%s\n' "$LAST_VERSION_TAG" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$'; then
-        echo -e "${RED}获取版本失败或版本标签格式异常${PLAIN}"
-        LAST_VERSION_TAG=""
-        return 1
+    if [ -z "$LAST_VERSION_TAG" ]; then
+        for _url in \
+            "https://github.com/SagerNet/sing-box/releases" \
+            "https://kkgithub.com/SagerNet/sing-box/releases"
+        do
+            _page=$(curl -fsSL --connect-timeout 8 --max-time 15 "$_url" 2>/dev/null || true)
+            _candidate=$(printf '%s\n' "$_page" \
+                | grep -oE 'SagerNet/sing-box/releases/(tag|download)/v[0-9]+\.[0-9]+\.[0-9]+' \
+                | sed -E 's#.*/(tag|download)/##' | head -1)
+            set_latest_version_tag "$_candidate" && break
+        done
     fi
+
+    if [ -z "$LAST_VERSION_TAG" ]; then
+        if set_latest_version_tag "$SING_BOX_STABLE_FALLBACK_TAG"; then
+            echo -e "${YELLOW}[WARN] 无法连接 GitHub 获取最新版本，使用内置稳定版 ${LAST_VERSION_TAG}${PLAIN}"
+        else
+            echo -e "${RED}获取版本失败或版本标签格式异常${PLAIN}"
+            LAST_VERSION_TAG=""
+            return 1
+        fi
+    fi
+
     echo -e "${GREEN}最新版本: ${LAST_VERSION_TAG}${PLAIN}"
 }
 
@@ -1623,7 +1677,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.6${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.7${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
