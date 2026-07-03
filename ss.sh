@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.0.3
+# 版本：v2.0.4
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -833,102 +833,12 @@ export_uri_ss() {
     printf 'ss://%s@%s:%s#%s' "$_credentials" "$_host" "$_port" "$_node_encoded"
 }
 
-export_throne_ss() {
-    printf 'Throne 暂不支持该协议的 URI 导入格式。'
-}
-
 export_mihomo_ss() {
     local _server="$1" _port="$2" _node="$3" _yaml_server _pass _safe_node
     _yaml_server=$(format_server_for_yaml "$_server")
     _pass=$(shell_json_escape "$PASSWORD")
     _safe_node=$(shell_json_escape "$_node")
     printf '%s' "- {name: \"${_safe_node}\", type: ss, server: ${_yaml_server}, port: ${_port}, cipher: ${METHOD}, password: \"${_pass}\", udp: true}"
-}
-
-export_singbox_ss() {
-    local _server="$1" _port="$2" _safe_server _pass
-    _safe_server=$(shell_json_escape "$_server")
-    _pass=$(shell_json_escape "$PASSWORD")
-    cat <<CFG
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "dns": {
-    "servers": [
-      {
-        "type": "udp",
-        "tag": "dns_proxy",
-        "server": "8.8.8.8",
-        "detour": "shadowsocks"
-      },
-      {
-        "type": "udp",
-        "tag": "dns_direct",
-        "server": "223.5.5.5"
-      }
-    ],
-    "cache_capacity": 4096,
-    "final": "dns_proxy"
-  },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "mtu": 1400,
-      "auto_route": true
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "shadowsocks",
-      "tag": "shadowsocks",
-      "server": "${_safe_server}",
-      "server_port": ${_port},
-      "method": "${METHOD}",
-      "password": "${_pass}"
-    },
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "action": "sniff"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
-        "ip_is_private": true,
-        "action": "route",
-        "outbound": "direct"
-      },
-      {
-        "port": [443, 853],
-        "network": "udp",
-        "action": "reject"
-      }
-    ],
-    "auto_detect_interface": true,
-    "default_domain_resolver": "dns_direct",
-    "final": "shadowsocks"
-  }
-}
-CFG
-}
-
-print_singbox_template_note() {
-    echo ""
-    echo "以上为完整 Sing-box / SFA TUN 客户端配置，可保存为 config.json 导入。"
 }
 
 export_loon_ss() {
@@ -1004,10 +914,6 @@ show_node() {
     print_copy_block "$_uri"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}Throne URI:${PLAIN}"
-    print_copy_block "$(export_throne_ss)"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
     print_copy_block "$(export_mihomo_ss "$_ip" "$_port" "$_node")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -1038,11 +944,6 @@ show_node() {
     fi
     echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
     print_copy_block "$_qr_url"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Sing-box:${PLAIN}"
-    export_singbox_ss "$_ip" "$_port" "$_node"
-    print_singbox_template_note
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -1592,7 +1493,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.3${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.4${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

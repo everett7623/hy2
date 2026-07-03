@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.4 (2026-07-03)
+
+- 移除 Hysteria2、Shadowsocks、AnyTLS 与 EUserv HY2 的 Throne 客户端导出，避免继续输出不可用或不稳定的导入格式。
+- 移除四协议 Sing-box/SFA 客户端 JSON 导出；AnyTLS 服务端仍继续使用 sing-box 原生 AnyTLS inbound，不影响安装、升级和运行。
+- README 同步 v2.0.4 说明，新增项目浏览计数徽章，并更新客户端格式兼容说明。
+- 静态验证新增不稳定客户端导出防回归检查。
+
+---
+
 ## v2.0.3 (2026-07-03)
 
 - 精简四协议 Sing-box / SFA TUN JSON：移除 `ipv4_only`、IPv6 拒绝和 `strict_route`，保留 DNS 缓存、DNS 劫持、私网直连和 UDP 443/853 拒绝规则。

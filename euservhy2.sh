@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.3
+#  版本: v2.0.4
 #  更新时间: 2026-07-03
 # ============================================================
 
@@ -61,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.3"
+SCRIPT_VERSION="2.0.4"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -758,13 +758,12 @@ show_node_info() {
     local password="${NODE_PASSWORD}"
     local sni="${NODE_DOMAIN:-bing.com}"
 
-    local country full_node name_encoded hy2_link qr_url qrcode_png safe_ipv6 safe_password safe_sni safe_node
+    local country full_node name_encoded hy2_link qr_url qrcode_png safe_password safe_sni safe_node
     country=$(get_country_code "$ipv6_raw")
     full_node=$(generate_node_name "$country" "$node_name" "EUserv-HY2" "IPv6")
     name_encoded=$(uri_encode "$full_node")
     local hy2_link="hysteria2://${password}@${ipv6_bracket}:${port}/?insecure=1&sni=${sni}#${name_encoded}"
     qr_url=$(generate_online_qrcode_url "$hy2_link")
-    safe_ipv6=$(shell_json_escape "$ipv6_raw")
     safe_password=$(shell_json_escape "$password")
     safe_sni=$(shell_json_escape "$sni")
     safe_node=$(shell_json_escape "$full_node")
@@ -790,9 +789,6 @@ show_node_info() {
     echo ""
     echo -e "${CYAN}URI 分享链接:${NC}"
     print_copy_block "$hy2_link"
-    echo ""
-    echo -e "${CYAN}Throne URI:${NC}"
-    print_copy_block "Throne 暂不支持该协议的 URI 导入格式。"
     echo ""
     echo -e "${CYAN}Mihomo / Clash Meta / Clash Verge 单行配置:${NC}"
     print_copy_block "- {name: \"${safe_node}\", type: hysteria2, server: \"${ipv6_raw}\", port: ${port}, password: \"${safe_password}\", sni: \"${safe_sni}\", skip-cert-verify: true, fast-open: true, udp: true}"
@@ -823,89 +819,6 @@ show_node_info() {
     echo ""
     echo -e "${DIM}EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
     echo -e "${DIM}国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
-    echo ""
-    echo -e "${CYAN}Sing-box:${NC}"
-    cat <<CFG
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "dns": {
-    "servers": [
-      {
-        "type": "udp",
-        "tag": "dns_proxy",
-        "server": "8.8.8.8",
-        "detour": "hysteria2"
-      },
-      {
-        "type": "udp",
-        "tag": "dns_direct",
-        "server": "223.5.5.5"
-      }
-    ],
-    "cache_capacity": 4096,
-    "final": "dns_proxy"
-  },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "mtu": 1400,
-      "auto_route": true
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "hysteria2",
-      "tag": "hysteria2",
-      "server": "${safe_ipv6}",
-      "server_port": ${port},
-      "password": "${safe_password}",
-      "tls": {
-        "enabled": true,
-        "server_name": "${safe_sni}",
-        "insecure": true
-      }
-    },
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "action": "sniff"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
-        "ip_is_private": true,
-        "action": "route",
-        "outbound": "direct"
-      },
-      {
-        "port": [443, 853],
-        "network": "udp",
-        "action": "reject"
-      }
-    ],
-    "auto_detect_interface": true,
-    "default_domain_resolver": "dns_direct",
-    "final": "hysteria2"
-  }
-}
-CFG
-    echo ""
-    echo "以上为完整 Sing-box / SFA TUN 客户端配置，可保存为 config.json 导入。"
     echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }

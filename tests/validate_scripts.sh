@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v2.0.3"
+EXPECTED_VERSION="v2.0.4"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -36,7 +36,7 @@ for script in $SCRIPTS; do
     case "$script" in
         install.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
-            grep -q "Sing-box Multi-Protocol Tools.*v2.0.3" "$script"
+            grep -q "Sing-box Multi-Protocol Tools.*${EXPECTED_VERSION}" "$script"
             ;;
         hy2.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
@@ -85,13 +85,15 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.3"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.4"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"strategy": "ipv4_only"|"strict_route": true|"ip_version": 6|tls_certificate_public_key_sha256' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -q 'Path to each client configuration file' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
 ! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
+! grep -R -qE 'Throne URI|export_throne|render_throne|export_singbox|render_singbox|print_singbox_template_note' hy2.sh ss.sh anytls.sh euservhy2.sh install.sh
+! grep -R -qE 'Sing-box JSON 配置|完整 Sing-box/SFA TUN|Sing-box 输出说明|SFA / SFM / SFI' install.sh
 ! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '(^|[[:space:]])clea$|show_banne$|_numbe$|_manual_add$|_new_ve$|_url_mirro$|_uptime_st$|_tmp_di$|tcp_congestion_control = bb$' hy2.sh ss.sh anytls.sh euservhy2.sh
 for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
@@ -100,6 +102,5 @@ for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
 done
 
 bash tests/validate_anytls.sh
-bash tests/validate_singbox_exports.sh
 
 echo "Static script validation passed."

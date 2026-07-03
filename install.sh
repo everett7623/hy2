@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.3
+# 版本：v2.0.4
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -277,7 +277,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.3${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.4${PLAIN}"
     echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
@@ -341,19 +341,17 @@ export_config_menu() {
         echo -e "${DIM}选择格式后会加载对应协议脚本的节点详情页；协议脚本会输出当前支持的全部格式。${PLAIN}"
         echo ""
         echo -e "  [1] URI 分享链接"
-        echo -e "  [2] Throne URI"
-        echo -e "  [3] Mihomo / Clash Meta / Clash Verge 单行配置"
-        echo -e "  [4] Loon 配置"
-        echo -e "  [5] Surfboard 配置"
-        echo -e "  [6] Shadowrocket 配置"
-        echo -e "  [7] Quantumult X 配置"
-        echo -e "  [8] 全部输出"
-        echo -e "  [9] Sing-box JSON 配置"
+        echo -e "  [2] Mihomo / Clash Meta / Clash Verge 单行配置"
+        echo -e "  [3] Loon 配置"
+        echo -e "  [4] Surfboard 配置"
+        echo -e "  [5] Shadowrocket 配置"
+        echo -e "  [6] Quantumult X 配置"
+        echo -e "  [7] 全部输出"
         echo -e "  [0] 返回"
         echo ""
-        read -r -p "  请选择导出格式 [0-9]: " fmt
+        read -r -p "  请选择导出格式 [0-7]: " fmt
         case "$fmt" in
-            1|2|3|4|5|6|7|8|9) select_protocol_and_run "选择协议以导出配置"; return ;;
+            1|2|3|4|5|6|7) select_protocol_and_run "选择协议以导出配置"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -519,7 +517,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.3" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.4" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] 备份完成: ${_file}${PLAIN}"
 }
 

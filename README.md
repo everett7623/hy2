@@ -6,9 +6,10 @@
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/everett7623/hy2?color=blue&label=Latest%20Version)
 ![Shell Script](https://img.shields.io/badge/Language-Shell-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
+![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.3（2026-07-03）
-> 本次更新：精简 Sing-box / SFA TUN JSON，AnyTLS GUI URI 改为兼容模式，减少 Throne 导入失败和 YouTube 加载卡顿。
+> 当前版本：v2.0.4（2026-07-03）
+> 本次更新：移除不稳定的 Throne 与 Sing-box/SFA 客户端导出，保留主流客户端格式，降低导入失败和连接异常概率。
 
 ---
 
@@ -88,7 +89,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.
 - 支持架构：Linux `amd64` / `arm64` / `armv7` / `386` / `s390x`
 - 支持环境：systemd、OpenRC、无 init；IPv4、IPv6、双栈
 - 内置配置/证书/监听诊断，重装和升级失败自动回滚，并安全保留共享 sing-box 配置
-- 输出 URI、Throne、Mihomo/Clash、Loon、Surfboard、Shadowrocket/Quantumult X、完整 Sing-box/SFA TUN JSON 配置与二维码
+- 输出 URI、Mihomo/Clash、Loon、Surfboard、Shadowrocket、Quantumult X 与二维码
 
 ### EUserv 免费德鸡专用（IPv6-only）
 
@@ -195,15 +196,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 | iOS | Shadowrocket / Loon / Stash | ✅ | ✅ | ✅ |
 | iOS | Quantumult X | ❌ 暂不支持 | ✅ | ❌ 暂不支持 |
 | Android | v2rayNG / NekoBox / Surfboard | ✅ | ✅ | ✅ |
-| Android / 桌面 | Sing-box / SFA / SFM / SFI | ✅ | ✅ | ✅ |
 | macOS / Windows | Clash Verge (Meta) / Clash Nyanpasu | ✅ | ✅ | ✅ |
 | Windows | v2rayN | ✅ | ✅ | 视客户端版本 |
 
-### Sing-box 输出说明
+### 输出格式说明
 
-脚本输出的 Sing-box 内容是完整 TUN 客户端配置，可保存为 `config.json` 或直接导入 Sing-box / SFA / SFM / SFI 等兼容客户端。
-
-配置内置 TUN 入站、DNS 代理解析、DNS 劫持、DNS 缓存、私网直连和 UDP 443/853 拒绝规则；Sing-box 内部出站 `tag`、DNS `detour` 与 `route.final` 使用固定 ASCII 名称（`hysteria2` / `shadowsocks` / `anytls`），避免节点展示名里的 emoji、隐藏字符或复制编码问题破坏 JSON。AnyTLS 的 Throne / Shadowrocket / Sing-box 输出默认使用 `skip-cert-verify=true` 兼容模式，证书指纹仅在 Mihomo / Surfboard 输出中自动启用。
+当前版本优先保留移动端和桌面端更常用、导入更稳定的 URI、Mihomo/Clash、Loon、Surfboard、Shadowrocket、Quantumult X 与二维码输出。Throne 与 Sing-box/SFA 客户端 JSON 导出已暂时移除；AnyTLS 服务端仍然使用 sing-box 原生 AnyTLS inbound，不影响 VPS 端安装和运行。
 
 ---
 

@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.0.3
+# 版本：v2.0.4
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -941,10 +941,6 @@ export_uri_hy2() {
         "$_pass_encoded" "$_host" "$_port" "$_sni_encoded" "$_node_encoded"
 }
 
-export_throne_hy2() {
-    printf 'Throne 暂不支持该协议的 URI 导入格式。'
-}
-
 export_mihomo_hy2() {
     local _server="$1" _port="$2" _node="$3" _yaml_server _pass _sni _safe_node
     _yaml_server=$(format_server_for_yaml "$_server")
@@ -952,99 +948,6 @@ export_mihomo_hy2() {
     _sni=$(shell_json_escape "$SNI")
     _safe_node=$(shell_json_escape "$_node")
     printf '%s' "- {name: \"${_safe_node}\", type: hysteria2, server: ${_yaml_server}, port: ${_port}, password: \"${_pass}\", sni: \"${_sni}\", skip-cert-verify: true, fast-open: true, udp: true}"
-}
-
-export_singbox_hy2() {
-    local _server="$1" _port="$2" _safe_server _pass _sni
-    _safe_server=$(shell_json_escape "$_server")
-    _pass=$(shell_json_escape "$PASSWORD")
-    _sni=$(shell_json_escape "$SNI")
-    cat <<CFG
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "dns": {
-    "servers": [
-      {
-        "type": "udp",
-        "tag": "dns_proxy",
-        "server": "8.8.8.8",
-        "detour": "hysteria2"
-      },
-      {
-        "type": "udp",
-        "tag": "dns_direct",
-        "server": "223.5.5.5"
-      }
-    ],
-    "cache_capacity": 4096,
-    "final": "dns_proxy"
-  },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "mtu": 1400,
-      "auto_route": true
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "hysteria2",
-      "tag": "hysteria2",
-      "server": "${_safe_server}",
-      "server_port": ${_port},
-      "password": "${_pass}",
-      "up_mbps": ${BW_UP},
-      "down_mbps": ${BW_DOWN},
-      "tls": {
-        "enabled": true,
-        "server_name": "${_sni}",
-        "insecure": true
-      }
-    },
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "action": "sniff"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
-        "ip_is_private": true,
-        "action": "route",
-        "outbound": "direct"
-      },
-      {
-        "port": [443, 853],
-        "network": "udp",
-        "action": "reject"
-      }
-    ],
-    "auto_detect_interface": true,
-    "default_domain_resolver": "dns_direct",
-    "final": "hysteria2"
-  }
-}
-CFG
-}
-
-print_singbox_template_note() {
-    echo ""
-    echo "以上为完整 Sing-box / SFA TUN 客户端配置，可保存为 config.json 导入。"
 }
 
 export_loon_hy2() {
@@ -1083,10 +986,6 @@ show_node() {
     print_copy_block "$_uri"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}Throne URI:${PLAIN}"
-    print_copy_block "$(export_throne_hy2)"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
     print_copy_block "$(export_mihomo_hy2 "$_ip" "$_port" "$_node")"
     [ -n "$PORT_HOP" ] && echo -e "${YELLOW}[WARN] 端口跳跃: ${PORT_HOP}，客户端需按实际支持手动适配。${PLAIN}"
@@ -1118,11 +1017,6 @@ show_node() {
     fi
     echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
     print_copy_block "$_qr_url"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Sing-box:${PLAIN}"
-    export_singbox_hy2 "$_ip" "$_port" "$_node"
-    print_singbox_template_note
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -1727,7 +1621,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.3${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.4${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

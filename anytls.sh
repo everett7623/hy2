@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.3
+# 版本：v2.0.4
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -702,17 +702,6 @@ certificate_fingerprint_sha256() {
         | awk -F= 'NF == 2 { print $2 }'
 }
 
-render_throne_uri() {
-    local _server="$1" _port="$2" _password="$3" _name="$4" _sni="$5"
-    local _host _enc_password _enc_name _enc_sni
-    _host=$(format_ipv6_for_uri "$_server")
-    _enc_password=$(uri_encode "$_password")
-    _enc_name=$(uri_encode "$_name")
-    _enc_sni=$(uri_encode "$_sni")
-    printf 'anytls://%s@%s:%s?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=0&insecure=1&security=tls&sni=%s&fp=chrome#%s\n' \
-        "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
-}
-
 # ============================================================
 # 配置写入 / 读取
 # ============================================================
@@ -1197,106 +1186,8 @@ change_config() {
 # 展示单个节点（IPv4 或 IPv6）
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
-render_singbox_client_config() {
-    local _server="$1" _port="$2" _password="$3" _sni="$5"
-    local _safe_server _safe_password _safe_sni
-    _safe_server=$(shell_json_escape "$_server")
-    _safe_password=$(shell_json_escape "$_password")
-    _safe_sni=$(shell_json_escape "$_sni")
-    cat <<CFG
-{
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "dns": {
-    "servers": [
-      {
-        "type": "tcp",
-        "tag": "dns_proxy",
-        "server": "8.8.8.8",
-        "detour": "anytls"
-      },
-      {
-        "type": "udp",
-        "tag": "dns_direct",
-        "server": "223.5.5.5"
-      }
-    ],
-    "cache_capacity": 4096,
-    "final": "dns_proxy"
-  },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "mtu": 1400,
-      "auto_route": true
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "anytls",
-      "tag": "anytls",
-      "server": "${_safe_server}",
-      "server_port": ${_port},
-      "password": "${_safe_password}",
-      "idle_session_check_interval": "30s",
-      "idle_session_timeout": "30s",
-      "min_idle_session": 0,
-      "tls": {
-        "enabled": true,
-        "server_name": "${_safe_sni}",
-        "insecure": true,
-        "utls": {
-          "enabled": true,
-          "fingerprint": "chrome"
-        }
-      }
-    },
-    {
-      "type": "direct",
-      "tag": "direct"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "action": "sniff"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
-        "ip_is_private": true,
-        "action": "route",
-        "outbound": "direct"
-      },
-      {
-        "port": [443, 853],
-        "network": "udp",
-        "action": "reject"
-      }
-    ],
-    "auto_detect_interface": true,
-    "default_domain_resolver": "dns_direct",
-    "final": "anytls"
-  }
-}
-CFG
-}
-
 export_uri_anytls() {
     render_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME"
-}
-
-export_throne_anytls() {
-    render_throne_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME" "${4:-}"
 }
 
 export_mihomo_anytls() {
@@ -1312,15 +1203,6 @@ export_mihomo_anytls() {
     fi
 }
 
-export_singbox_anytls() {
-    render_singbox_client_config "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME" "${4:-}"
-}
-
-print_singbox_template_note() {
-    echo ""
-    echo "以上为完整 Sing-box / SFA TUN 客户端配置，可保存为 config.json 导入。"
-}
-
 export_loon_anytls() {
     local _server="$1" _port="$2" _node="$3"
     printf '%s = AnyTLS, %s, %s, "%s", skip-cert-verify=true, sni=%s' "$_node" "$_server" "$_port" "$PASSWORD" "$SERVER_NAME"
@@ -1333,7 +1215,7 @@ export_surfboard_anytls() {
 }
 
 export_shadowrocket_anytls() {
-    render_throne_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME" "${4:-}"
+    render_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME"
 }
 
 export_quantumultx_anytls() {
@@ -1348,7 +1230,7 @@ print_certificate_verification_status() {
         [ -n "$_pin" ] && echo "公钥 SHA256 Pin: ${_pin}"
         [ -n "$_fingerprint" ] && echo "证书 SHA256 指纹: ${_fingerprint}"
         echo "严格模式: Mihomo / Surfboard 可使用证书指纹"
-        echo "兼容模式: URI / Throne / Shadowrocket / Loon / Sing-box 使用 skip-cert-verify=true"
+        echo "兼容模式: URI / Shadowrocket / Loon 使用 skip-cert-verify=true"
     else
         echo -e "${YELLOW}[WARN] 未读取到证书 pin/指纹，客户端输出将使用 skip-cert-verify=true 兼容模式。${PLAIN}"
     fi
@@ -1362,7 +1244,7 @@ show_node() {
         return 1
     }
 
-    local _ip_type _country _server_name _node _uri _qr_url _cert_pin _cert_fingerprint _throne_uri _png
+    local _ip_type _country _server_name _node _uri _qr_url _cert_pin _cert_fingerprint _png
     case "$_tag" in
         v6|IPv6|ipv6) _ip_type="IPv6" ;;
         *)            _ip_type="IPv4" ;;
@@ -1374,7 +1256,6 @@ show_node() {
     _cert_pin=$(certificate_public_key_sha256 2>/dev/null || true)
     _cert_fingerprint=$(certificate_fingerprint_sha256 2>/dev/null || true)
     _uri=$(export_uri_anytls "$_server" "$_port" "$_node")
-    _throne_uri=$(export_throne_anytls "$_server" "$_port" "$_node" "$_cert_pin")
     _qr_url=$(generate_online_qrcode_url "$_uri")
 
     echo -e "${YELLOW}节点名称:${PLAIN}"
@@ -1383,15 +1264,6 @@ show_node() {
 
     echo -e "${GREEN}URI 分享链接:${PLAIN}"
     print_copy_block "$_uri"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Throne URI:${PLAIN}"
-    print_copy_block "$_throne_uri"
-    if [ -n "$_cert_pin" ]; then
-        echo -e "${GREEN}[OK] 证书公钥已锁定，可使用严格验证模式。${PLAIN}"
-    else
-        echo -e "${YELLOW}[WARN] 未读取到证书公钥，Throne 输出为 insecure=1 兼容模式。${PLAIN}"
-    fi
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
@@ -1429,10 +1301,6 @@ show_node() {
     print_copy_block "$_qr_url"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}Sing-box:${PLAIN}"
-    export_singbox_anytls "$_server" "$_port" "$_node" "$_cert_pin"
-    print_singbox_template_note
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
 show_config() {
@@ -1755,7 +1623,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.3${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.4${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
