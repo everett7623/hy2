@@ -67,10 +67,9 @@ echo "$node_output" | grep -q '严格模式: Throne / Shadowrocket / Mihomo / Su
 echo "$node_output" | grep -q 'Sing-box'
 echo "$node_output" | grep -q '"outbounds"'
 echo "$node_output" | grep -q '"type": "anytls"'
-case "$node_output" in
-    *'"tag": "🌐 UN | '*' | AnyTLS | IPv4"'*) ;;
-    *) echo "AnyTLS flag tag missing" >&2; exit 1 ;;
-esac
+echo "$node_output" | grep -q '"tag": "anytls"'
+echo "$node_output" | grep -q '"detour": "anytls"'
+echo "$node_output" | grep -q '"final": "anytls"'
 ! echo "$node_output" | grep -q '"tag": "proxy"'
 echo "$node_output" | grep -q '以上为完整 Sing-box / SFA TUN 客户端配置'
 echo "$node_output" | grep -q '"dns"'
@@ -86,14 +85,15 @@ echo "$node_output" | grep -q 'Shadowrocket 配置'
 client_config=$(render_singbox_client_config 192.0.2.1 8443 Abcdef12 AnyTLS-Test www.example.com 'TestPin+/=')
 echo "$client_config" | grep -q '"outbounds"'
 echo "$client_config" | grep -q '"type": "anytls"'
-echo "$client_config" | grep -q '"tag": "AnyTLS-Test"'
+echo "$client_config" | grep -q '"tag": "anytls"'
+echo "$client_config" | grep -q '"detour": "anytls"'
 echo "$client_config" | grep -q '"min_idle_session": 5'
 echo "$client_config" | grep -q '"dns"'
 echo "$client_config" | grep -q '"inbounds"'
 echo "$client_config" | grep -q '"type": "tun"'
 echo "$client_config" | grep -q '"auto_route": true'
 echo "$client_config" | grep -q '"route"'
-echo "$client_config" | grep -q '"final": "AnyTLS-Test"'
+echo "$client_config" | grep -q '"final": "anytls"'
 echo "$client_config" | grep -q '"port": \[443, 853\]'
 echo "$client_config" | grep -q '"action": "reject"'
 echo "$client_config" | grep -q '"certificate_public_key_sha256": \["TestPin+/="\]'

@@ -955,11 +955,10 @@ export_mihomo_hy2() {
 }
 
 export_singbox_hy2() {
-    local _server="$1" _port="$2" _node="$3" _safe_server _pass _sni _tag
+    local _server="$1" _port="$2" _safe_server _pass _sni
     _safe_server=$(shell_json_escape "$_server")
     _pass=$(shell_json_escape "$PASSWORD")
     _sni=$(shell_json_escape "$SNI")
-    _tag=$(shell_json_escape "$_node")
     cat <<CFG
 {
   "log": {
@@ -972,7 +971,7 @@ export_singbox_hy2() {
         "type": "udp",
         "tag": "dns_proxy",
         "server": "8.8.8.8",
-        "detour": "${_tag}"
+        "detour": "hysteria2"
       },
       {
         "type": "udp",
@@ -1000,7 +999,7 @@ export_singbox_hy2() {
   "outbounds": [
     {
       "type": "hysteria2",
-      "tag": "${_tag}",
+      "tag": "hysteria2",
       "server": "${_safe_server}",
       "server_port": ${_port},
       "password": "${_pass}",
@@ -1043,7 +1042,7 @@ export_singbox_hy2() {
     ],
     "auto_detect_interface": true,
     "default_domain_resolver": "dns_direct",
-    "final": "${_tag}"
+    "final": "hysteria2"
   }
 }
 CFG

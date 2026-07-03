@@ -837,7 +837,7 @@ show_node_info() {
         "type": "udp",
         "tag": "dns_proxy",
         "server": "8.8.8.8",
-        "detour": "${safe_node}"
+        "detour": "hysteria2"
       },
       {
         "type": "udp",
@@ -865,7 +865,7 @@ show_node_info() {
   "outbounds": [
     {
       "type": "hysteria2",
-      "tag": "${safe_node}",
+      "tag": "hysteria2",
       "server": "${safe_ipv6}",
       "server_port": ${port},
       "password": "${safe_password}",
@@ -906,7 +906,7 @@ show_node_info() {
     ],
     "auto_detect_interface": true,
     "default_domain_resolver": "dns_direct",
-    "final": "${safe_node}"
+    "final": "hysteria2"
   }
 }
 CFG

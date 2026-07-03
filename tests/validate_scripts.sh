@@ -88,6 +88,7 @@ done
 grep -q 'SCRIPT_VERSION="2.0.1"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
+! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -q 'Path to each client configuration file' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
 ! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
 ! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh euservhy2.sh

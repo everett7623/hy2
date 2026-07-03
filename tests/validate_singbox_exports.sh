@@ -29,7 +29,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
     [ "$(generate_node_name JP test AnyTLS IPv4)" = '🇯🇵 JP | test | AnyTLS | IPv4' ]
     [ "$(generate_node_name UN test AnyTLS IPv4)" = '🌐 UN | test | AnyTLS | IPv4' ]
     render_singbox_client_config '192.0.2.3' 8443 'anytls-password' \
-        '🇯🇵 JP | test | AnyTLS | IPv4' 'addons.mozilla.org' 'TestPin+/='
+        '🇯🇵 JP | test | AnyTLS | IPv4' 'addons.mozilla.org' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 ) > "$tmp/anytls.json"
 
 (
@@ -74,6 +74,12 @@ expected_types = {
     "anytls.json": "anytls",
     "euserv.json": "hysteria2",
 }
+expected_tags = {
+    "hy2.json": "hysteria2",
+    "ss.json": "shadowsocks",
+    "anytls.json": "anytls",
+    "euserv.json": "hysteria2",
+}
 
 for filename, outbound_type in expected_types.items():
     with (root / filename).open(encoding="utf-8") as stream:
@@ -83,11 +89,11 @@ for filename, outbound_type in expected_types.items():
     proxy_dns, direct_dns = config["dns"]["servers"]
     proxy = config["outbounds"][0]
     assert proxy["type"] == outbound_type
-    assert proxy["tag"].startswith("🇯🇵 JP | test |")
+    assert proxy["tag"] == expected_tags[filename]
     expected_proxy_dns_type = "tcp" if outbound_type == "anytls" else "udp"
     assert proxy_dns == {
         "type": expected_proxy_dns_type, "tag": "dns_proxy", "server": "8.8.8.8",
-        "detour": proxy["tag"],
+        "detour": expected_tags[filename],
     }
     assert direct_dns == {
         "type": "udp", "tag": "dns_direct", "server": "223.5.5.5",
@@ -110,11 +116,11 @@ for filename, outbound_type in expected_types.items():
     assert {"ip_is_private": True, "action": "route", "outbound": "direct"} in rules
     assert {"port": [443, 853], "network": "udp", "action": "reject"} in rules
     assert config["route"]["default_domain_resolver"] == "dns_direct"
-    assert config["route"]["final"] == proxy["tag"]
+    assert config["route"]["final"] == expected_tags[filename]
 
 anytls = json.loads((root / "anytls.json").read_text(encoding="utf-8"))
 tls = anytls["outbounds"][0]["tls"]
-assert tls["certificate_public_key_sha256"] == ["TestPin+/="]
+assert tls["certificate_public_key_sha256"] == ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
 assert tls["server_name"] == "addons.mozilla.org"
 assert tls["utls"] == {"enabled": True, "fingerprint": "chrome"}
 

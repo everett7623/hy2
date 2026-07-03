@@ -7,6 +7,7 @@
 ## v2.0.1 (2026-07-03)
 
 - 优化四协议 Sing-box JSON 客户端导出：日志级别从 debug 调整为 info，并增加 DNS 缓存，降低日志写入和重复远端解析带来的速度损耗。
+- 修复 Sing-box JSON 内部出站 `tag`、DNS `detour`、`route.final` 使用节点展示名导致 emoji 或隐藏字符破坏 JSON 的问题，统一改为固定 ASCII tag。
 
 ---
 

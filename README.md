@@ -203,7 +203,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 脚本输出的 Sing-box 内容是完整 TUN 客户端配置，可保存为 `config.json` 或直接导入 Sing-box / SFA / SFM / SFI 等兼容客户端。
 
-配置内置 TUN 入站、DNS 代理解析、DNS 劫持、私网直连和 UDP 443/853 拒绝规则；`route.final` 指向当前节点 `tag`，节点名保持 `国家 | 主机名 | 协议 | IP 类型` 纯文本，避免终端或客户端不支持旗帜 emoji 时显示异常。
+配置内置 TUN 入站、DNS 代理解析、DNS 劫持、私网直连和 UDP 443/853 拒绝规则；Sing-box 内部出站 `tag`、DNS `detour` 与 `route.final` 使用固定 ASCII 名称（`hysteria2` / `shadowsocks` / `anytls`），避免节点展示名里的 emoji、隐藏字符或复制编码问题破坏 JSON。
 
 ---
 

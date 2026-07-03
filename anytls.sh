@@ -1204,12 +1204,11 @@ change_config() {
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
 render_singbox_client_config() {
-    local _server="$1" _port="$2" _password="$3" _tag="$4" _sni="$5" _pin="${6:-}"
+    local _server="$1" _port="$2" _password="$3" _sni="$5" _pin="${6:-}"
     local _verification
-    local _safe_server _safe_password _safe_tag _safe_sni _safe_pin
+    local _safe_server _safe_password _safe_sni _safe_pin
     _safe_server=$(shell_json_escape "$_server")
     _safe_password=$(shell_json_escape "$_password")
-    _safe_tag=$(shell_json_escape "$_tag")
     _safe_sni=$(shell_json_escape "$_sni")
     _safe_pin=$(shell_json_escape "$_pin")
     if [ -n "$_pin" ]; then
@@ -1230,7 +1229,7 @@ render_singbox_client_config() {
         "type": "tcp",
         "tag": "dns_proxy",
         "server": "8.8.8.8",
-        "detour": "${_safe_tag}"
+        "detour": "anytls"
       },
       {
         "type": "udp",
@@ -1258,7 +1257,7 @@ render_singbox_client_config() {
   "outbounds": [
     {
       "type": "anytls",
-      "tag": "${_safe_tag}",
+      "tag": "anytls",
       "server": "${_safe_server}",
       "server_port": ${_port},
       "password": "${_safe_password}",
@@ -1306,7 +1305,7 @@ render_singbox_client_config() {
     ],
     "auto_detect_interface": true,
     "default_domain_resolver": "dns_direct",
-    "final": "${_safe_tag}"
+    "final": "anytls"
   }
 }
 CFG

@@ -846,10 +846,9 @@ export_mihomo_ss() {
 }
 
 export_singbox_ss() {
-    local _server="$1" _port="$2" _node="$3" _safe_server _pass _tag
+    local _server="$1" _port="$2" _safe_server _pass
     _safe_server=$(shell_json_escape "$_server")
     _pass=$(shell_json_escape "$PASSWORD")
-    _tag=$(shell_json_escape "$_node")
     cat <<CFG
 {
   "log": {
@@ -862,7 +861,7 @@ export_singbox_ss() {
         "type": "udp",
         "tag": "dns_proxy",
         "server": "8.8.8.8",
-        "detour": "${_tag}"
+        "detour": "shadowsocks"
       },
       {
         "type": "udp",
@@ -890,7 +889,7 @@ export_singbox_ss() {
   "outbounds": [
     {
       "type": "shadowsocks",
-      "tag": "${_tag}",
+      "tag": "shadowsocks",
       "server": "${_safe_server}",
       "server_port": ${_port},
       "method": "${METHOD}",
@@ -927,7 +926,7 @@ export_singbox_ss() {
     ],
     "auto_detect_interface": true,
     "default_domain_resolver": "dns_direct",
-    "final": "${_tag}"
+    "final": "shadowsocks"
   }
 }
 CFG
