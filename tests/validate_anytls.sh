@@ -66,7 +66,11 @@ echo "$node_output" | grep -q 'URI 分享链接'
 ! echo "$node_output" | grep -q 'Throne URI'
 ! echo "$node_output" | grep -q 'tls_certificate_public_key_sha256='
 echo "$node_output" | grep -q 'type: anytls, server: 192.0.2.1, port: 8443'
-echo "$node_output" | grep -q 'skip-cert-verify: false, fingerprint: "AA:BB:CC:DD"'
+echo "$node_output" | grep -q "password: 'Abcdef12'"
+echo "$node_output" | grep -q "sni: 'www.example.com'"
+echo "$node_output" | grep -q "skip-cert-verify: false, fingerprint: 'AA:BB:CC:DD'"
+! echo "$node_output" | grep -q 'password: "Abcdef12"'
+[ "$(yaml_single_quote_escape "a'b")" = "a''b" ]
 echo "$node_output" | grep -q '证书校验'
 echo "$node_output" | grep -q '公钥 SHA256 Pin: TestPin+/='
 echo "$node_output" | grep -q '证书 SHA256 指纹: AA:BB:CC:DD'

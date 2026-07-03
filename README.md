@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.8（2026-07-03）
-> 本次更新：优化更新菜单，主入口改为刷新缓存，AnyTLS 核心文案去除易混淆的旧英文表述。
+> 当前版本：v2.0.9（2026-07-03）
+> 本次更新：Mihomo / Clash 与 Loon 客户端输出统一改为单引号格式，并补充 YAML 单引号转义。
 
 ---
 

@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v2.0.8"
+EXPECTED_VERSION="v2.0.9"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -85,7 +85,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.8"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.9"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -104,7 +104,21 @@ grep -q '全部脚本缓存刷新完成' install.sh
 for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
     grep -q "printf '%s %s | %s | %s | %s'" "$script"
     grep -q '^get_country_flag()' "$script"
+    grep -q '^yaml_single_quote_escape()' "$script"
 done
+
+grep -q "name: '\${_safe_node}'" hy2.sh
+grep -q "password: '\${_pass}'" hy2.sh
+grep -q "Hysteria2, %s, %s, '%s'" hy2.sh
+grep -q "name: '\${_safe_node}'" ss.sh
+grep -q "password: '\${_pass}'" ss.sh
+grep -q "Shadowsocks, %s, %s, %s, '%s'" ss.sh
+grep -q "name: '\${_safe_node}'" anytls.sh
+grep -q "fingerprint: '\${_fingerprint}'" anytls.sh
+grep -q "AnyTLS, %s, %s, '%s'" anytls.sh
+grep -q "name: '\${safe_node}'" euservhy2.sh
+grep -q "password: '\${safe_password}'" euservhy2.sh
+grep -q "Hysteria2, \${ipv6_raw}, \${port}, '\${password}'" euservhy2.sh
 
 for script in install.sh hy2.sh ss.sh anytls.sh euservhy2.sh; do
     _shadow_line=$(grep -n 'Shadowrocket 配置' "$script" | head -1 | cut -d: -f1)

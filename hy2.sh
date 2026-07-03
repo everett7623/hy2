@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.0.8
+# 版本：v2.0.9
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -902,11 +902,15 @@ format_ipv6_for_uri() {
 }
 
 format_server_for_yaml() {
-    echo "$1" | grep -q ':' && printf '"%s"' "$1" || printf '%s' "$1"
+    echo "$1" | grep -q ':' && printf "'%s'" "$1" || printf '%s' "$1"
 }
 
 shell_json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+yaml_single_quote_escape() {
+    printf '%s' "$1" | sed "s/'/''/g"
 }
 
 generate_terminal_qrcode() {
@@ -944,15 +948,15 @@ export_uri_hy2() {
 export_mihomo_hy2() {
     local _server="$1" _port="$2" _node="$3" _yaml_server _pass _sni _safe_node
     _yaml_server=$(format_server_for_yaml "$_server")
-    _pass=$(shell_json_escape "$PASSWORD")
-    _sni=$(shell_json_escape "$SNI")
-    _safe_node=$(shell_json_escape "$_node")
-    printf '%s' "- {name: \"${_safe_node}\", type: hysteria2, server: ${_yaml_server}, port: ${_port}, password: \"${_pass}\", sni: \"${_sni}\", skip-cert-verify: true, fast-open: true, udp: true}"
+    _pass=$(yaml_single_quote_escape "$PASSWORD")
+    _sni=$(yaml_single_quote_escape "$SNI")
+    _safe_node=$(yaml_single_quote_escape "$_node")
+    printf '%s' "- {name: '${_safe_node}', type: hysteria2, server: ${_yaml_server}, port: ${_port}, password: '${_pass}', sni: '${_sni}', skip-cert-verify: true, fast-open: true, udp: true}"
 }
 
 export_loon_hy2() {
     local _server="$1" _port="$2" _node="$3"
-    printf '%s = Hysteria2, %s, %s, "%s", skip-cert-verify=true, sni=%s' "$_node" "$_server" "$_port" "$PASSWORD" "$SNI"
+    printf "%s = Hysteria2, %s, %s, '%s', skip-cert-verify=true, sni=%s" "$_node" "$_server" "$_port" "$PASSWORD" "$SNI"
 }
 
 export_surfboard_hy2() {
@@ -1621,7 +1625,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.8${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.9${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

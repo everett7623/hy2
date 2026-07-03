@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.8
+#  版本: v2.0.9
 #  更新时间: 2026-07-03
 # ============================================================
 
@@ -61,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.8"
+SCRIPT_VERSION="2.0.9"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -185,6 +185,10 @@ generate_node_name() {
 
 shell_json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+yaml_single_quote_escape() {
+    printf '%s' "$1" | sed "s/'/''/g"
 }
 
 generate_terminal_qrcode() {
@@ -764,9 +768,9 @@ show_node_info() {
     name_encoded=$(uri_encode "$full_node")
     local hy2_link="hysteria2://${password}@${ipv6_bracket}:${port}/?insecure=1&sni=${sni}#${name_encoded}"
     qr_url=$(generate_online_qrcode_url "$hy2_link")
-    safe_password=$(shell_json_escape "$password")
-    safe_sni=$(shell_json_escape "$sni")
-    safe_node=$(shell_json_escape "$full_node")
+    safe_password=$(yaml_single_quote_escape "$password")
+    safe_sni=$(yaml_single_quote_escape "$sni")
+    safe_node=$(yaml_single_quote_escape "$full_node")
 
     echo ""
     echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -791,7 +795,7 @@ show_node_info() {
     print_copy_block "$hy2_link"
     echo ""
     echo -e "${CYAN}Mihomo / Clash Meta / Clash Verge 单行配置:${NC}"
-    print_copy_block "- {name: \"${safe_node}\", type: hysteria2, server: \"${ipv6_raw}\", port: ${port}, password: \"${safe_password}\", sni: \"${safe_sni}\", skip-cert-verify: true, fast-open: true, udp: true}"
+    print_copy_block "- {name: '${safe_node}', type: hysteria2, server: '${ipv6_raw}', port: ${port}, password: '${safe_password}', sni: '${safe_sni}', skip-cert-verify: true, fast-open: true, udp: true}"
     echo ""
     echo -e "${CYAN}Surfboard 配置:${NC}"
     print_copy_block "${full_node} = hysteria2, ${ipv6_raw}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
@@ -800,7 +804,7 @@ show_node_info() {
     print_copy_block "$hy2_link"
     echo ""
     echo -e "${CYAN}Loon 配置:${NC}"
-    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, \"${password}\", skip-cert-verify=true, sni=${sni}"
+    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, '${password}', skip-cert-verify=true, sni=${sni}"
     echo ""
     echo -e "${CYAN}Quantumult X 配置:${NC}"
     print_copy_block "Quantumult X 暂不支持该协议的配置格式。"

@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.8
+# 版本：v2.0.9
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -701,11 +701,15 @@ format_ipv6_for_uri() {
 }
 
 format_server_for_yaml() {
-    echo "$1" | grep -q ':' && printf '"%s"' "$1" || printf '%s' "$1"
+    echo "$1" | grep -q ':' && printf "'%s'" "$1" || printf '%s' "$1"
 }
 
 shell_json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+yaml_single_quote_escape() {
+    printf '%s' "$1" | sed "s/'/''/g"
 }
 
 generate_terminal_qrcode() {
@@ -1247,19 +1251,19 @@ export_uri_anytls() {
 export_mihomo_anytls() {
     local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _yaml_server _password _sni _safe_node
     _yaml_server=$(format_server_for_yaml "$_server")
-    _password=$(shell_json_escape "$PASSWORD")
-    _sni=$(shell_json_escape "$SERVER_NAME")
-    _safe_node=$(shell_json_escape "$_node")
+    _password=$(yaml_single_quote_escape "$PASSWORD")
+    _sni=$(yaml_single_quote_escape "$SERVER_NAME")
+    _safe_node=$(yaml_single_quote_escape "$_node")
     if [ -n "$_fingerprint" ]; then
-        printf '%s' "- {name: \"${_safe_node}\", type: anytls, server: ${_yaml_server}, port: ${_port}, password: \"${_password}\", client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: \"${_sni}\", skip-cert-verify: false, fingerprint: \"${_fingerprint}\"}"
+        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: false, fingerprint: '${_fingerprint}'}"
     else
-        printf '%s' "- {name: \"${_safe_node}\", type: anytls, server: ${_yaml_server}, port: ${_port}, password: \"${_password}\", client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: \"${_sni}\", skip-cert-verify: true}"
+        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: true}"
     fi
 }
 
 export_loon_anytls() {
     local _server="$1" _port="$2" _node="$3"
-    printf '%s = AnyTLS, %s, %s, "%s", skip-cert-verify=true, sni=%s' "$_node" "$_server" "$_port" "$PASSWORD" "$SERVER_NAME"
+    printf "%s = AnyTLS, %s, %s, '%s', skip-cert-verify=true, sni=%s" "$_node" "$_server" "$_port" "$PASSWORD" "$SERVER_NAME"
 }
 
 export_surfboard_anytls() {
@@ -1677,7 +1681,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.8${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.9${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
