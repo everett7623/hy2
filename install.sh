@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.13
+# 版本：v2.0.14
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -364,7 +364,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.13${PLAIN} ${DIM}AnyTLS · HY2 · SS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.14${PLAIN} ${DIM}AnyTLS · HY2 · SS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}Jensfrank${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -401,10 +401,10 @@ select_protocol_and_run() {
         echo ""
         read -r -p "  请选择协议 [0-4]: " p
         case "$p" in
-            1) run_protocol_action "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
-            2) run_protocol_action "Hysteria2" "$HY2_URL" "$_action"; return ;;
-            3) run_protocol_action "Shadowsocks" "$SS_URL" "$_action"; return ;;
-            4) run_protocol_action "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
+            1) run_script "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
+            2) run_script "Hysteria2" "$HY2_URL" "$_action"; return ;;
+            3) run_script "Shadowsocks" "$SS_URL" "$_action"; return ;;
+            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -499,8 +499,7 @@ protocol_service_menu() {
             5) service_logs "$_service" "$_log"; pause_return ;;
             6) list_listening_ports; pause_return ;;
             7)
-                echo -e "${YELLOW}[WARN] 修改配置前会先创建统一入口回滚包，对应协议脚本也会执行自身保护。${PLAIN}"
-                prepare_change_backup "修改 ${_label} 配置" || { pause_return; continue; }
+                echo -e "${YELLOW}[WARN] 修改配置前如需 VPS 配置备份，请先到“备份 / 恢复”手动创建。${PLAIN}"
                 sleep 1
                 run_script "$_script_name" "$_script_url" "manage"
                 ;;
@@ -623,7 +622,6 @@ enable_standard_bbr() {
     fi
 
     confirm_action "确认开启标准 BBR + fq" || { pause_return; return 1; }
-    prepare_change_backup "开启标准 BBR + fq" || { pause_return; return 1; }
     modprobe tcp_bbr 2>/dev/null || true
 
     _sysctl_conf="/etc/sysctl.d/99-singbox-tools-bbr.conf"
@@ -670,13 +668,8 @@ system_tools_menu() {
 
 backup_config() {
     mkdir -p "$BACKUP_DIR"
-    local _reason="${1:-手动备份}" _stamp _file _meta_dir _manifest_rel _manifest _items=""
-    _stamp=$(date '+%Y%m%d-%H%M%S')
-    _file="${BACKUP_DIR}/rollback-${_stamp}.tar.gz"
-    _meta_dir="${BACKUP_DIR}/.rollback-${_stamp}"
-    _manifest_rel="root/singbox-tools/backup/manifest-${_stamp}.txt"
-    _manifest="${_meta_dir}/${_manifest_rel}"
-    mkdir -p "$(dirname "$_manifest")"
+    local _file="${BACKUP_DIR}/backup-$(date '+%Y%m%d-%H%M%S').tar.gz"
+    local _items=""
     [ -d /etc/sing-box ] && _items="${_items} etc/sing-box"
     [ -d /etc/hysteria ] && _items="${_items} etc/hysteria"
     [ -d /etc/shadowsocks-rust ] && _items="${_items} etc/shadowsocks-rust"
@@ -692,54 +685,21 @@ backup_config() {
     [ -f /etc/sysctl.d/99-hysteria-bbr.conf ] && _items="${_items} etc/sysctl.d/99-hysteria-bbr.conf"
     [ -f /etc/sysctl.d/99-ss-bbr.conf ] && _items="${_items} etc/sysctl.d/99-ss-bbr.conf"
     [ -f /etc/sysctl.d/99-euserv-bbr.conf ] && _items="${_items} etc/sysctl.d/99-euserv-bbr.conf"
-    {
-        printf 'created_at=%s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
-        printf 'reason=%s\n' "$_reason"
-        printf 'script_version=v2.0.13\n'
-        printf 'archive=%s\n' "$_file"
-        if [ -n "$_items" ]; then
-            printf 'items=%s\n' "$_items"
-        else
-            printf 'items=none\n'
-        fi
-    } > "$_manifest"
-    if [ -n "$_items" ]; then
-        ( cd / && tar -czf "$_file" $_items -C "$_meta_dir" "$_manifest_rel" 2>/dev/null )
-    else
-        ( cd "$_meta_dir" && tar -czf "$_file" "$_manifest_rel" 2>/dev/null )
-    fi || {
-        rm -rf "$_meta_dir"
+    if [ -z "$_items" ]; then
+        echo -e "${YELLOW}[WARN] 未找到可备份配置${PLAIN}"
+        return 1
+    fi
+    ( cd / && tar -czf "$_file" $_items 2>/dev/null ) || {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    rm -rf "$_meta_dir"
-    printf '%s\n' "script_version=v2.0.13" > "${BACKUP_DIR}/latest-version.txt"
-    printf '%s\n' "$_file" > "${BACKUP_DIR}/latest-backup.txt"
-    if [ -z "$_items" ]; then
-        echo -e "${YELLOW}[WARN] 未找到已安装配置，已生成空状态回滚包。${PLAIN}"
-    fi
-    echo -e "${GREEN}[OK] 回滚包已生成: ${_file}${PLAIN}"
-}
-
-prepare_change_backup() {
-    local _reason="$1"
-    echo -e "${YELLOW}[INFO] 改动前创建回滚包: ${_reason}${PLAIN}"
-    backup_config "$_reason" && return 0
-    echo -e "${RED}[WARN] 回滚包生成失败，继续操作将降低可回滚性。${PLAIN}"
-    confirm_action "仍要继续执行 ${_reason}" || return 1
-}
-
-run_protocol_action() {
-    local _name="$1" _url="$2" _action="${3:-}"
-    case "$_action" in
-        install) prepare_change_backup "安装 / 重装 ${_name}" || { pause_return; return 1; } ;;
-    esac
-    run_script "$_name" "$_url" "$_action"
+    printf '%s\n' "script_version=v2.0.14" > "${BACKUP_DIR}/latest-version.txt"
+    echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
 list_backup_archives() {
     mkdir -p "$BACKUP_DIR"
-    find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'backup-*.tar.gz' -o -name 'rollback-*.tar.gz' \) 2>/dev/null | sort
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name 'backup-*.tar.gz' 2>/dev/null | sort
 }
 
 show_backup_archives() {
@@ -759,7 +719,7 @@ restore_config() {
     read -r -p "请输入要恢复的完整备份路径: " _file
     [ -f "$_file" ] || { echo -e "${RED}[ERROR] 备份文件不存在${PLAIN}"; return 1; }
     echo -e "${YELLOW}[WARN] 恢复前将自动备份当前配置${PLAIN}"
-    prepare_change_backup "恢复备份前保存当前状态" || return 1
+    backup_config || true
     tar -xzf "$_file" -C / 2>/dev/null || {
         echo -e "${RED}[ERROR] 恢复失败，请检查备份文件${PLAIN}"
         return 1
@@ -784,14 +744,14 @@ backup_restore_menu() {
         echo ""
         read -r -p "  请选择 [0-4]: " opt
         case "$opt" in
-            1) backup_config "手动备份"; pause_return ;;
+            1) backup_config; pause_return ;;
             2) show_backup_archives; pause_return ;;
             3) restore_config; pause_return ;;
             4)
                 mkdir -p "$BACKUP_DIR"
                 read -r -p "确认删除 30 天前备份？[y/N]: " c
                 case "$c" in
-                    [yY]) find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'backup-*.tar.gz' -o -name 'rollback-*.tar.gz' \) -mtime +30 -print -delete ;;
+                    [yY]) find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.tar.gz' -type f -mtime +30 -print -delete ;;
                     *) echo "已取消。" ;;
                 esac
                 pause_return
@@ -828,9 +788,8 @@ confirm_action() {
 
 run_upgrade_action() {
     local _name="$1" _url="$2" _status
-    echo -e "${YELLOW}[INFO] 升级前建议确认当前节点可用；脚本会先尝试备份现有配置。${PLAIN}"
+    echo -e "${YELLOW}[INFO] 升级前建议确认当前节点可用；如需 VPS 配置备份，请先在“备份 / 恢复”中手动创建。${PLAIN}"
     confirm_action "确认升级 ${_name} 核心" || { pause_return; return 1; }
-    prepare_change_backup "升级 ${_name} 核心" || { pause_return; return 1; }
     run_script "$_name" "$_url" "upgrade"
     _status=$?
     if [ "$_status" -eq 0 ]; then
@@ -846,7 +805,6 @@ run_uninstall_action() {
     local _name="$1" _url="$2" _status
     echo -e "${RED}[WARN] 卸载会停止并移除 ${_name} 相关服务与配置。${PLAIN}"
     confirm_action "确认卸载 ${_name}" || { pause_return; return 1; }
-    prepare_change_backup "卸载 ${_name}" || { pause_return; return 1; }
     run_script "$_name" "$_url" "uninstall"
     _status=$?
     if [ "$_status" -eq 0 ]; then
@@ -861,8 +819,8 @@ run_uninstall_action() {
 upgrade_all_cores() {
     local _failed=0 _total=3
     echo -e "${YELLOW}[INFO] 将依次升级 AnyTLS、Hysteria2、Shadowsocks-Rust 核心。${PLAIN}"
+    echo -e "${YELLOW}[INFO] 如需 VPS 配置备份，请先在“备份 / 恢复”中手动创建。${PLAIN}"
     confirm_action "确认批量升级全部核心" || { pause_return; return 1; }
-    prepare_change_backup "批量升级全部核心" || { pause_return; return 1; }
     run_script "AnyTLS" "$ANYTLS_URL" "upgrade" || _failed=$((_failed + 1))
     run_script "Hysteria2" "$HY2_URL" "upgrade" || _failed=$((_failed + 1))
     run_script "Shadowsocks" "$SS_URL" "upgrade" || _failed=$((_failed + 1))
@@ -879,9 +837,8 @@ upgrade_all_cores() {
 uninstall_all_protocols() {
     local _failed=0 _total=4
     echo -e "${RED}[WARN] 将依次卸载 AnyTLS、Hysteria2、Shadowsocks、EUserv HY2。${PLAIN}"
-    echo -e "${YELLOW}[INFO] 如需只清空配置或备份，请使用下方专门选项。${PLAIN}"
+    echo -e "${YELLOW}[INFO] 如需 VPS 配置备份，请先在“备份 / 恢复”中手动创建。${PLAIN}"
     confirm_action "确认批量卸载全部协议" || { pause_return; return 1; }
-    prepare_change_backup "批量卸载全部协议" || { pause_return; return 1; }
     run_script "AnyTLS" "$ANYTLS_URL" "uninstall" || _failed=$((_failed + 1))
     run_script "Hysteria2" "$HY2_URL" "uninstall" || _failed=$((_failed + 1))
     run_script "Shadowsocks" "$SS_URL" "uninstall" || _failed=$((_failed + 1))
@@ -945,7 +902,7 @@ uninstall_menu() {
     while true; do
         show_header
         echo -e "${WHITE}${BOLD}卸载 / 清理中心${PLAIN}"
-        echo -e "${DIM}单协议卸载会先确认并尝试备份；彻底清理配置需输入二次确认词。${PLAIN}"
+        echo -e "${DIM}单协议卸载会先确认；如需 VPS 配置备份，请先到“备份 / 恢复”手动创建。${PLAIN}"
         echo ""
         echo -e "  [1] 卸载 AnyTLS"
         echo -e "  [2] 卸载 Hysteria2"
@@ -967,7 +924,6 @@ uninstall_menu() {
                 echo -e "${RED}这会删除 /etc/sing-box、/etc/hysteria、/etc/shadowsocks-rust 和相关服务文件。${PLAIN}"
                 read -r -p "请输入 DELETE-CONFIG 确认: " c
                 if [ "$c" = "DELETE-CONFIG" ]; then
-                    prepare_change_backup "删除所有配置" || { pause_return; continue; }
                     service_action anytls-server stop /var/run/anytls-server.pid >/dev/null 2>&1 || true
                     service_action hysteria-server stop /var/run/hysteria.pid >/dev/null 2>&1 || true
                     service_action shadowsocks-server stop /var/run/ssserver.pid >/dev/null 2>&1 || true
@@ -985,7 +941,7 @@ uninstall_menu() {
                 echo -e "${RED}这会删除 ${BACKUP_DIR} 下所有备份。${PLAIN}"
                 read -r -p "请输入 DELETE-BACKUP 确认: " c
                 if [ "$c" = "DELETE-BACKUP" ] && [ -d "$BACKUP_DIR" ]; then
-                    find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'backup-*.tar.gz' -o -name 'rollback-*.tar.gz' -o -name 'latest-backup.txt' -o -name 'latest-version.txt' \) -print -delete
+                    find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'backup-*.tar.gz' -o -name 'latest-version.txt' \) -print -delete
                     echo -e "${GREEN}[OK] 备份已删除${PLAIN}"
                 else
                     echo "已取消。"

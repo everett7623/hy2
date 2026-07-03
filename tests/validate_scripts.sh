@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.13"
+EXPECTED_VERSION="v2.0.14"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -88,7 +88,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.13"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.14"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -109,17 +109,19 @@ grep -q '^system_tools_menu()' install.sh
 grep -q '开启标准 BBR + fq' install.sh
 grep -q 'seedloc.com.*vpsknow.com.*nodeloc.com' install.sh
 grep -q '^confirm_action()' install.sh
-grep -q '^prepare_change_backup()' install.sh
-grep -q '^run_protocol_action()' install.sh
 grep -q '^list_backup_archives()' install.sh
 grep -q '^run_upgrade_action()' install.sh
 grep -q '^run_uninstall_action()' install.sh
 grep -q '^upgrade_all_cores()' install.sh
 grep -q '^uninstall_all_protocols()' install.sh
-grep -q 'rollback-.*\.tar\.gz' install.sh
-grep -q 'manifest-.*\.txt' install.sh
-grep -q 'prepare_change_backup "安装 / 重装' install.sh
-grep -q 'prepare_change_backup "删除所有配置"' install.sh
+! grep -q '^prepare_change_backup()' install.sh
+! grep -q '^run_protocol_action()' install.sh
+! grep -q 'rollback-.*\.tar\.gz' install.sh
+! grep -q 'manifest-.*\.txt' install.sh
+! grep -q '改动前创建回滚包' install.sh
+grep -q 'VPS 配置备份完成' install.sh
+grep -q '如需 VPS 配置备份，请先' install.sh
+grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "$_action"' install.sh
 grep -q 'etc/sysctl.d/99-singbox-tools-bbr.conf' install.sh
 ! grep -R -qE 'bbr3|tcp_bbr3' install.sh hy2.sh ss.sh README.md CHANGELOG.md
 grep -q 'net.ipv4.tcp_congestion_control = bbr' install.sh

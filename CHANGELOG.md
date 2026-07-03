@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.14 (2026-07-04)
+
+- Remove automatic VPS-side rollback archive creation from install, upgrade, uninstall, config-delete, and BBR flows.
+- Keep VPS configuration backup as an explicit manual action in the “备份 / 恢复” menu.
+- Clarify upgrade and uninstall prompts so users create VPS config backups manually when needed.
+- Keep local source rollback archives outside the repository for development/testing recovery.
+
+---
+
 ## v2.0.13 (2026-07-04)
 
 - Add a unified launcher “系统检测 / BBR 优化” menu with manual standard `bbr + fq` enablement.

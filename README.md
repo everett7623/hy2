@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.13（2026-07-04）
-> 本次更新：BBR 策略改为用户手动选择标准 `bbr + fq`，统一入口新增系统检测 / BBR 优化菜单。
+> 当前版本：v2.0.14（2026-07-04）
+> 本次更新：移除 VPS 运行时自动回滚包，安装、升级、卸载不再自动写入 `/root/singbox-tools/backup`。
 
 ---
 
@@ -153,7 +153,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 管理菜单提供升级、修改配置、服务启停、查看日志和卸载等功能。升级二进制时脚本会备份旧版本，启动失败则尝试回滚。
 统一入口的“系统检测 / BBR 优化”默认只展示状态，不会自动修改系统 TCP 参数；需要时可手动开启标准 `bbr + fq`。
-统一入口的“更新 / 升级中心”会区分脚本缓存刷新与核心二进制升级；“卸载 / 清理中心”会在危险动作前要求确认，并自动生成一个 `rollback-*.tar.gz` 回滚包，方便需要时恢复。
+统一入口的“更新 / 升级中心”会区分脚本缓存刷新与核心二进制升级；“卸载 / 清理中心”会在危险动作前要求确认。如需 VPS 配置备份，请先到“备份 / 恢复”中手动创建。
 
 自动更新默认不会开启，需要在“服务器工具”中手动启用；启用后由 cron 每天 `03:00` 检查上游版本。
 
