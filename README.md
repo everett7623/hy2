@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.11（2026-07-03）
-> 本次更新：修复统一入口子脚本返回码传递，移除废弃 `anytls.py`，并补强测试 helper 换行检查。
+> 当前版本：v2.0.12（2026-07-04）
+> 本次更新：优化统一入口首页排版，并强化更新、升级、卸载、删除配置前的回滚包备份体验。
 
 ---
 
@@ -152,6 +152,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 ```
 
 管理菜单提供升级、修改配置、服务启停、查看日志和卸载等功能。升级二进制时脚本会备份旧版本，启动失败则尝试回滚。
+统一入口的“更新 / 升级中心”会区分脚本缓存刷新与核心二进制升级；“卸载 / 清理中心”会在危险动作前要求确认，并自动生成一个 `rollback-*.tar.gz` 回滚包，方便需要时恢复。
 
 自动更新默认不会开启，需要在“服务器工具”中手动启用；启用后由 cron 每天 `03:00` 检查上游版本。
 

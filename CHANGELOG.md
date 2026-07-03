@@ -4,6 +4,17 @@
 
 ---
 
+## v2.0.12 (2026-07-04)
+
+- Optimize the unified launcher homepage layout while preserving the author, GitHub, blog, review-site, and forum promotion links.
+- Clarify the update/upgrade center so script-cache refresh and core-binary upgrade are shown as separate actions.
+- Generate a single rollback archive with metadata before install/reinstall, config-change entry, restore, upgrade, uninstall, and full config deletion flows.
+- Add confirmation, best-effort backup, and result summaries around single and batch core upgrades.
+- Add confirmation, best-effort backup, and result summaries around single and batch uninstall flows.
+- Keep service start/stop results visible with an explicit return prompt.
+
+---
+
 ## v2.0.11 (2026-07-03)
 
 - Fix unified launcher child-script exit status propagation so failures are not hidden by temporary-file cleanup.

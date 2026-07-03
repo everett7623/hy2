@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.11"
+EXPECTED_VERSION="v2.0.12"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -88,7 +88,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.11"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.12"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -99,7 +99,22 @@ grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -qE 'Sing-box JSON 配置|完整 Sing-box/SFA TUN|Sing-box 输出说明|SFA / SFM / SFI' install.sh
 ! grep -qE 'sing-box core|进程替换运行|无法原地更新|更新 install\.sh 主入口' install.sh
 grep -q '刷新 install.sh 主入口缓存' install.sh
-grep -q '更新 AnyTLS 核心' install.sh
+grep -q '升级 AnyTLS 核心' install.sh
+grep -q '更新 / 升级中心' install.sh
+grep -q '卸载 / 清理中心' install.sh
+grep -q 'seedloc.com.*vpsknow.com.*nodeloc.com' install.sh
+grep -q '^confirm_action()' install.sh
+grep -q '^prepare_change_backup()' install.sh
+grep -q '^run_protocol_action()' install.sh
+grep -q '^list_backup_archives()' install.sh
+grep -q '^run_upgrade_action()' install.sh
+grep -q '^run_uninstall_action()' install.sh
+grep -q '^upgrade_all_cores()' install.sh
+grep -q '^uninstall_all_protocols()' install.sh
+grep -q 'rollback-.*\.tar\.gz' install.sh
+grep -q 'manifest-.*\.txt' install.sh
+grep -q 'prepare_change_backup "安装 / 重装' install.sh
+grep -q 'prepare_change_backup "删除所有配置"' install.sh
 grep -q '\[ -s "\$_dest.tmp" \]' install.sh
 grep -q '全部脚本缓存刷新完成' install.sh
 grep -q '^SHORTCUT_BIN="/usr/local/bin/sb"' install.sh

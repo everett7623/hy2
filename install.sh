@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.11
+# 版本：v2.0.12
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-07-03
+# 更新日期: 2026-07-04
 #====================================================================================
 
 # ============================================================
@@ -363,25 +363,23 @@ get_status() {
 # ============================================================
 show_header() {
     clear
-    echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.11${PLAIN}"
-    echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
-    echo -e "  ${DIM}博客${PLAIN}   ${SKYBLUE}seedloc.com${PLAIN}     ${DIM}│${PLAIN}  ${DIM}测评${PLAIN}  ${SKYBLUE}vpsknow.com${PLAIN}"
-    echo -e "  ${DIM}论坛${PLAIN}   ${SKYBLUE}nodeloc.com${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.12${PLAIN} ${DIM}AnyTLS · HY2 · SS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
+    echo -e "  ${DIM}作者${PLAIN} ${WHITE}Jensfrank${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
+    echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
     echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
 }
 
 show_status_summary() {
     get_status
-    echo -e "  ${DIM}IPv4${PLAIN}        ${WHITE}${NET_IPV4}${PLAIN}"
-    echo -e "  ${DIM}IPv6${PLAIN}        ${WHITE}${NET_IPV6}${PLAIN}"
-    echo -e "  ${DIM}系统${PLAIN}        ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
-    echo -e "  ${DIM}内核${PLAIN}        ${WHITE}${KERNEL_INFO}${PLAIN}"
-    echo -e "  ${DIM}BBR${PLAIN}         ${WHITE}${BBR_STATUS}${PLAIN}"
-    echo -e "  ${DIM}国家/地区${PLAIN}   ${WHITE}${COUNTRY_INFO}${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}环境概览${PLAIN}"
+    echo -e "  ${DIM}IPv4${PLAIN} ${WHITE}${NET_IPV4}${PLAIN}  ${DIM}IPv6${PLAIN} ${WHITE}${NET_IPV6}${PLAIN}"
+    echo -e "  ${DIM}系统${PLAIN} ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
+    echo -e "  ${DIM}内核${PLAIN} ${WHITE}${KERNEL_INFO}${PLAIN}  ${DIM}BBR${PLAIN} ${WHITE}${BBR_STATUS}${PLAIN}"
+    echo -e "  ${DIM}地区${PLAIN} ${WHITE}${COUNTRY_INFO}${PLAIN}"
     echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}协议状态${PLAIN}"
     echo -e "  AnyTLS        $(echo -e "$ANYTLS_STATUS")"
     echo -e "  Hysteria2     $(echo -e "$HY2_STATUS")"
     echo -e "  Shadowsocks   $(echo -e "$SS_STATUS")"
@@ -403,10 +401,10 @@ select_protocol_and_run() {
         echo ""
         read -r -p "  请选择协议 [0-4]: " p
         case "$p" in
-            1) run_script "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
-            2) run_script "Hysteria2" "$HY2_URL" "$_action"; return ;;
-            3) run_script "Shadowsocks" "$SS_URL" "$_action"; return ;;
-            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
+            1) run_protocol_action "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
+            2) run_protocol_action "Hysteria2" "$HY2_URL" "$_action"; return ;;
+            3) run_protocol_action "Shadowsocks" "$SS_URL" "$_action"; return ;;
+            4) run_protocol_action "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -486,8 +484,8 @@ protocol_service_menu() {
         read -r -p "  请选择 [0-7]: " opt
         case "$opt" in
             1) show_all_services; pause_return ;;
-            2) service_action "$_service" start "$_pidfile" && echo -e "${GREEN}[OK] 服务已启动${PLAIN}" || echo -e "${RED}[ERROR] 启动失败${PLAIN}"; sleep 1 ;;
-            3) service_action "$_service" stop "$_pidfile" && echo -e "${GREEN}[OK] 服务已停止${PLAIN}" || echo -e "${RED}[ERROR] 停止失败${PLAIN}"; sleep 1 ;;
+            2) service_action "$_service" start "$_pidfile" && echo -e "${GREEN}[OK] 服务已启动${PLAIN}" || echo -e "${RED}[ERROR] 启动失败${PLAIN}"; pause_return ;;
+            3) service_action "$_service" stop "$_pidfile" && echo -e "${GREEN}[OK] 服务已停止${PLAIN}" || echo -e "${RED}[ERROR] 停止失败${PLAIN}"; pause_return ;;
             4)
                 if service_action "$_service" restart "$_pidfile"; then
                     sleep 1
@@ -500,7 +498,12 @@ protocol_service_menu() {
                 ;;
             5) service_logs "$_service" "$_log"; pause_return ;;
             6) list_listening_ports; pause_return ;;
-            7) echo -e "${YELLOW}[WARN] 修改配置前会由对应协议脚本自动备份并回滚失败变更。${PLAIN}"; sleep 1; run_script "$_script_name" "$_script_url" "manage" ;;
+            7)
+                echo -e "${YELLOW}[WARN] 修改配置前会先创建统一入口回滚包，对应协议脚本也会执行自身保护。${PLAIN}"
+                prepare_change_backup "修改 ${_label} 配置" || { pause_return; continue; }
+                sleep 1
+                run_script "$_script_name" "$_script_url" "manage"
+                ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -584,8 +587,13 @@ system_detect() {
 
 backup_config() {
     mkdir -p "$BACKUP_DIR"
-    local _file="${BACKUP_DIR}/backup-$(date '+%Y%m%d-%H%M%S').tar.gz"
-    local _items=""
+    local _reason="${1:-手动备份}" _stamp _file _meta_dir _manifest_rel _manifest _items=""
+    _stamp=$(date '+%Y%m%d-%H%M%S')
+    _file="${BACKUP_DIR}/rollback-${_stamp}.tar.gz"
+    _meta_dir="${BACKUP_DIR}/.rollback-${_stamp}"
+    _manifest_rel="root/singbox-tools/backup/manifest-${_stamp}.txt"
+    _manifest="${_meta_dir}/${_manifest_rel}"
+    mkdir -p "$(dirname "$_manifest")"
     [ -d /etc/sing-box ] && _items="${_items} etc/sing-box"
     [ -d /etc/hysteria ] && _items="${_items} etc/hysteria"
     [ -d /etc/shadowsocks-rust ] && _items="${_items} etc/shadowsocks-rust"
@@ -596,27 +604,74 @@ backup_config() {
     [ -f /etc/init.d/anytls-server ] && _items="${_items} etc/init.d/anytls-server"
     [ -f /etc/init.d/hysteria-server ] && _items="${_items} etc/init.d/hysteria-server"
     [ -f /etc/init.d/shadowsocks-server ] && _items="${_items} etc/init.d/shadowsocks-server"
-    if [ -z "$_items" ]; then
-        echo -e "${YELLOW}[WARN] 未找到可备份配置${PLAIN}"
-        return 1
-    fi
-    ( cd / && tar -czf "$_file" $_items 2>/dev/null ) || {
+    {
+        printf 'created_at=%s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
+        printf 'reason=%s\n' "$_reason"
+        printf 'script_version=v2.0.12\n'
+        printf 'archive=%s\n' "$_file"
+        if [ -n "$_items" ]; then
+            printf 'items=%s\n' "$_items"
+        else
+            printf 'items=none\n'
+        fi
+    } > "$_manifest"
+    if [ -n "$_items" ]; then
+        ( cd / && tar -czf "$_file" $_items -C "$_meta_dir" "$_manifest_rel" 2>/dev/null )
+    else
+        ( cd "$_meta_dir" && tar -czf "$_file" "$_manifest_rel" 2>/dev/null )
+    fi || {
+        rm -rf "$_meta_dir"
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.11" > "${BACKUP_DIR}/latest-version.txt"
-    echo -e "${GREEN}[OK] 备份完成: ${_file}${PLAIN}"
+    rm -rf "$_meta_dir"
+    printf '%s\n' "script_version=v2.0.12" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "$_file" > "${BACKUP_DIR}/latest-backup.txt"
+    if [ -z "$_items" ]; then
+        echo -e "${YELLOW}[WARN] 未找到已安装配置，已生成空状态回滚包。${PLAIN}"
+    fi
+    echo -e "${GREEN}[OK] 回滚包已生成: ${_file}${PLAIN}"
+}
+
+prepare_change_backup() {
+    local _reason="$1"
+    echo -e "${YELLOW}[INFO] 改动前创建回滚包: ${_reason}${PLAIN}"
+    backup_config "$_reason" && return 0
+    echo -e "${RED}[WARN] 回滚包生成失败，继续操作将降低可回滚性。${PLAIN}"
+    confirm_action "仍要继续执行 ${_reason}" || return 1
+}
+
+run_protocol_action() {
+    local _name="$1" _url="$2" _action="${3:-}"
+    case "$_action" in
+        install) prepare_change_backup "安装 / 重装 ${_name}" || { pause_return; return 1; } ;;
+    esac
+    run_script "$_name" "$_url" "$_action"
+}
+
+list_backup_archives() {
+    mkdir -p "$BACKUP_DIR"
+    find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'backup-*.tar.gz' -o -name 'rollback-*.tar.gz' \) 2>/dev/null | sort
+}
+
+show_backup_archives() {
+    local _list _file
+    _list=$(list_backup_archives)
+    [ -n "$_list" ] || { echo -e "${YELLOW}[WARN] 暂无备份${PLAIN}"; return 1; }
+    printf '%s\n' "$_list" | while IFS= read -r _file; do
+        [ -f "$_file" ] && ls -lh "$_file"
+    done
 }
 
 restore_config() {
     mkdir -p "$BACKUP_DIR"
     echo -e "${WHITE}${BOLD}备份列表${PLAIN}"
-    ls -1 "$BACKUP_DIR"/backup-*.tar.gz 2>/dev/null || { echo -e "${YELLOW}[WARN] 暂无备份${PLAIN}"; return 1; }
+    show_backup_archives || return 1
     echo ""
     read -r -p "请输入要恢复的完整备份路径: " _file
     [ -f "$_file" ] || { echo -e "${RED}[ERROR] 备份文件不存在${PLAIN}"; return 1; }
     echo -e "${YELLOW}[WARN] 恢复前将自动备份当前配置${PLAIN}"
-    backup_config || true
+    prepare_change_backup "恢复备份前保存当前状态" || return 1
     tar -xzf "$_file" -C / 2>/dev/null || {
         echo -e "${RED}[ERROR] 恢复失败，请检查备份文件${PLAIN}"
         return 1
@@ -641,14 +696,14 @@ backup_restore_menu() {
         echo ""
         read -r -p "  请选择 [0-4]: " opt
         case "$opt" in
-            1) backup_config; pause_return ;;
-            2) ls -lh "$BACKUP_DIR"/backup-*.tar.gz 2>/dev/null || echo -e "${YELLOW}[WARN] 暂无备份${PLAIN}"; pause_return ;;
+            1) backup_config "手动备份"; pause_return ;;
+            2) show_backup_archives; pause_return ;;
             3) restore_config; pause_return ;;
             4)
                 mkdir -p "$BACKUP_DIR"
                 read -r -p "确认删除 30 天前备份？[y/N]: " c
                 case "$c" in
-                    [yY]) find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.tar.gz' -type f -mtime +30 -print -delete ;;
+                    [yY]) find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'backup-*.tar.gz' -o -name 'rollback-*.tar.gz' \) -mtime +30 -print -delete ;;
                     *) echo "已取消。" ;;
                 esac
                 pause_return
@@ -674,17 +729,97 @@ download_script_to_cache() {
     echo -e "${GREEN}[OK] 已更新缓存脚本: ${_dest}${PLAIN}"
 }
 
+confirm_action() {
+    local _prompt="$1" _answer
+    read -r -p "${_prompt} [y/N]: " _answer
+    case "$_answer" in
+        y|Y|yes|YES|Yes) return 0 ;;
+        *) echo "已取消。"; return 1 ;;
+    esac
+}
+
+run_upgrade_action() {
+    local _name="$1" _url="$2" _status
+    echo -e "${YELLOW}[INFO] 升级前建议确认当前节点可用；脚本会先尝试备份现有配置。${PLAIN}"
+    confirm_action "确认升级 ${_name} 核心" || { pause_return; return 1; }
+    prepare_change_backup "升级 ${_name} 核心" || { pause_return; return 1; }
+    run_script "$_name" "$_url" "upgrade"
+    _status=$?
+    if [ "$_status" -eq 0 ]; then
+        echo -e "${GREEN}[OK] ${_name} 升级流程已完成${PLAIN}"
+    else
+        echo -e "${RED}[ERROR] ${_name} 升级流程失败，建议查看对应协议日志。${PLAIN}"
+    fi
+    pause_return
+    return "$_status"
+}
+
+run_uninstall_action() {
+    local _name="$1" _url="$2" _status
+    echo -e "${RED}[WARN] 卸载会停止并移除 ${_name} 相关服务与配置。${PLAIN}"
+    confirm_action "确认卸载 ${_name}" || { pause_return; return 1; }
+    prepare_change_backup "卸载 ${_name}" || { pause_return; return 1; }
+    run_script "$_name" "$_url" "uninstall"
+    _status=$?
+    if [ "$_status" -eq 0 ]; then
+        echo -e "${GREEN}[OK] ${_name} 卸载流程已完成${PLAIN}"
+    else
+        echo -e "${RED}[ERROR] ${_name} 卸载流程失败，请查看输出并手动复查残留。${PLAIN}"
+    fi
+    pause_return
+    return "$_status"
+}
+
+upgrade_all_cores() {
+    local _failed=0 _total=3
+    echo -e "${YELLOW}[INFO] 将依次升级 AnyTLS、Hysteria2、Shadowsocks-Rust 核心。${PLAIN}"
+    confirm_action "确认批量升级全部核心" || { pause_return; return 1; }
+    prepare_change_backup "批量升级全部核心" || { pause_return; return 1; }
+    run_script "AnyTLS" "$ANYTLS_URL" "upgrade" || _failed=$((_failed + 1))
+    run_script "Hysteria2" "$HY2_URL" "upgrade" || _failed=$((_failed + 1))
+    run_script "Shadowsocks" "$SS_URL" "upgrade" || _failed=$((_failed + 1))
+    if [ "$_failed" -eq 0 ]; then
+        echo -e "${GREEN}[OK] 全部核心升级完成（${_total}/${_total}）${PLAIN}"
+        pause_return
+        return 0
+    fi
+    echo -e "${YELLOW}[WARN] 批量升级完成，但有 ${_failed} 项失败。请查看上方输出。${PLAIN}"
+    pause_return
+    return 1
+}
+
+uninstall_all_protocols() {
+    local _failed=0 _total=4
+    echo -e "${RED}[WARN] 将依次卸载 AnyTLS、Hysteria2、Shadowsocks、EUserv HY2。${PLAIN}"
+    echo -e "${YELLOW}[INFO] 如需只清空配置或备份，请使用下方专门选项。${PLAIN}"
+    confirm_action "确认批量卸载全部协议" || { pause_return; return 1; }
+    prepare_change_backup "批量卸载全部协议" || { pause_return; return 1; }
+    run_script "AnyTLS" "$ANYTLS_URL" "uninstall" || _failed=$((_failed + 1))
+    run_script "Hysteria2" "$HY2_URL" "uninstall" || _failed=$((_failed + 1))
+    run_script "Shadowsocks" "$SS_URL" "uninstall" || _failed=$((_failed + 1))
+    run_script "EUserv IPv6 HY2" "$EUSERV_URL" "uninstall" || _failed=$((_failed + 1))
+    if [ "$_failed" -eq 0 ]; then
+        echo -e "${GREEN}[OK] 全部协议卸载完成（${_total}/${_total}）${PLAIN}"
+        pause_return
+        return 0
+    fi
+    echo -e "${YELLOW}[WARN] 批量卸载完成，但有 ${_failed} 项失败。请查看上方输出。${PLAIN}"
+    pause_return
+    return 1
+}
+
 update_menu() {
     while true; do
         show_header
-        echo -e "${WHITE}${BOLD}更新脚本 / 更新核心${PLAIN}"
+        echo -e "${WHITE}${BOLD}更新 / 升级中心${PLAIN}"
+        echo -e "${DIM}脚本缓存 = 刷新菜单脚本；核心升级 = 更新已安装服务二进制。${PLAIN}"
         echo ""
         echo -e "  [1] 刷新 install.sh 主入口缓存"
-        echo -e "  [2] 更新 AnyTLS 核心"
-        echo -e "  [3] 更新 Hysteria2 核心"
-        echo -e "  [4] 更新 Shadowsocks-Rust 核心"
-        echo -e "  [5] 更新全部脚本"
-        echo -e "  [6] 更新全部核心"
+        echo -e "  [2] 升级 AnyTLS 核心"
+        echo -e "  [3] 升级 Hysteria2 核心"
+        echo -e "  [4] 升级 Shadowsocks-Rust 核心"
+        echo -e "  [5] 刷新全部脚本缓存"
+        echo -e "  [6] 升级全部核心（AnyTLS/HY2/SS）"
         echo -e "  [0] 返回"
         echo ""
         read -r -p "  请选择 [0-6]: " opt
@@ -698,9 +833,9 @@ update_menu() {
                 fi
                 pause_return
                 ;;
-            2) backup_config || true; run_script "AnyTLS" "$ANYTLS_URL" "upgrade" ;;
-            3) backup_config || true; run_script "Hysteria2" "$HY2_URL" "upgrade" ;;
-            4) backup_config || true; run_script "Shadowsocks" "$SS_URL" "upgrade" ;;
+            2) run_upgrade_action "AnyTLS" "$ANYTLS_URL" ;;
+            3) run_upgrade_action "Hysteria2" "$HY2_URL" ;;
+            4) run_upgrade_action "Shadowsocks" "$SS_URL" ;;
             5)
                 local _ok=1
                 download_script_to_cache install.sh "$INSTALL_URL" || { echo -e "${RED}[ERROR] install.sh 缓存刷新失败${PLAIN}"; _ok=0; }
@@ -711,7 +846,7 @@ update_menu() {
                 [ "$_ok" = "1" ] && echo -e "${GREEN}[OK] 全部脚本缓存刷新完成${PLAIN}" || echo -e "${YELLOW}[WARN] 部分脚本缓存刷新失败${PLAIN}"
                 pause_return
                 ;;
-            6) backup_config || true; run_script "AnyTLS" "$ANYTLS_URL" "upgrade"; run_script "Hysteria2" "$HY2_URL" "upgrade"; run_script "Shadowsocks" "$SS_URL" "upgrade" ;;
+            6) upgrade_all_cores ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -721,7 +856,8 @@ update_menu() {
 uninstall_menu() {
     while true; do
         show_header
-        echo -e "${WHITE}${BOLD}卸载协议${PLAIN}"
+        echo -e "${WHITE}${BOLD}卸载 / 清理中心${PLAIN}"
+        echo -e "${DIM}单协议卸载会先确认并尝试备份；彻底清理配置需输入二次确认词。${PLAIN}"
         echo ""
         echo -e "  [1] 卸载 AnyTLS"
         echo -e "  [2] 卸载 Hysteria2"
@@ -734,16 +870,16 @@ uninstall_menu() {
         echo ""
         read -r -p "  请选择 [0-7]: " opt
         case "$opt" in
-            1) run_script "AnyTLS" "$ANYTLS_URL" "uninstall" ;;
-            2) run_script "Hysteria2" "$HY2_URL" "uninstall" ;;
-            3) run_script "Shadowsocks" "$SS_URL" "uninstall" ;;
-            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "uninstall" ;;
-            5) read -r -p "确认加载所有协议脚本执行卸载？[y/N]: " c; case "$c" in [yY]) run_script "AnyTLS" "$ANYTLS_URL" "uninstall"; run_script "Hysteria2" "$HY2_URL" "uninstall"; run_script "Shadowsocks" "$SS_URL" "uninstall"; run_script "EUserv IPv6 HY2" "$EUSERV_URL" "uninstall" ;; *) echo "已取消。" ;; esac ;;
+            1) run_uninstall_action "AnyTLS" "$ANYTLS_URL" ;;
+            2) run_uninstall_action "Hysteria2" "$HY2_URL" ;;
+            3) run_uninstall_action "Shadowsocks" "$SS_URL" ;;
+            4) run_uninstall_action "EUserv IPv6 HY2" "$EUSERV_URL" ;;
+            5) uninstall_all_protocols ;;
             6)
                 echo -e "${RED}这会删除 /etc/sing-box、/etc/hysteria、/etc/shadowsocks-rust 和相关服务文件。${PLAIN}"
                 read -r -p "请输入 DELETE-CONFIG 确认: " c
                 if [ "$c" = "DELETE-CONFIG" ]; then
-                    backup_config || true
+                    prepare_change_backup "删除所有配置" || { pause_return; continue; }
                     service_action anytls-server stop /var/run/anytls-server.pid >/dev/null 2>&1 || true
                     service_action hysteria-server stop /var/run/hysteria.pid >/dev/null 2>&1 || true
                     service_action shadowsocks-server stop /var/run/ssserver.pid >/dev/null 2>&1 || true
@@ -761,7 +897,7 @@ uninstall_menu() {
                 echo -e "${RED}这会删除 ${BACKUP_DIR} 下所有备份。${PLAIN}"
                 read -r -p "请输入 DELETE-BACKUP 确认: " c
                 if [ "$c" = "DELETE-BACKUP" ] && [ -d "$BACKUP_DIR" ]; then
-                    find "$BACKUP_DIR" -maxdepth 1 -name 'backup-*.tar.gz' -type f -print -delete
+                    find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'backup-*.tar.gz' -o -name 'rollback-*.tar.gz' -o -name 'latest-backup.txt' -o -name 'latest-version.txt' \) -print -delete
                     echo -e "${GREEN}[OK] 备份已删除${PLAIN}"
                 else
                     echo "已取消。"
@@ -781,15 +917,18 @@ main_menu() {
         echo -e "  ${WHITE}${BOLD}主菜单${PLAIN}"
         echo -e "  ${DIM}快捷命令: ${GREEN}sb${PLAIN}${DIM} 可直接打开本菜单${PLAIN}"
         echo ""
+        echo -e "  ${DIM}部署与分享${PLAIN}"
         echo -e "  [1] 安装 / 重装协议"
         echo -e "  [2] 查看节点信息"
         echo -e "  [3] 导出客户端配置"
-        echo -e "  [4] 服务管理"
         echo -e "  [5] 生成二维码"
+        echo ""
+        echo -e "  ${DIM}运维与安全${PLAIN}"
+        echo -e "  [4] 服务管理"
         echo -e "  [6] 系统检测"
         echo -e "  [7] 备份 / 恢复"
-        echo -e "  [8] 更新脚本 / 更新核心"
-        echo -e "  [9] 卸载协议"
+        echo -e "  [8] 更新 / 升级中心"
+        echo -e "  [9] 卸载 / 清理中心"
         echo -e "  [0] 退出"
         echo ""
         read -r -p "  请输入选项 [0-9]: " choice
