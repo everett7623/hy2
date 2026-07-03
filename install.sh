@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.12
+# 版本：v2.0.13
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -364,7 +364,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.12${PLAIN} ${DIM}AnyTLS · HY2 · SS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.13${PLAIN} ${DIM}AnyTLS · HY2 · SS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}Jensfrank${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -585,6 +585,89 @@ system_detect() {
     pause_return
 }
 
+show_bbr_detail() {
+    local _cc _qdisc _avail
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    _avail=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
+    echo -e "  拥塞控制算法: ${YELLOW}${_cc:-未知}${PLAIN}"
+    echo -e "  队列调度算法: ${YELLOW}${_qdisc:-未知}${PLAIN}"
+    echo -e "  可用算法    : ${SKYBLUE}${_avail:-未知}${PLAIN}"
+    if [ "${_cc:-}" = "bbr" ] && [ "${_qdisc:-}" = "fq" ]; then
+        echo -e "  标准 BBR    : ${GREEN}已启用 (bbr + fq)${PLAIN}"
+    elif [ "${_cc:-}" = "bbr" ]; then
+        echo -e "  标准 BBR    : ${YELLOW}部分启用 (bbr / ${_qdisc:-未知})${PLAIN}"
+    else
+        echo -e "  标准 BBR    : ${RED}未启用${PLAIN}"
+    fi
+}
+
+enable_standard_bbr() {
+    show_header
+    echo -e "${WHITE}${BOLD}开启标准 BBR + fq${PLAIN}"
+    echo -e "${DIM}仅手动启用，不会在安装协议时默认修改系统 TCP 参数。${PLAIN}"
+    echo -e "${DIM}适合 AnyTLS / Shadowsocks 等 TCP 代理；Hysteria2 主要走 UDP，收益不一定明显。${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    local _kver _kmaj _kmin _cc _qdisc _sysctl_conf
+    _kver=$(uname -r)
+    _kmaj=$(echo "$_kver" | cut -d. -f1)
+    _kmin=$(echo "$_kver" | cut -d. -f2)
+    echo -e "  当前内核: ${YELLOW}${_kver}${PLAIN}"
+    show_bbr_detail
+
+    if [ "${_kmaj:-0}" -lt 4 ] || { [ "${_kmaj:-0}" -eq 4 ] && [ "${_kmin:-0}" -lt 9 ]; }; then
+        echo -e "${RED}[ERROR] 内核版本低于 4.9，不支持标准 BBR。${PLAIN}"
+        pause_return
+        return 1
+    fi
+
+    confirm_action "确认开启标准 BBR + fq" || { pause_return; return 1; }
+    prepare_change_backup "开启标准 BBR + fq" || { pause_return; return 1; }
+    modprobe tcp_bbr 2>/dev/null || true
+
+    _sysctl_conf="/etc/sysctl.d/99-singbox-tools-bbr.conf"
+    cat > "$_sysctl_conf" <<EOF
+# Sing-box Multi-Protocol Tools - 标准 BBR 优化
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+
+    sysctl -p "$_sysctl_conf" >/dev/null 2>&1
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+    if [ "$_cc" = "bbr" ] && [ "$_qdisc" = "fq" ]; then
+        echo -e "${GREEN}[OK] 标准 BBR + fq 已启用，配置写入 ${_sysctl_conf}${PLAIN}"
+    elif [ "$_cc" = "bbr" ]; then
+        echo -e "${YELLOW}[WARN] BBR 已启用，但队列算法为 ${_qdisc:-未知}，请检查内核是否支持 fq。${PLAIN}"
+    else
+        echo -e "${RED}[ERROR] BBR 未生效，请检查内核是否支持 tcp_bbr。${PLAIN}"
+    fi
+    pause_return
+}
+
+system_tools_menu() {
+    while true; do
+        show_header
+        echo -e "${WHITE}${BOLD}系统检测 / BBR 优化${PLAIN}"
+        echo -e "${DIM}默认只展示状态；需要时手动开启标准 bbr + fq。${PLAIN}"
+        echo ""
+        echo -e "  [1] 系统检测"
+        echo -e "  [2] 查看 BBR 状态"
+        echo -e "  [3] 开启标准 BBR + fq"
+        echo -e "  [0] 返回"
+        echo ""
+        read -r -p "  请选择 [0-3]: " opt
+        case "$opt" in
+            1) system_detect ;;
+            2) show_header; echo -e "${WHITE}${BOLD}BBR 状态${PLAIN}"; show_bbr_detail; pause_return ;;
+            3) enable_standard_bbr ;;
+            0) return ;;
+            *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
+        esac
+    done
+}
+
 backup_config() {
     mkdir -p "$BACKUP_DIR"
     local _reason="${1:-手动备份}" _stamp _file _meta_dir _manifest_rel _manifest _items=""
@@ -604,10 +687,15 @@ backup_config() {
     [ -f /etc/init.d/anytls-server ] && _items="${_items} etc/init.d/anytls-server"
     [ -f /etc/init.d/hysteria-server ] && _items="${_items} etc/init.d/hysteria-server"
     [ -f /etc/init.d/shadowsocks-server ] && _items="${_items} etc/init.d/shadowsocks-server"
+    [ -f /etc/sysctl.conf ] && _items="${_items} etc/sysctl.conf"
+    [ -f /etc/sysctl.d/99-singbox-tools-bbr.conf ] && _items="${_items} etc/sysctl.d/99-singbox-tools-bbr.conf"
+    [ -f /etc/sysctl.d/99-hysteria-bbr.conf ] && _items="${_items} etc/sysctl.d/99-hysteria-bbr.conf"
+    [ -f /etc/sysctl.d/99-ss-bbr.conf ] && _items="${_items} etc/sysctl.d/99-ss-bbr.conf"
+    [ -f /etc/sysctl.d/99-euserv-bbr.conf ] && _items="${_items} etc/sysctl.d/99-euserv-bbr.conf"
     {
         printf 'created_at=%s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
         printf 'reason=%s\n' "$_reason"
-        printf 'script_version=v2.0.12\n'
+        printf 'script_version=v2.0.13\n'
         printf 'archive=%s\n' "$_file"
         if [ -n "$_items" ]; then
             printf 'items=%s\n' "$_items"
@@ -625,7 +713,7 @@ backup_config() {
         return 1
     }
     rm -rf "$_meta_dir"
-    printf '%s\n' "script_version=v2.0.12" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.13" > "${BACKUP_DIR}/latest-version.txt"
     printf '%s\n' "$_file" > "${BACKUP_DIR}/latest-backup.txt"
     if [ -z "$_items" ]; then
         echo -e "${YELLOW}[WARN] 未找到已安装配置，已生成空状态回滚包。${PLAIN}"
@@ -925,7 +1013,7 @@ main_menu() {
         echo ""
         echo -e "  ${DIM}运维与安全${PLAIN}"
         echo -e "  [4] 服务管理"
-        echo -e "  [6] 系统检测"
+        echo -e "  [6] 系统检测 / BBR 优化"
         echo -e "  [7] 备份 / 恢复"
         echo -e "  [8] 更新 / 升级中心"
         echo -e "  [9] 卸载 / 清理中心"
@@ -939,7 +1027,7 @@ main_menu() {
             3) export_config_menu ;;
             4) service_management_menu ;;
             5) qrcode_menu ;;
-            6) system_detect ;;
+            6) system_tools_menu ;;
             7) backup_restore_menu ;;
             8) update_menu ;;
             9) uninstall_menu ;;

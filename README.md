@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.12（2026-07-04）
-> 本次更新：优化统一入口首页排版，并强化更新、升级、卸载、删除配置前的回滚包备份体验。
+> 当前版本：v2.0.13（2026-07-04）
+> 本次更新：BBR 策略改为用户手动选择标准 `bbr + fq`，统一入口新增系统检测 / BBR 优化菜单。
 
 ---
 
@@ -34,7 +34,7 @@
 - **🌐 NAT 与双栈支持**：自动检测 IPv4 / IPv6 网络状态，完美支持 NAT 机器（内外端口映射）及纯 IPv6 环境。
 - **🔐 Hysteria 2 免域名**：采用自签证书 + SNI 伪装 `amd.com`，自动配置 `skip-cert-verify`，零门槛开箱即用。
 - **🔐 SS 双协议自由选**：安装时可选择 100% 连通率的经典 `aes-256-gcm`，或强抗主动探测的 `2022-blake3-aes-256-gcm`（自动生成 32 字节规范密钥并尝试同步系统时间）。
-- **🔧 服务器工具内置**：一键开启 BBR 加速、定时自动更新（每天 03:00）、系统信息总览，开箱即用。
+- **🔧 服务器工具内置**：手动开启标准 `bbr + fq`、定时自动更新（每天 03:00）、系统信息总览，开箱即用。
 - **📱 全客户端节点输出**：自动生成适配 Loon / Surfboard / Clash Meta / Stash / Shadowrocket / v2rayN / Quantumult X 等主流客户端的完整配置代码与二维码链接。
 
 ---
@@ -152,6 +152,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 ```
 
 管理菜单提供升级、修改配置、服务启停、查看日志和卸载等功能。升级二进制时脚本会备份旧版本，启动失败则尝试回滚。
+统一入口的“系统检测 / BBR 优化”默认只展示状态，不会自动修改系统 TCP 参数；需要时可手动开启标准 `bbr + fq`。
 统一入口的“更新 / 升级中心”会区分脚本缓存刷新与核心二进制升级；“卸载 / 清理中心”会在危险动作前要求确认，并自动生成一个 `rollback-*.tar.gz` 回滚包，方便需要时恢复。
 
 自动更新默认不会开启，需要在“服务器工具”中手动启用；启用后由 cron 每天 `03:00` 检查上游版本。

@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.13 (2026-07-04)
+
+- Add a unified launcher “系统检测 / BBR 优化” menu with manual standard `bbr + fq` enablement.
+- Keep BBR opt-in only; protocol installation does not automatically modify global TCP settings.
+- Remove HY2 and Shadowsocks standalone experimental BBR auto-detection and keep the mainstream stable `bbr + fq` profile.
+- Include sysctl / BBR config files in the pre-change rollback archive scope.
+
+---
+
 ## v2.0.12 (2026-07-04)
 
 - Optimize the unified launcher homepage layout while preserving the author, GitHub, blog, review-site, and forum promotion links.

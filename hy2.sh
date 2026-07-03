@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.0.12
+# 版本：v2.0.13
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1237,8 +1237,8 @@ uninstall_hy2() {
 }
 
 # ============================================================
-# 一键开启 BBR 拥塞控制
-# 内核 < 4.9：不支持；4.9~5.14：BBR；>= 5.15：尝试 BBRv3
+# 一键开启标准 BBR 拥塞控制
+# 内核 < 4.9：不支持；其余内核仅启用主流稳定的 bbr + fq，不自动尝试实验性或魔改 BBR
 # ============================================================
 
 enable_bbr() {
@@ -1260,28 +1260,15 @@ enable_bbr() {
     _cur_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     echo -e "  当前拥塞控制: ${YELLOW}${_cur_cc:-未知}${PLAIN}"
 
-    # 选择 BBR 版本
     local _cc="bbr"
-    if [ "$_kmaj" -gt 5 ] || { [ "$_kmaj" -eq 5 ] && [ "$_kmin" -ge 15 ]; }; then
-        if modprobe tcp_bbr3 >/dev/null 2>&1 || \
-           grep -q "bbr3" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
-            _cc="bbr3"
-        fi
-    fi
-
-    echo -e "${YELLOW}将启用 ${_cc} + FQ 队列调度...${PLAIN}"
+    echo -e "${YELLOW}将启用标准 ${_cc} + fq 队列调度...${PLAIN}"
     modprobe tcp_bbr 2>/dev/null || true
 
     local _sysctl_conf="/etc/sysctl.d/99-hysteria-bbr.conf"
     cat > "$_sysctl_conf" <<EOF
-# Hysteria2 脚本写入 - BBR 优化
+# Hysteria2 脚本写入 - 标准 BBR 优化
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = ${_cc}
-net.ipv4.tcp_fastopen = 3
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_rmem = 4096 87380 16777216
-net.ipv4.tcp_wmem = 4096 16384 16777216
 EOF
 
     sysctl -p "$_sysctl_conf" >/dev/null 2>&1
@@ -1289,19 +1276,11 @@ EOF
     local _result
     _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     if [ "$_result" = "$_cc" ]; then
-        echo -e "${GREEN}✓ BBR (${_cc}) 已成功启用${PLAIN}"
+        echo -e "${GREEN}✓ 标准 BBR (${_cc}) 已成功启用${PLAIN}"
         echo -e "${GREEN}✓ 队列调度: $(sysctl -n net.core.default_qdisc 2>/dev/null)${PLAIN}"
         echo -e "${GREEN}✓ 配置已写入 ${_sysctl_conf}，重启后持续生效${PLAIN}"
     else
-        echo -e "${YELLOW}⚠ ${_cc} 模块不可用，回落至 bbr${PLAIN}"
-        sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1
-        sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1
-        _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-        if [ "$_result" = "bbr" ]; then
-            echo -e "${GREEN}✓ BBR 已启用${PLAIN}"
-        else
-            echo -e "${RED}✗ BBR 启用失败，请手动检查内核模块${PLAIN}"
-        fi
+        echo -e "${RED}✗ BBR 启用失败，请手动检查内核是否支持 tcp_bbr${PLAIN}"
     fi
     sleep 3
 }
@@ -1581,7 +1560,7 @@ server_tools_menu() {
     while true; do
         clear
         echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
-        echo -e "1. 一键开启 BBR"
+        echo -e "1. 开启标准 BBR + fq"
         echo -e "2. 查看 BBR 状态"
         echo -e "3. 开启自动更新（每天 03:00）"
         echo -e "4. 关闭自动更新"
@@ -1625,7 +1604,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.12${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.13${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

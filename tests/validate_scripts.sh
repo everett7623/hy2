@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.12"
+EXPECTED_VERSION="v2.0.13"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -88,7 +88,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.12"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.13"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -102,6 +102,11 @@ grep -q '刷新 install.sh 主入口缓存' install.sh
 grep -q '升级 AnyTLS 核心' install.sh
 grep -q '更新 / 升级中心' install.sh
 grep -q '卸载 / 清理中心' install.sh
+grep -q '系统检测 / BBR 优化' install.sh
+grep -q '^show_bbr_detail()' install.sh
+grep -q '^enable_standard_bbr()' install.sh
+grep -q '^system_tools_menu()' install.sh
+grep -q '开启标准 BBR + fq' install.sh
 grep -q 'seedloc.com.*vpsknow.com.*nodeloc.com' install.sh
 grep -q '^confirm_action()' install.sh
 grep -q '^prepare_change_backup()' install.sh
@@ -115,6 +120,13 @@ grep -q 'rollback-.*\.tar\.gz' install.sh
 grep -q 'manifest-.*\.txt' install.sh
 grep -q 'prepare_change_backup "安装 / 重装' install.sh
 grep -q 'prepare_change_backup "删除所有配置"' install.sh
+grep -q 'etc/sysctl.d/99-singbox-tools-bbr.conf' install.sh
+! grep -R -qE 'bbr3|tcp_bbr3' install.sh hy2.sh ss.sh README.md CHANGELOG.md
+grep -q 'net.ipv4.tcp_congestion_control = bbr' install.sh
+grep -q 'net.ipv4.tcp_congestion_control = ${_cc}' hy2.sh
+grep -q 'net.ipv4.tcp_congestion_control = ${_cc}' ss.sh
+! grep -q 'net.ipv4.tcp_fastopen = 3' hy2.sh
+! grep -q 'net.ipv4.tcp_fastopen = 3' ss.sh
 grep -q '\[ -s "\$_dest.tmp" \]' install.sh
 grep -q '全部脚本缓存刷新完成' install.sh
 grep -q '^SHORTCUT_BIN="/usr/local/bin/sb"' install.sh
