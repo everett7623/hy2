@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.11 (2026-07-03)
+
+- Fix unified launcher child-script exit status propagation so failures are not hidden by temporary-file cleanup.
+- Remove obsolete `anytls.py`, which was not part of the shell-script project and could not be imported standalone.
+- Include `tests/helpers/*.bash` in Bash syntax and CRLF validation, and normalize helper working-tree line endings to LF.
+- Add static regression checks for launcher status preservation to prevent future regressions.
+
+---
+
 ## v2.0.10 (2026-07-03)
 
 - 新增快捷命令 `sb`，首次运行统一入口后自动写入 `/usr/local/bin/sb`，后续可直接打开主菜单。

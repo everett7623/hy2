@@ -5,7 +5,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v2.0.10"
+HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
+EXPECTED_VERSION="v2.0.11"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -25,14 +26,16 @@ for doc in $REQUIRED_DOCS; do
     fi
 done
 
-for script in $SCRIPTS; do
+for script in $SCRIPTS $HELPER_SCRIPTS; do
     bash -n "$script"
 
     if grep -q "$(printf '\r')" "$script"; then
         echo "CRLF detected: $script" >&2
         exit 1
     fi
+done
 
+for script in $SCRIPTS; do
     case "$script" in
         install.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
@@ -85,7 +88,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.10"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.11"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -137,6 +140,8 @@ done
 
 grep -q '^run_local_script()' install.sh
 grep -q 'run_local_script "$_tmp" "$_action"' install.sh
+grep -q '_status=\$?' install.sh
+grep -q 'return "\$_status"' install.sh
 grep -q '使用本地缓存脚本' install.sh
 grep -q 'select_protocol_and_run "安装 / 重装协议" "install"' install.sh
 grep -q 'select_protocol_and_run "查看节点信息" "info"' install.sh

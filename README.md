@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.10（2026-07-03）
-> 本次更新：新增 `sb` 快捷命令，并修复部分系统加载子脚本时无法创建临时文件的问题。
+> 当前版本：v2.0.11（2026-07-03）
+> 本次更新：修复统一入口子脚本返回码传递，移除废弃 `anytls.py`，并补强测试 helper 换行检查。
 
 ---
 
