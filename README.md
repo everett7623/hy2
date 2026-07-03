@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.7（2026-07-03）
-> 本次更新：修复 AnyTLS 在 GitHub 版本接口不可达时无法获取 sing-box 最新稳定版导致安装中断的问题。
+> 当前版本：v2.0.8（2026-07-03）
+> 本次更新：优化更新菜单，主入口改为刷新缓存，AnyTLS 核心文案去除易混淆的旧英文表述。
 
 ---
 
@@ -50,6 +50,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install
 ```
 
 > `install.sh` 是远程启动器。选择菜单项后，它会从 GitHub `main` 分支下载对应脚本并传入 `install` / `info` / `upgrade` / `uninstall` 等动作参数；因此需要 VPS 能访问 `raw.githubusercontent.com`。
+> 更新菜单可刷新本地脚本缓存；远程下载失败或内容异常时，统一入口会尝试使用已验证的缓存脚本继续执行。
 
 ### Hysteria 2（主推）
 

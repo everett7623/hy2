@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.7
+# 版本：v2.0.8
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -73,6 +73,15 @@ pause_return() {
     read -r -p "按回车键返回..." _tmp
 }
 
+run_local_script() {
+    local _file="$1" _action="${2:-}"
+    if [ -n "$_action" ]; then
+        bash "$_file" "$_action"
+    else
+        bash "$_file"
+    fi
+}
+
 install_curl_if_missing() {
     command -v curl >/dev/null 2>&1 && return 0
     echo -e "${YELLOW}[WARN] curl 未安装，正在尝试安装...${PLAIN}"
@@ -91,6 +100,7 @@ install_curl_if_missing() {
 
 run_script() {
     local _name="$1" _url="$2" _action="${3:-}"
+    local _script_name="${_url##*/}" _cache="${SCRIPT_CACHE_DIR}/${_script_name}"
     echo ""
     echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
     if [ -n "$_action" ]; then
@@ -116,18 +126,24 @@ run_script() {
         if ! [ -s "$_tmp" ] || ! bash -n "$_tmp" 2>/dev/null; then
             echo -e "${RED}[ERROR] 下载内容无效或脚本语法检查失败${PLAIN}"
             rm -f "$_tmp"
+            if [ -s "$_cache" ] && bash -n "$_cache" 2>/dev/null; then
+                echo -e "${YELLOW}[WARN] 尝试使用本地缓存脚本: ${_cache}${PLAIN}"
+                run_local_script "$_cache" "$_action"
+                return
+            fi
             sleep 3
             return 1
         fi
         chmod +x "$_tmp"
-        if [ -n "$_action" ]; then
-            bash "$_tmp" "$_action"
-        else
-            bash "$_tmp"
-        fi
+        run_local_script "$_tmp" "$_action"
         rm -f "$_tmp"
     else
         rm -f "$_tmp"
+        if [ -s "$_cache" ] && bash -n "$_cache" 2>/dev/null; then
+            echo -e "${YELLOW}[WARN] 远程下载失败，使用本地缓存脚本: ${_cache}${PLAIN}"
+            run_local_script "$_cache" "$_action"
+            return
+        fi
         echo -e "${RED}[ERROR] 下载失败，请检查网络${PLAIN}"
         echo -e "${YELLOW}也可直接运行: bash <(curl -fsSL ${_url})${PLAIN}"
         sleep 3
@@ -285,7 +301,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.7${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.8${PLAIN}"
     echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
@@ -525,7 +541,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.7" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.8" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] 备份完成: ${_file}${PLAIN}"
 }
 
@@ -584,7 +600,11 @@ download_script_to_cache() {
     local _name="$1" _url="$2" _dest="${SCRIPT_CACHE_DIR}/${_name}"
     mkdir -p "$SCRIPT_CACHE_DIR"
     install_curl_if_missing || return 1
-    curl -fsSL --connect-timeout 15 --max-time 60 "$_url" -o "$_dest.tmp" 2>/dev/null || return 1
+    if ! curl -fsSL --connect-timeout 15 --max-time 60 "$_url" -o "$_dest.tmp" 2>/dev/null; then
+        rm -f "$_dest.tmp"
+        return 1
+    fi
+    [ -s "$_dest.tmp" ] || { rm -f "$_dest.tmp"; return 1; }
     bash -n "$_dest.tmp" 2>/dev/null || { rm -f "$_dest.tmp"; return 1; }
     mv -f "$_dest.tmp" "$_dest"
     chmod +x "$_dest"
@@ -596,10 +616,10 @@ update_menu() {
         show_header
         echo -e "${WHITE}${BOLD}更新脚本 / 更新核心${PLAIN}"
         echo ""
-        echo -e "  [1] 更新 install.sh 主入口"
-        echo -e "  [2] 更新 AnyTLS / sing-box core"
-        echo -e "  [3] 更新 Hysteria2 core"
-        echo -e "  [4] 更新 Shadowsocks-Rust core"
+        echo -e "  [1] 刷新 install.sh 主入口缓存"
+        echo -e "  [2] 更新 AnyTLS 核心"
+        echo -e "  [3] 更新 Hysteria2 核心"
+        echo -e "  [4] 更新 Shadowsocks-Rust 核心"
         echo -e "  [5] 更新全部脚本"
         echo -e "  [6] 更新全部核心"
         echo -e "  [0] 返回"
@@ -607,12 +627,11 @@ update_menu() {
         read -r -p "  请选择 [0-6]: " opt
         case "$opt" in
             1)
-                backup_config || true
-                if [ -f "$0" ]; then
-                    install_curl_if_missing && curl -fsSL --connect-timeout 15 --max-time 60 "$INSTALL_URL" -o "${0}.tmp" && bash -n "${0}.tmp" && mv -f "${0}.tmp" "$0" \
-                        && echo -e "${GREEN}[OK] install.sh 已更新${PLAIN}" || echo -e "${RED}[ERROR] 更新失败，已保留当前脚本${PLAIN}"
+                if download_script_to_cache install.sh "$INSTALL_URL"; then
+                    echo -e "${GREEN}[OK] 主入口已刷新到缓存: ${SCRIPT_CACHE_DIR}/install.sh${PLAIN}"
+                    echo -e "${DIM}远程运行模式会在每次执行时从 GitHub main 拉取最新 install.sh，无需原地覆盖当前进程。${PLAIN}"
                 else
-                    echo -e "${YELLOW}[WARN] 当前是进程替换运行，无法原地更新 install.sh${PLAIN}"
+                    echo -e "${RED}[ERROR] 主入口缓存刷新失败，请检查 GitHub raw 访问${PLAIN}"
                 fi
                 pause_return
                 ;;
@@ -620,11 +639,13 @@ update_menu() {
             3) backup_config || true; run_script "Hysteria2" "$HY2_URL" "upgrade" ;;
             4) backup_config || true; run_script "Shadowsocks" "$SS_URL" "upgrade" ;;
             5)
-                download_script_to_cache install.sh "$INSTALL_URL"
-                download_script_to_cache anytls.sh "$ANYTLS_URL"
-                download_script_to_cache hy2.sh "$HY2_URL"
-                download_script_to_cache ss.sh "$SS_URL"
-                download_script_to_cache euservhy2.sh "$EUSERV_URL"
+                local _ok=1
+                download_script_to_cache install.sh "$INSTALL_URL" || { echo -e "${RED}[ERROR] install.sh 缓存刷新失败${PLAIN}"; _ok=0; }
+                download_script_to_cache anytls.sh "$ANYTLS_URL" || { echo -e "${RED}[ERROR] anytls.sh 缓存刷新失败${PLAIN}"; _ok=0; }
+                download_script_to_cache hy2.sh "$HY2_URL" || { echo -e "${RED}[ERROR] hy2.sh 缓存刷新失败${PLAIN}"; _ok=0; }
+                download_script_to_cache ss.sh "$SS_URL" || { echo -e "${RED}[ERROR] ss.sh 缓存刷新失败${PLAIN}"; _ok=0; }
+                download_script_to_cache euservhy2.sh "$EUSERV_URL" || { echo -e "${RED}[ERROR] euservhy2.sh 缓存刷新失败${PLAIN}"; _ok=0; }
+                [ "$_ok" = "1" ] && echo -e "${GREEN}[OK] 全部脚本缓存刷新完成${PLAIN}" || echo -e "${YELLOW}[WARN] 部分脚本缓存刷新失败${PLAIN}"
                 pause_return
                 ;;
             6) backup_config || true; run_script "AnyTLS" "$ANYTLS_URL" "upgrade"; run_script "Hysteria2" "$HY2_URL" "upgrade"; run_script "Shadowsocks" "$SS_URL" "upgrade" ;;

@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v2.0.7"
+EXPECTED_VERSION="v2.0.8"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -85,7 +85,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.7"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.8"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -94,6 +94,11 @@ grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
 ! grep -R -qE 'Throne URI|export_throne|render_throne|export_singbox|render_singbox|print_singbox_template_note' hy2.sh ss.sh anytls.sh euservhy2.sh install.sh
 ! grep -R -qE 'Sing-box JSON 配置|完整 Sing-box/SFA TUN|Sing-box 输出说明|SFA / SFM / SFI' install.sh
+! grep -qE 'sing-box core|进程替换运行|无法原地更新|更新 install\.sh 主入口' install.sh
+grep -q '刷新 install.sh 主入口缓存' install.sh
+grep -q '更新 AnyTLS 核心' install.sh
+grep -q '\[ -s "\$_dest.tmp" \]' install.sh
+grep -q '全部脚本缓存刷新完成' install.sh
 ! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '(^|[[:space:]])clea$|show_banne$|_numbe$|_manual_add$|_new_ve$|_url_mirro$|_uptime_st$|_tmp_di$|tcp_congestion_control = bb$' hy2.sh ss.sh anytls.sh euservhy2.sh
 for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
@@ -110,7 +115,9 @@ for script in install.sh hy2.sh ss.sh anytls.sh euservhy2.sh; do
     fi
 done
 
-grep -q 'bash "$_tmp" "$_action"' install.sh
+grep -q '^run_local_script()' install.sh
+grep -q 'run_local_script "$_tmp" "$_action"' install.sh
+grep -q '使用本地缓存脚本' install.sh
 grep -q 'select_protocol_and_run "安装 / 重装协议" "install"' install.sh
 grep -q 'select_protocol_and_run "查看节点信息" "info"' install.sh
 grep -q 'select_protocol_and_run "生成二维码" "info"' install.sh
