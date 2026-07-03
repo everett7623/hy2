@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v2.0.9"
+EXPECTED_VERSION="v2.0.10"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -85,7 +85,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.9"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.10"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -99,6 +99,12 @@ grep -q '刷新 install.sh 主入口缓存' install.sh
 grep -q '更新 AnyTLS 核心' install.sh
 grep -q '\[ -s "\$_dest.tmp" \]' install.sh
 grep -q '全部脚本缓存刷新完成' install.sh
+grep -q '^SHORTCUT_BIN="/usr/local/bin/sb"' install.sh
+grep -q '^make_temp_file()' install.sh
+grep -q '^install_shortcut_command()' install.sh
+grep -q '_tmp=$(make_temp_file)' install.sh
+grep -q 'install_shortcut_command || true' install.sh
+grep -q '快捷命令: .*sb' install.sh
 ! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '(^|[[:space:]])clea$|show_banne$|_numbe$|_manual_add$|_new_ve$|_url_mirro$|_uptime_st$|_tmp_di$|tcp_congestion_control = bb$' hy2.sh ss.sh anytls.sh euservhy2.sh
 for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
@@ -147,5 +153,27 @@ grep -q 'install) do_install' euservhy2.sh
 grep -q 'info|node|export|qrcode) show_banner; show_node_info' euservhy2.sh
 
 bash tests/validate_anytls.sh
+
+tmp=$(mktemp)
+awk '
+    /cat > "\$SHORTCUT_BIN" <<'\''SB_EOF'\''/ {
+        capture=1
+        next
+    }
+    capture && /^SB_EOF$/ { exit }
+    capture { print }
+' install.sh > "$tmp"
+
+if [ ! -s "$tmp" ]; then
+    echo "Unable to extract sb shortcut wrapper" >&2
+    rm -f "$tmp"
+    exit 1
+fi
+
+bash -n "$tmp"
+grep -q 'CACHE_FILE="${CACHE_DIR}/install.sh"' "$tmp"
+grep -q 'exec bash "$_tmp" "$@"' "$tmp"
+grep -q 'exec bash "$CACHE_FILE" "$@"' "$tmp"
+rm -f "$tmp"
 
 echo "Static script validation passed."

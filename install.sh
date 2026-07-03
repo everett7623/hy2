@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.9
+# 版本：v2.0.10
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -60,6 +60,7 @@ ANYTLS_URL="${BASE_URL}/anytls.sh"
 EUSERV_URL="${BASE_URL}/euservhy2.sh"
 BACKUP_DIR="/root/singbox-tools/backup"
 SCRIPT_CACHE_DIR="/root/singbox-tools/scripts"
+SHORTCUT_BIN="/usr/local/bin/sb"
 
 # ============================================================
 # 基础工具
@@ -80,6 +81,66 @@ run_local_script() {
     else
         bash "$_file"
     fi
+}
+
+make_temp_file() {
+    local _dir="${TMPDIR:-/tmp}" _tmp _i=0
+    [ -d "$_dir" ] || _dir="/tmp"
+    _dir="${_dir%/}"
+    _tmp=$(mktemp "${_dir}/singbox_tools.XXXXXX" 2>/dev/null) && { printf '%s' "$_tmp"; return 0; }
+    while [ "$_i" -lt 10 ]; do
+        _tmp="${_dir}/singbox_tools.$$.$RANDOM"
+        ( set -C; : > "$_tmp" ) 2>/dev/null && { printf '%s' "$_tmp"; return 0; }
+        _i=$((_i + 1))
+    done
+    return 1
+}
+
+install_shortcut_command() {
+    mkdir -p "$SCRIPT_CACHE_DIR" "$(dirname "$SHORTCUT_BIN")" 2>/dev/null || return 1
+    cat > "$SHORTCUT_BIN" <<'SB_EOF' || return 1
+#!/bin/sh
+BASE_URL="https://raw.githubusercontent.com/everett7623/hy2/main"
+INSTALL_URL="${BASE_URL}/install.sh"
+CACHE_DIR="/root/singbox-tools/scripts"
+CACHE_FILE="${CACHE_DIR}/install.sh"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "错误: 请以 root 权限运行 sb"
+    exit 1
+fi
+
+mkdir -p "$CACHE_DIR" 2>/dev/null || true
+_tmp=""
+cleanup() {
+    [ -n "$_tmp" ] && rm -f "$_tmp"
+}
+trap cleanup EXIT INT TERM
+
+make_tmp() {
+    _dir="${TMPDIR:-/tmp}"
+    [ -d "$_dir" ] || _dir="/tmp"
+    _dir="${_dir%/}"
+    _tmp=$(mktemp "${_dir}/singbox_tools_sb.XXXXXX" 2>/dev/null) && return 0
+    _tmp="${_dir}/singbox_tools_sb.$$"
+    ( set -C; umask 077; : > "$_tmp" ) 2>/dev/null
+}
+
+if command -v curl >/dev/null 2>&1 && make_tmp && curl -fsSL --connect-timeout 15 --max-time 60 "$INSTALL_URL" -o "$_tmp" 2>/dev/null && [ -s "$_tmp" ] && bash -n "$_tmp" 2>/dev/null; then
+    cp "$_tmp" "$CACHE_FILE" 2>/dev/null && chmod +x "$CACHE_FILE" 2>/dev/null || true
+    exec bash "$_tmp" "$@"
+fi
+
+if [ -s "$CACHE_FILE" ] && bash -n "$CACHE_FILE" 2>/dev/null; then
+    echo "[WARN] 远程主入口不可用，使用本地缓存: $CACHE_FILE"
+    exec bash "$CACHE_FILE" "$@"
+fi
+
+echo "[ERROR] 无法加载 Sing-box Multi-Protocol Tools，请检查网络或重新运行:"
+echo "bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)"
+exit 1
+SB_EOF
+    chmod +x "$SHORTCUT_BIN"
 }
 
 install_curl_if_missing() {
@@ -117,7 +178,7 @@ run_script() {
     }
 
     local _tmp
-    _tmp=$(mktemp /tmp/singbox_tools_XXXXXX.sh 2>/dev/null) || {
+    _tmp=$(make_temp_file) || {
         echo -e "${RED}[ERROR] 无法创建临时文件${PLAIN}"
         sleep 2
         return 1
@@ -301,7 +362,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.9${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.10${PLAIN}"
     echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
@@ -541,7 +602,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.9" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.10" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] 备份完成: ${_file}${PLAIN}"
 }
 
@@ -716,6 +777,7 @@ main_menu() {
         show_header
         show_status_summary
         echo -e "  ${WHITE}${BOLD}主菜单${PLAIN}"
+        echo -e "  ${DIM}快捷命令: ${GREEN}sb${PLAIN}${DIM} 可直接打开本菜单${PLAIN}"
         echo ""
         echo -e "  [1] 安装 / 重装协议"
         echo -e "  [2] 查看节点信息"
@@ -752,4 +814,5 @@ main_menu() {
 }
 
 check_root
+install_shortcut_command || true
 main_menu

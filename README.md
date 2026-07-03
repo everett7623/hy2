@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.9（2026-07-03）
-> 本次更新：Mihomo / Clash 与 Loon 客户端输出统一改为单引号格式，并补充 YAML 单引号转义。
+> 当前版本：v2.0.10（2026-07-03）
+> 本次更新：新增 `sb` 快捷命令，并修复部分系统加载子脚本时无法创建临时文件的问题。
 
 ---
 
@@ -49,7 +49,14 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)
 ```
 
+首次运行后会自动安装快捷命令，之后可直接输入：
+
+```bash
+sb
+```
+
 > `install.sh` 是远程启动器。选择菜单项后，它会从 GitHub `main` 分支下载对应脚本并传入 `install` / `info` / `upgrade` / `uninstall` 等动作参数；因此需要 VPS 能访问 `raw.githubusercontent.com`。
+> `sb` 会优先拉取 GitHub `main` 的最新主入口；远程下载失败或内容异常时，会尝试使用已验证的本地缓存继续执行。
 > 更新菜单可刷新本地脚本缓存；远程下载失败或内容异常时，统一入口会尝试使用已验证的缓存脚本继续执行。
 
 ### Hysteria 2（主推）
