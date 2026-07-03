@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.2
+# 版本：v2.0.3
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -703,20 +703,14 @@ certificate_fingerprint_sha256() {
 }
 
 render_throne_uri() {
-    local _server="$1" _port="$2" _password="$3" _name="$4" _sni="$5" _pin="$6"
-    local _host _enc_password _enc_name _enc_sni _enc_pin
+    local _server="$1" _port="$2" _password="$3" _name="$4" _sni="$5"
+    local _host _enc_password _enc_name _enc_sni
     _host=$(format_ipv6_for_uri "$_server")
     _enc_password=$(uri_encode "$_password")
     _enc_name=$(uri_encode "$_name")
     _enc_sni=$(uri_encode "$_sni")
-    if [ -n "$_pin" ]; then
-        _enc_pin=$(uri_encode "$_pin")
-        printf 'anytls://%s@%s:%s?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=5&insecure=0&security=tls&sni=%s&tls_certificate_public_key_sha256=%s&fp=chrome#%s\n' \
-            "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_pin" "$_enc_name"
-    else
-        printf 'anytls://%s@%s:%s?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=5&insecure=1&security=tls&sni=%s&fp=chrome#%s\n' \
-            "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
-    fi
+    printf 'anytls://%s@%s:%s?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=0&insecure=1&security=tls&sni=%s&fp=chrome#%s\n' \
+        "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
 }
 
 # ============================================================
@@ -1204,19 +1198,11 @@ change_config() {
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
 render_singbox_client_config() {
-    local _server="$1" _port="$2" _password="$3" _sni="$5" _pin="${6:-}"
-    local _verification
-    local _safe_server _safe_password _safe_sni _safe_pin
+    local _server="$1" _port="$2" _password="$3" _sni="$5"
+    local _safe_server _safe_password _safe_sni
     _safe_server=$(shell_json_escape "$_server")
     _safe_password=$(shell_json_escape "$_password")
     _safe_sni=$(shell_json_escape "$_sni")
-    _safe_pin=$(shell_json_escape "$_pin")
-    if [ -n "$_pin" ]; then
-        _verification="\"insecure\": false,
-        \"certificate_public_key_sha256\": [\"${_safe_pin}\"],"
-    else
-        _verification="\"insecure\": true,"
-    fi
     cat <<CFG
 {
   "log": {
@@ -1237,7 +1223,6 @@ render_singbox_client_config() {
         "server": "223.5.5.5"
       }
     ],
-    "strategy": "ipv4_only",
     "cache_capacity": 4096,
     "final": "dns_proxy"
   },
@@ -1250,8 +1235,7 @@ render_singbox_client_config() {
         "fdfe:dcba:9876::1/126"
       ],
       "mtu": 1400,
-      "auto_route": true,
-      "strict_route": true
+      "auto_route": true
     }
   ],
   "outbounds": [
@@ -1263,11 +1247,11 @@ render_singbox_client_config() {
       "password": "${_safe_password}",
       "idle_session_check_interval": "30s",
       "idle_session_timeout": "30s",
-      "min_idle_session": 5,
+      "min_idle_session": 0,
       "tls": {
         "enabled": true,
         "server_name": "${_safe_sni}",
-        ${_verification}
+        "insecure": true,
         "utls": {
           "enabled": true,
           "fingerprint": "chrome"
@@ -1287,10 +1271,6 @@ render_singbox_client_config() {
       {
         "protocol": "dns",
         "action": "hijack-dns"
-      },
-      {
-        "ip_version": 6,
-        "action": "reject"
       },
       {
         "ip_is_private": true,
@@ -1364,11 +1344,11 @@ print_certificate_verification_status() {
     local _pin="${1:-}" _fingerprint="${2:-}"
     echo -e "${GREEN}证书校验:${PLAIN}"
     if [ -n "$_pin" ] || [ -n "$_fingerprint" ]; then
-        echo -e "${GREEN}[OK] 已为支持的客户端生成严格验证参数。${PLAIN}"
+        echo -e "${GREEN}[OK] 已读取证书信息。${PLAIN}"
         [ -n "$_pin" ] && echo "公钥 SHA256 Pin: ${_pin}"
         [ -n "$_fingerprint" ] && echo "证书 SHA256 指纹: ${_fingerprint}"
-        echo "严格模式: Throne / Shadowrocket / Mihomo / Surfboard / Sing-box"
-        echo "兼容模式: URI / Loon / 二维码使用 skip-cert-verify=true"
+        echo "严格模式: Mihomo / Surfboard 可使用证书指纹"
+        echo "兼容模式: URI / Throne / Shadowrocket / Loon / Sing-box 使用 skip-cert-verify=true"
     else
         echo -e "${YELLOW}[WARN] 未读取到证书 pin/指纹，客户端输出将使用 skip-cert-verify=true 兼容模式。${PLAIN}"
     fi
@@ -1775,7 +1755,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.2${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.3${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

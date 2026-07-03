@@ -7,8 +7,8 @@
 ![Shell Script](https://img.shields.io/badge/Language-Shell-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 
-> 当前版本：v2.0.2（2026-07-03）
-> 本次更新：修复 Sing-box / SFA TUN JSON 内部路由 tag 使用节点展示名导致 emoji 或隐藏字符破坏 JSON 的问题。
+> 当前版本：v2.0.3（2026-07-03）
+> 本次更新：精简 Sing-box / SFA TUN JSON，AnyTLS GUI URI 改为兼容模式，减少 Throne 导入失败和 YouTube 加载卡顿。
 
 ---
 
@@ -203,7 +203,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 脚本输出的 Sing-box 内容是完整 TUN 客户端配置，可保存为 `config.json` 或直接导入 Sing-box / SFA / SFM / SFI 等兼容客户端。
 
-配置内置 TUN 入站、DNS 代理解析、DNS 劫持、私网直连和 UDP 443/853 拒绝规则；Sing-box 内部出站 `tag`、DNS `detour` 与 `route.final` 使用固定 ASCII 名称（`hysteria2` / `shadowsocks` / `anytls`），避免节点展示名里的 emoji、隐藏字符或复制编码问题破坏 JSON。
+配置内置 TUN 入站、DNS 代理解析、DNS 劫持、DNS 缓存、私网直连和 UDP 443/853 拒绝规则；Sing-box 内部出站 `tag`、DNS `detour` 与 `route.final` 使用固定 ASCII 名称（`hysteria2` / `shadowsocks` / `anytls`），避免节点展示名里的 emoji、隐藏字符或复制编码问题破坏 JSON。AnyTLS 的 Throne / Shadowrocket / Sing-box 输出默认使用 `skip-cert-verify=true` 兼容模式，证书指纹仅在 Mihomo / Surfboard 输出中自动启用。
 
 ---
 

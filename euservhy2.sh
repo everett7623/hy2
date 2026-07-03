@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.2
+#  版本: v2.0.3
 #  更新时间: 2026-07-03
 # ============================================================
 
@@ -61,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.2"
+SCRIPT_VERSION="2.0.3"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -845,7 +845,6 @@ show_node_info() {
         "server": "223.5.5.5"
       }
     ],
-    "strategy": "ipv4_only",
     "cache_capacity": 4096,
     "final": "dns_proxy"
   },
@@ -858,8 +857,7 @@ show_node_info() {
         "fdfe:dcba:9876::1/126"
       ],
       "mtu": 1400,
-      "auto_route": true,
-      "strict_route": true
+      "auto_route": true
     }
   ],
   "outbounds": [
@@ -888,10 +886,6 @@ show_node_info() {
       {
         "protocol": "dns",
         "action": "hijack-dns"
-      },
-      {
-        "ip_version": 6,
-        "action": "reject"
       },
       {
         "ip_is_private": true,

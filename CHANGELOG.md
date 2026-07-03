@@ -4,6 +4,14 @@
 
 ---
 
+## v2.0.3 (2026-07-03)
+
+- 精简四协议 Sing-box / SFA TUN JSON：移除 `ipv4_only`、IPv6 拒绝和 `strict_route`，保留 DNS 缓存、DNS 劫持、私网直连和 UDP 443/853 拒绝规则。
+- AnyTLS 的 Throne / Shadowrocket / Sing-box 输出改为兼容模式，不再自动写入 `certificate_public_key_sha256`，避免 Throne 导入时报 base64 解析错误。
+- AnyTLS 客户端输出显式使用 `min_idle_session=0`，减少 GUI 客户端预热空闲连接导致的网络切换感和加载卡顿。
+
+---
+
 ## v2.0.2 (2026-07-03)
 
 - 修复 Sing-box JSON 内部出站 `tag`、DNS `detour`、`route.final` 使用节点展示名导致 emoji 或隐藏字符破坏 JSON 的问题，统一改为固定 ASCII tag。

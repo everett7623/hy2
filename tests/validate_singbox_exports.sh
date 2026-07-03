@@ -98,7 +98,7 @@ for filename, outbound_type in expected_types.items():
     assert direct_dns == {
         "type": "udp", "tag": "dns_direct", "server": "223.5.5.5",
     }
-    assert config["dns"]["strategy"] == "ipv4_only"
+    assert "strategy" not in config["dns"]
     assert config["dns"]["cache_capacity"] == 4096
     assert config["dns"]["final"] == "dns_proxy"
     assert config["inbounds"][0] == {
@@ -107,20 +107,21 @@ for filename, outbound_type in expected_types.items():
         "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
         "mtu": 1400,
         "auto_route": True,
-        "strict_route": True,
     }
     rules = config["route"]["rules"]
     assert {"action": "sniff"} in rules
     assert {"protocol": "dns", "action": "hijack-dns"} in rules
-    assert {"ip_version": 6, "action": "reject"} in rules
+    assert {"ip_version": 6, "action": "reject"} not in rules
     assert {"ip_is_private": True, "action": "route", "outbound": "direct"} in rules
     assert {"port": [443, 853], "network": "udp", "action": "reject"} in rules
     assert config["route"]["default_domain_resolver"] == "dns_direct"
     assert config["route"]["final"] == expected_tags[filename]
 
 anytls = json.loads((root / "anytls.json").read_text(encoding="utf-8"))
+assert anytls["outbounds"][0]["min_idle_session"] == 0
 tls = anytls["outbounds"][0]["tls"]
-assert tls["certificate_public_key_sha256"] == ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]
+assert tls["insecure"] is True
+assert "certificate_public_key_sha256" not in tls
 assert tls["server_name"] == "addons.mozilla.org"
 assert tls["utls"] == {"enabled": True, "fingerprint": "chrome"}
 

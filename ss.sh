@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.0.2
+# 版本：v2.0.3
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -869,7 +869,6 @@ export_singbox_ss() {
         "server": "223.5.5.5"
       }
     ],
-    "strategy": "ipv4_only",
     "cache_capacity": 4096,
     "final": "dns_proxy"
   },
@@ -882,8 +881,7 @@ export_singbox_ss() {
         "fdfe:dcba:9876::1/126"
       ],
       "mtu": 1400,
-      "auto_route": true,
-      "strict_route": true
+      "auto_route": true
     }
   ],
   "outbounds": [
@@ -908,10 +906,6 @@ export_singbox_ss() {
       {
         "protocol": "dns",
         "action": "hijack-dns"
-      },
-      {
-        "ip_version": 6,
-        "action": "reject"
       },
       {
         "ip_is_private": true,
@@ -1598,7 +1592,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.2${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.3${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

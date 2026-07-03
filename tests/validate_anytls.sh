@@ -50,19 +50,20 @@ LISTEN_PORT=8443; BIND_FAMILY=v6
 
 PASSWORD=Abcdef12; SERVER_NAME=www.example.com
 shadowrocket_uri=$(export_shadowrocket_anytls 192.0.2.1 8443 'AnyTLS Test' 'TestPin+/=')
-[ "$shadowrocket_uri" = "anytls://Abcdef12@192.0.2.1:8443?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=5&insecure=0&security=tls&sni=www.example.com&tls_certificate_public_key_sha256=TestPin%2B%2F%3D&fp=chrome#AnyTLS%20Test" ]
+[ "$shadowrocket_uri" = "anytls://Abcdef12@192.0.2.1:8443?idle_session_check_interval=30s&idle_session_timeout=30s&min_idle_session=0&insecure=1&security=tls&sni=www.example.com&fp=chrome#AnyTLS%20Test" ]
 certificate_public_key_sha256() { printf 'TestPin+/='; }
 certificate_fingerprint_sha256() { printf 'AA:BB:CC:DD'; }
 node_output=$(show_node 192.0.2.1 8443 v4)
 echo "$node_output" | grep -q 'URI 分享链接'
 echo "$node_output" | grep -q 'Throne URI'
-echo "$node_output" | grep -q 'tls_certificate_public_key_sha256=TestPin%2B%2F%3D'
+! echo "$node_output" | grep -q 'tls_certificate_public_key_sha256='
 echo "$node_output" | grep -q 'type: anytls, server: 192.0.2.1, port: 8443'
 echo "$node_output" | grep -q 'skip-cert-verify: false, fingerprint: "AA:BB:CC:DD"'
 echo "$node_output" | grep -q '证书校验'
 echo "$node_output" | grep -q '公钥 SHA256 Pin: TestPin+/='
 echo "$node_output" | grep -q '证书 SHA256 指纹: AA:BB:CC:DD'
-echo "$node_output" | grep -q '严格模式: Throne / Shadowrocket / Mihomo / Surfboard / Sing-box'
+echo "$node_output" | grep -q '严格模式: Mihomo / Surfboard 可使用证书指纹'
+echo "$node_output" | grep -q '兼容模式: URI / Throne / Shadowrocket / Loon / Sing-box 使用 skip-cert-verify=true'
 ! echo "$node_output" | grep -q '当前模式: skip-cert-verify=true'
 echo "$node_output" | grep -q 'Sing-box'
 echo "$node_output" | grep -q '"outbounds"'
@@ -87,7 +88,7 @@ echo "$client_config" | grep -q '"outbounds"'
 echo "$client_config" | grep -q '"type": "anytls"'
 echo "$client_config" | grep -q '"tag": "anytls"'
 echo "$client_config" | grep -q '"detour": "anytls"'
-echo "$client_config" | grep -q '"min_idle_session": 5'
+echo "$client_config" | grep -q '"min_idle_session": 0'
 echo "$client_config" | grep -q '"dns"'
 echo "$client_config" | grep -q '"inbounds"'
 echo "$client_config" | grep -q '"type": "tun"'
@@ -96,7 +97,10 @@ echo "$client_config" | grep -q '"route"'
 echo "$client_config" | grep -q '"final": "anytls"'
 echo "$client_config" | grep -q '"port": \[443, 853\]'
 echo "$client_config" | grep -q '"action": "reject"'
-echo "$client_config" | grep -q '"certificate_public_key_sha256": \["TestPin+/="\]'
+! echo "$client_config" | grep -q '"certificate_public_key_sha256"'
+! echo "$client_config" | grep -q '"strategy": "ipv4_only"'
+! echo "$client_config" | grep -q '"ip_version": 6'
+! echo "$client_config" | grep -q '"strict_route": true'
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
