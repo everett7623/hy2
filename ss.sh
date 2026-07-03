@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.0.5
+# 版本：v2.0.6
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1493,7 +1493,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.5${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.6${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -1533,5 +1533,17 @@ if [ "${EXPORT_LIB_ONLY:-0}" != "1" ]; then
     check_root
     check_sys
     detect_init
-    main_menu
+    case "${1:-menu}" in
+        install) install_ss ;;
+        info|node|export|qrcode) show_config ;;
+        manage|service|config) manage_ss ;;
+        upgrade|update) upgrade_ss ;;
+        uninstall|remove) uninstall_ss ;;
+        menu|"") main_menu ;;
+        *)
+            echo -e "${RED}未知命令: ${1}${PLAIN}"
+            echo "可用命令: install | info | manage | upgrade | uninstall"
+            exit 1
+            ;;
+    esac
 fi

@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.5（2026-07-03）
-> 本次更新：调整客户端输出顺序，将 Loon 配置移动到 Shadowrocket 配置后面。
+> 当前版本：v2.0.6（2026-07-03）
+> 本次更新：统一入口可直接触发子脚本安装、节点信息、升级和卸载流程，减少二级菜单跳转。
 
 ---
 
@@ -43,13 +43,13 @@
 
 ### 统一入口（推荐）
 
-统一入口会检测当前网络和服务状态，并提供 AnyTLS、Hysteria 2、Shadowsocks 与 EUserv IPv6 专用脚本的分层管理菜单：
+统一入口会检测当前网络和服务状态，并直接调度 AnyTLS、Hysteria 2、Shadowsocks 与 EUserv IPv6 专用脚本的安装、节点信息、导出、升级和卸载流程：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)
 ```
 
-> `install.sh` 是远程启动器。选择菜单项后，它会再次从 GitHub `main` 分支下载对应脚本，因此需要 VPS 能访问 `raw.githubusercontent.com`。
+> `install.sh` 是远程启动器。选择菜单项后，它会从 GitHub `main` 分支下载对应脚本并传入 `install` / `info` / `upgrade` / `uninstall` 等动作参数；因此需要 VPS 能访问 `raw.githubusercontent.com`。
 
 ### Hysteria 2（主推）
 
@@ -285,7 +285,7 @@ bash hy2.sh
 
 | 文件 | 用途 |
 | --- | --- |
-| `install.sh` | 远程统一入口，从 GitHub `main` 下载并执行子脚本 |
+| `install.sh` | 远程统一入口，从 GitHub `main` 下载子脚本并直接调度对应动作 |
 | `hy2.sh` | Hysteria 2 安装与管理 |
 | `ss.sh` | Shadowsocks-Rust 安装与管理 |
 | `anytls.sh` | 基于 sing-box 原生入站的 AnyTLS 安装与管理 |

@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v2.0.5"
+EXPECTED_VERSION="v2.0.6"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -85,7 +85,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.5"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.6"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -109,6 +109,21 @@ for script in install.sh hy2.sh ss.sh anytls.sh euservhy2.sh; do
         exit 1
     fi
 done
+
+grep -q 'bash "$_tmp" "$_action"' install.sh
+grep -q 'select_protocol_and_run "安装 / 重装协议" "install"' install.sh
+grep -q 'select_protocol_and_run "查看节点信息" "info"' install.sh
+grep -q 'select_protocol_and_run "生成二维码" "info"' install.sh
+grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "upgrade"' install.sh
+grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "uninstall"' install.sh
+grep -q 'install) install_hy2' hy2.sh
+grep -q 'info|node|export|qrcode) show_config' hy2.sh
+grep -q 'install) install_ss' ss.sh
+grep -q 'info|node|export|qrcode) show_config' ss.sh
+grep -q 'install) install_anytls' anytls.sh
+grep -q 'info|node|export|qrcode) show_config' anytls.sh
+grep -q 'install) do_install' euservhy2.sh
+grep -q 'info|node|export|qrcode) show_banner; show_node_info' euservhy2.sh
 
 bash tests/validate_anytls.sh
 

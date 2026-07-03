@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.5
+# 版本：v2.0.6
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -90,10 +90,14 @@ install_curl_if_missing() {
 }
 
 run_script() {
-    local _name="$1" _url="$2"
+    local _name="$1" _url="$2" _action="${3:-}"
     echo ""
     echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
-    echo -e "正在加载 ${BOLD}${_name}${PLAIN} ..."
+    if [ -n "$_action" ]; then
+        echo -e "正在加载 ${BOLD}${_name}${PLAIN} ${DIM}(${_action})${PLAIN} ..."
+    else
+        echo -e "正在加载 ${BOLD}${_name}${PLAIN} ..."
+    fi
     echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
 
     install_curl_if_missing || {
@@ -116,7 +120,11 @@ run_script() {
             return 1
         fi
         chmod +x "$_tmp"
-        bash "$_tmp"
+        if [ -n "$_action" ]; then
+            bash "$_tmp" "$_action"
+        else
+            bash "$_tmp"
+        fi
         rm -f "$_tmp"
     else
         rm -f "$_tmp"
@@ -277,7 +285,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.5${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.6${PLAIN}"
     echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
@@ -303,7 +311,7 @@ show_status_summary() {
 }
 
 select_protocol_and_run() {
-    local _title="$1"
+    local _title="$1" _action="${2:-}"
     while true; do
         show_header
         echo -e "${WHITE}${BOLD}${_title}${PLAIN}"
@@ -316,10 +324,10 @@ select_protocol_and_run() {
         echo ""
         read -r -p "  请选择协议 [0-4]: " p
         case "$p" in
-            1) run_script "AnyTLS" "$ANYTLS_URL"; return ;;
-            2) run_script "Hysteria2" "$HY2_URL"; return ;;
-            3) run_script "Shadowsocks" "$SS_URL"; return ;;
-            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL"; return ;;
+            1) run_script "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
+            2) run_script "Hysteria2" "$HY2_URL" "$_action"; return ;;
+            3) run_script "Shadowsocks" "$SS_URL" "$_action"; return ;;
+            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -327,11 +335,11 @@ select_protocol_and_run() {
 }
 
 install_menu() {
-    select_protocol_and_run "安装 / 重装协议"
+    select_protocol_and_run "安装 / 重装协议" "install"
 }
 
 node_info_menu() {
-    select_protocol_and_run "查看节点信息"
+    select_protocol_and_run "查看节点信息" "info"
 }
 
 export_config_menu() {
@@ -351,7 +359,7 @@ export_config_menu() {
         echo ""
         read -r -p "  请选择导出格式 [0-7]: " fmt
         case "$fmt" in
-            1|2|3|4|5|6|7) select_protocol_and_run "选择协议以导出配置"; return ;;
+            1|2|3|4|5|6|7) select_protocol_and_run "选择协议以导出配置" "info"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -413,7 +421,7 @@ protocol_service_menu() {
                 ;;
             5) service_logs "$_service" "$_log"; pause_return ;;
             6) list_listening_ports; pause_return ;;
-            7) echo -e "${YELLOW}[WARN] 修改配置前会由对应协议脚本自动备份并回滚失败变更。${PLAIN}"; sleep 1; run_script "$_script_name" "$_script_url" ;;
+            7) echo -e "${YELLOW}[WARN] 修改配置前会由对应协议脚本自动备份并回滚失败变更。${PLAIN}"; sleep 1; run_script "$_script_name" "$_script_url" "manage" ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -456,7 +464,7 @@ service_management_menu() {
 }
 
 qrcode_menu() {
-    select_protocol_and_run "生成二维码"
+    select_protocol_and_run "生成二维码" "info"
 }
 
 system_detect() {
@@ -517,7 +525,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.5" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.6" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] 备份完成: ${_file}${PLAIN}"
 }
 
@@ -608,9 +616,9 @@ update_menu() {
                 fi
                 pause_return
                 ;;
-            2) backup_config || true; run_script "AnyTLS" "$ANYTLS_URL" ;;
-            3) backup_config || true; run_script "Hysteria2" "$HY2_URL" ;;
-            4) backup_config || true; run_script "Shadowsocks" "$SS_URL" ;;
+            2) backup_config || true; run_script "AnyTLS" "$ANYTLS_URL" "upgrade" ;;
+            3) backup_config || true; run_script "Hysteria2" "$HY2_URL" "upgrade" ;;
+            4) backup_config || true; run_script "Shadowsocks" "$SS_URL" "upgrade" ;;
             5)
                 download_script_to_cache install.sh "$INSTALL_URL"
                 download_script_to_cache anytls.sh "$ANYTLS_URL"
@@ -619,7 +627,7 @@ update_menu() {
                 download_script_to_cache euservhy2.sh "$EUSERV_URL"
                 pause_return
                 ;;
-            6) backup_config || true; run_script "AnyTLS" "$ANYTLS_URL"; run_script "Hysteria2" "$HY2_URL"; run_script "Shadowsocks" "$SS_URL" ;;
+            6) backup_config || true; run_script "AnyTLS" "$ANYTLS_URL" "upgrade"; run_script "Hysteria2" "$HY2_URL" "upgrade"; run_script "Shadowsocks" "$SS_URL" "upgrade" ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -642,11 +650,11 @@ uninstall_menu() {
         echo ""
         read -r -p "  请选择 [0-7]: " opt
         case "$opt" in
-            1) run_script "AnyTLS" "$ANYTLS_URL" ;;
-            2) run_script "Hysteria2" "$HY2_URL" ;;
-            3) run_script "Shadowsocks" "$SS_URL" ;;
-            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" ;;
-            5) read -r -p "确认加载所有协议脚本执行卸载？[y/N]: " c; case "$c" in [yY]) run_script "AnyTLS" "$ANYTLS_URL"; run_script "Hysteria2" "$HY2_URL"; run_script "Shadowsocks" "$SS_URL"; run_script "EUserv IPv6 HY2" "$EUSERV_URL" ;; *) echo "已取消。" ;; esac ;;
+            1) run_script "AnyTLS" "$ANYTLS_URL" "uninstall" ;;
+            2) run_script "Hysteria2" "$HY2_URL" "uninstall" ;;
+            3) run_script "Shadowsocks" "$SS_URL" "uninstall" ;;
+            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "uninstall" ;;
+            5) read -r -p "确认加载所有协议脚本执行卸载？[y/N]: " c; case "$c" in [yY]) run_script "AnyTLS" "$ANYTLS_URL" "uninstall"; run_script "Hysteria2" "$HY2_URL" "uninstall"; run_script "Shadowsocks" "$SS_URL" "uninstall"; run_script "EUserv IPv6 HY2" "$EUSERV_URL" "uninstall" ;; *) echo "已取消。" ;; esac ;;
             6)
                 echo -e "${RED}这会删除 /etc/sing-box、/etc/hysteria、/etc/shadowsocks-rust 和相关服务文件。${PLAIN}"
                 read -r -p "请输入 DELETE-CONFIG 确认: " c

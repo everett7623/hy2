@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.5
+# 版本：v2.0.6
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1623,7 +1623,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.5${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.6${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
@@ -1677,4 +1677,16 @@ fi
 check_root
 check_sys
 detect_init
-main_menu
+case "${1:-menu}" in
+    install) install_anytls ;;
+    info|node|export|qrcode) show_config ;;
+    manage|service|config) manage_anytls ;;
+    upgrade|update) upgrade_anytls ;;
+    uninstall|remove) uninstall_anytls ;;
+    menu|"") main_menu ;;
+    *)
+        echo -e "${RED}未知命令: ${1}${PLAIN}"
+        echo "可用命令: install | info | manage | upgrade | uninstall"
+        exit 1
+        ;;
+esac

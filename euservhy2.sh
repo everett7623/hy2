@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.5
+#  版本: v2.0.6
 #  更新时间: 2026-07-03
 # ============================================================
 
@@ -61,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.5"
+SCRIPT_VERSION="2.0.6"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -1395,6 +1395,23 @@ main() {
     if [[ "$(uname -r)" == *"OpenVZ"* ]] || [ -f /proc/vz/version ]; then
         warn "检测到 OpenVZ 容器环境，UDP 可能受限"
     fi
+
+    local cmd
+    cmd=$(echo "${1:-menu}" | tr '[:upper:]' '[:lower:]')
+    case "$cmd" in
+        install) do_install; exit $? ;;
+        info|node|export|qrcode) show_banner; show_node_info; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        manage|service|config) manage_service; exit $? ;;
+        upgrade|update) do_upgrade; exit $? ;;
+        uninstall|remove) do_uninstall; exit $? ;;
+        tools) system_tools; exit $? ;;
+        menu|"") ;;
+        *)
+            warn "未知命令: ${1}"
+            echo "可用命令: install | info | manage | upgrade | uninstall"
+            exit 1
+            ;;
+    esac
 
     while true; do
         show_menu
