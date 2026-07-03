@@ -1,49 +1,36 @@
 # 🚀 Sing-box Multi-Protocol Tools
 
-> 功能闭环 · 极低占用 · 全系统兼容 · 交互友好
-> 无需域名，无需复杂配置，一键开启高速且安全的网络体验。
+> 多协议部署 · 节点导出 · 服务管理 · 系统检测 · 备份恢复
+> 面向 Linux VPS 的轻量一键脚本，适合快速搭建 Hysteria 2、Shadowsocks、AnyTLS 与 EUserv IPv6-only 节点。
 
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/everett7623/hy2?color=blue&label=Latest%20Version)
+![GitHub release](https://img.shields.io/github/v/release/everett7623/hy2?color=blue&label=Latest%20Version)
 ![Shell Script](https://img.shields.io/badge/Language-Shell-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
 > 当前版本：v2.0.14（2026-07-04）
-> 本次更新：移除 VPS 运行时自动回滚包，安装、升级、卸载不再自动写入 `/root/singbox-tools/backup`。
+> 本次更新：移除 VPS 运行时自动回滚包；新增手动标准 `bbr + fq` 优化入口；README 结构精简优化。
 
 ---
 
-## 📖 项目简介
+## ✨ 功能概览
 
-这是一个基于 **sing-box** 和主流代理协议的 Linux VPS 一键安装、管理、导出、二维码、诊断、备份与恢复工具集。
-
-| 协议 | 核心优势 | 适用场景 |
-| --- | --- | --- |
-| **Hysteria 2** | UDP 超速 · 自签证书 · 无需域名 | 主力节点，绝大多数网络环境 |
-| **Shadowsocks** | 支持 SS-2022 · musl 静态编译 · 全平台兼容 | 备用节点，IPv6 / 双栈环境尤佳 |
-| **AnyTLS** | sing-box 原生入站 · TCP/TLS · 自签证书 | 需要 TCP/TLS 传输的轻量节点 |
-| **EUserv Hysteria 2** | IPv6-only 专属 · 自动适配 · Warp 集成 | EUserv 免费德鸡专用 |
-
----
-
-## ✨ 核心特性
-
-- **⚡️ 一键部署**：支持 `curl | bash` 极速安装，自动识别系统包管理器，全自动穿透系统防火墙（兼容 firewalld / ufw / iptables）。
-- **🪶 轻量无依赖**：彻底移除 `jq` 等外部依赖，纯 Bash 实现 URI 转义，极低配置 VPS 也能稳定运行。
-- **🛠️ 终极系统兼容**：Shadowsocks 端强制采用 `musl` 静态编译，彻底免疫 CentOS 8 / Rocky 8 等老旧系统的 GLIBC 报错问题。
-- **🌐 NAT 与双栈支持**：自动检测 IPv4 / IPv6 网络状态，完美支持 NAT 机器（内外端口映射）及纯 IPv6 环境。
-- **🔐 Hysteria 2 免域名**：采用自签证书 + SNI 伪装 `amd.com`，自动配置 `skip-cert-verify`，零门槛开箱即用。
-- **🔐 SS 双协议自由选**：安装时可选择 100% 连通率的经典 `aes-256-gcm`，或强抗主动探测的 `2022-blake3-aes-256-gcm`（自动生成 32 字节规范密钥并尝试同步系统时间）。
-- **🔧 服务器工具内置**：手动开启标准 `bbr + fq`、定时自动更新（每天 03:00）、系统信息总览，开箱即用。
-- **📱 全客户端节点输出**：自动生成适配 Loon / Surfboard / Clash Meta / Stash / Shadowrocket / v2rayN / Quantumult X 等主流客户端的完整配置代码与二维码链接。
+| 能力 | 说明 |
+| --- | --- |
+| 统一入口 | 一个 `install.sh` 管理 AnyTLS、Hysteria 2、Shadowsocks、EUserv HY2 |
+| 一键部署 | 自动识别系统、架构、IPv4 / IPv6、NAT 端口、防火墙环境 |
+| 节点导出 | 输出 URI、Mihomo / Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码 |
+| 服务管理 | 查看状态、启动、停止、重启、日志、监听端口、修改配置 |
+| 更新升级 | 区分脚本缓存刷新与核心二进制升级，避免误操作 |
+| 手动备份 | VPS 配置备份 / 恢复由用户手动选择，不在安装时自动写入回滚包 |
+| BBR 优化 | 默认只展示状态；需要时手动开启标准 `bbr + fq` |
+| 低依赖 | 纯 Bash 管理逻辑，不依赖 `jq`；Shadowsocks 使用 musl 静态编译 |
 
 ---
 
 ## 🚀 快速开始
 
 ### 统一入口（推荐）
-
-统一入口会检测当前网络和服务状态，并直接调度 AnyTLS、Hysteria 2、Shadowsocks 与 EUserv IPv6 专用脚本的安装、节点信息、导出、升级和卸载流程：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)
@@ -55,95 +42,33 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install
 sb
 ```
 
-> `install.sh` 是远程启动器。选择菜单项后，它会从 GitHub `main` 分支下载对应脚本并传入 `install` / `info` / `upgrade` / `uninstall` 等动作参数；因此需要 VPS 能访问 `raw.githubusercontent.com`。
-> `sb` 会优先拉取 GitHub `main` 的最新主入口；远程下载失败或内容异常时，会尝试使用已验证的本地缓存继续执行。
-> 更新菜单可刷新本地脚本缓存；远程下载失败或内容异常时，统一入口会尝试使用已验证的缓存脚本继续执行。
+统一入口会按需下载对应协议脚本，并直接传入 `install`、`info`、`manage`、`upgrade`、`uninstall` 等动作参数。VPS 需要能访问：
 
-#### GitHub raw 缓存排查（可选）
+```text
+raw.githubusercontent.com
+api.github.com
+```
 
-普通用户优先使用上面的简洁命令。若项目刚更新后 VPS 上仍显示旧版本，通常是 GitHub raw 边缘缓存尚未刷新；测试或排障时可临时使用带 `nocache` 的命令强制拉取最新内容：
+### GitHub raw 缓存排查（可选）
+
+普通用户优先使用上面的简洁命令。项目刚更新后，如果 VPS 仍显示旧版本，多半是 GitHub raw 边缘缓存尚未刷新。测试或排障时可临时使用：
 
 ```bash
 bash <(curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/everett7623/hy2/main/install.sh?nocache=$(date +%s)")
 ```
 
-### Hysteria 2（主推）
-
-适用于绝大多数网络环境，UDP 协议极速占满带宽，抗封锁能力强。
-
-```bash
-# 稳定版
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
-```
-
-- 默认端口：`18888`（支持 NAT 自定义外网端口）
-- 免域名机制：SNI 伪装 `amd.com` + 自动配置 `skip-cert-verify`
-
-### Shadowsocks（保底备用）
-
-建议在 **IPv6 单栈**或**双栈**网络环境下使用。纯 IPv4 极易被封锁，脚本内附风险提示拦截。
-
-```bash
-# 稳定版
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
-```
-
-- 默认端口：`28888`（支持 NAT 自定义外网端口）
-- 加密选项：`aes-256-gcm`（经典高兼容）或 `2022-blake3-aes-256-gcm`（SS-2022 高安全）
-
-> **⚠️ SS-2022 特别提醒**：SS-2022 协议具有严格的时间防重放机制。若配置无误但仍提示超时，请务必确保手机 / 电脑本地时间与世界标准时间分秒一致。
-
-### AnyTLS（sing-box 原生入站）
-
-脚本下载 sing-box 稳定版，通过原生 AnyTLS inbound 提供服务；Shell 负责生成 JSON、自签证书、服务 wrapper 和分享链接，运行时不依赖 Python。
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh)
-```
-
-- 默认端口：`38888`
-- 支持架构：Linux `amd64` / `arm64` / `armv7` / `386` / `s390x`
-- 支持环境：systemd、OpenRC、无 init；IPv4、IPv6、双栈
-- 内置配置/证书/监听诊断，重装和升级失败自动回滚，并安全保留共享 sing-box 配置
-- sing-box 版本获取支持 API、跳转页、镜像页与内置稳定版兜底，降低 GitHub 网络异常导致的安装失败
-- 输出 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码
-
-### EUserv 免费德鸡专用（IPv6-only）
-
-专为 **EUserv 免费 IPv6-only VPS** 深度定制，自动处理纯 IPv6 环境下的证书、防火墙、节点生成等所有细节，并集成 Warp 一键添加 IPv4 出口。
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
-```
-
-### EUserv 专属特性
-
-| 特性 | 说明 |
-| --- | --- |
-| **NAT64 DNS 自动切换** | 安装时临时启用 NAT64 DNS 拉取 IPv4 资源，完成后自动恢复原始配置 |
-| **多下载源自动降级** | 官方 CDN → 官方安装脚本 → IPv6 直连 GitHub → NAT64+GitHub → ghproxy 镜像，逐级兜底 |
-| **ELF 格式预检** | 下载完成后校验二进制有效性，防止损坏文件执行导致 Segfault |
-| **WARP 状态实时检测** | 主菜单每次刷新均实时探测 IPv4 可达性，装完 WARP 立即反映 |
-| **节点名动态读取** | 节点名称取自服务器 `hostname`，多机管理时一目了然 |
-| **ip6tables 优先** | 防火墙配置优先使用 ip6tables，确保 UDP 端口在纯 IPv6 环境下正确放行 |
-| **旧版 OpenSSL 兼容** | 自签证书生成自动检测 OpenSSL 版本，Debian 10 等老系统无 `-addext` 问题 |
-
-### 使用前提
-
-| 条件 | 要求 |
-| --- | --- |
-| 系统 | Debian 10/11/12（EUserv 默认镜像） |
-| 权限 | root |
-| 网络 | EUserv IPv6-only VPS（全局 IPv6 地址可达） |
-| 客户端访问 | 需本地支持 IPv6（国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 须先在客户端侧安装 WARP） |
-
-> **⚠️ 纯 IPv4 客户端用户**：若本地网络无 IPv6，可在脚本中选择选项 **8** 为服务器安装 WARP 后，将节点转换为通过 WARP IPv4 中转访问——但此方案延迟较高，建议优先解决客户端 IPv6 连接问题。
-
 ---
 
-## 🔄 日常管理
+## 🧭 协议怎么选
 
-重新运行对应脚本即可进入管理菜单，不会自动覆盖现有配置：
+| 协议 | 推荐场景 | 默认端口 | 备注 |
+| --- | --- | --- | --- |
+| Hysteria 2 | 主力节点，大多数 IPv4 / 双栈 VPS | `18888` | UDP，高速；自签证书 + SNI 伪装，无需域名 |
+| Shadowsocks | 备用节点，IPv6 / 双栈环境 | `28888` | 支持经典 AEAD 与 SS-2022；纯 IPv4 环境风险较高 |
+| AnyTLS | 需要 TCP / TLS 传输的轻量节点 | `38888` | 基于 sing-box 原生 AnyTLS inbound |
+| EUserv HY2 | EUserv 免费 IPv6-only VPS | 自定义 | 专门处理 IPv6-only、NAT64、WARP 辅助出口 |
+
+对应独立脚本也可以单独运行：
 
 ```bash
 # Hysteria 2
@@ -155,115 +80,71 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 # AnyTLS
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh)
 
-# EUserv IPv6 专用 Hysteria 2
+# EUserv IPv6-only HY2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
 ```
 
-管理菜单提供升级、修改配置、服务启停、查看日志和卸载等功能。升级二进制时脚本会备份旧版本，启动失败则尝试回滚。
-统一入口的“系统检测 / BBR 优化”默认只展示状态，不会自动修改系统 TCP 参数；需要时可手动开启标准 `bbr + fq`。
-统一入口的“更新 / 升级中心”会区分脚本缓存刷新与核心二进制升级；“卸载 / 清理中心”会在危险动作前要求确认。如需 VPS 配置备份，请先到“备份 / 恢复”中手动创建。
-
-自动更新默认不会开启，需要在“服务器工具”中手动启用；启用后由 cron 每天 `03:00` 检查上游版本。
-
 ---
 
-## 📋 功能菜单对照
+## 🖥️ 主菜单说明
 
-### Hysteria 2 菜单
+统一入口将功能分成两类：
 
-```
- 1. 安装 Hysteria2
- 2. 管理 Hysteria2
- 3. 升级 Hysteria2
- 4. 卸载 Hysteria2
- 5. 服务器工具  (BBR / 自动更新 / 系统信息)
-```
+| 分组 | 功能 |
+| --- | --- |
+| 部署与分享 | 安装 / 重装、查看节点信息、导出客户端配置、生成二维码 |
+| 运维与安全 | 服务管理、系统检测 / BBR 优化、备份 / 恢复、更新 / 升级、卸载 / 清理 |
 
-### Shadowsocks 菜单
+注意：
 
-```
- 1. 安装 Shadowsocks
- 2. 管理 Shadowsocks
- 3. 升级 Shadowsocks
- 4. 卸载 Shadowsocks
- 5. 服务器工具  (BBR / 自动更新 / 系统信息)
-```
-
-### EUserv Hysteria 2 菜单
-
-```
-━━━ Hysteria2 管理 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  1. 安装 / 重装 Hysteria2
-  2. 查看节点信息 / 链接
-  3. 修改配置（端口 / 密码 / 伪装域名）
-  4. 升级 Hysteria2
-  5. 服务管理（启动 / 停止 / 重启）
-  6. 查看运行日志
-  7. 卸载 Hysteria2
-
-━━━ 网络增强 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  8. WARP（F大 fscarmen 脚本）— IPv6-only 补全 IPv4
-  9. 系统工具（BBR / 系统信息 / 网络测试）
-```
+- 安装、升级、卸载不会自动在 VPS 上生成回滚包。
+- 如需 VPS 配置备份，请先进入“备份 / 恢复”手动创建。
+- BBR 默认不启用，只展示当前状态；需要时手动开启标准 `bbr + fq`。
+- `sb` 会优先拉取 GitHub `main` 的最新主入口；远程失败时会尝试使用本地缓存继续运行。
 
 ---
 
 ## 📱 客户端兼容性
 
-| 平台 | 推荐客户端 | Hysteria 2 | Shadowsocks | AnyTLS |
-| --- | --- | :---: | :---: | :---: |
-| iOS | Shadowrocket / Loon / Stash | ✅ | ✅ | ✅ |
-| iOS | Quantumult X | ❌ 暂不支持 | ✅ | ❌ 暂不支持 |
-| Android | v2rayNG / NekoBox / Surfboard | ✅ | ✅ | ✅ |
-| macOS / Windows | Clash Verge (Meta) / Clash Nyanpasu | ✅ | ✅ | ✅ |
-| Windows | v2rayN | ✅ | ✅ | 视客户端版本 |
+| 客户端 / 平台 | Hysteria 2 | Shadowsocks | AnyTLS |
+| --- | :---: | :---: | :---: |
+| Shadowrocket | ✅ | ✅ | ✅ |
+| Loon | ✅ | ✅ | ✅ |
+| Surfboard | ✅ | ✅ | ✅ |
+| Mihomo / Clash Meta | ✅ | ✅ | ✅ |
+| Stash | ✅ | ✅ | 视客户端支持 |
+| Quantumult X | 暂不推荐 | ✅ | 暂不推荐 |
+| v2rayN / NekoBox | ✅ | ✅ | 视客户端支持 |
 
-### 输出格式说明
-
-当前版本优先保留移动端和桌面端更常用、导入更稳定的 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码输出。Throne 与 Sing-box/SFA 客户端 JSON 导出已暂时移除；AnyTLS 服务端仍然使用 sing-box 原生 AnyTLS inbound，不影响 VPS 端安装和运行。
+当前版本保留更常用、导入更稳定的输出格式：URI、Mihomo / Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码。Throne 与 Sing-box / SFA 客户端 JSON 导出已暂时移除；AnyTLS 服务端仍使用 sing-box 原生 AnyTLS inbound。
 
 ---
 
-## 🖥️ 支持系统
+## 🧩 支持系统
 
-| 发行版 | 版本 |
+| 系统 | 版本 |
 | --- | --- |
 | Debian | 10 / 11 / 12+ |
 | Ubuntu | 20.04 / 22.04 / 24.04+ |
 | CentOS / RHEL | 7 / 8 / 9 |
 | Rocky / AlmaLinux | 8 / 9 |
 | Fedora | 38+ |
-| Arch Linux / Manjaro | 最新滚动版 |
+| Arch / Manjaro | 滚动版 |
 | Alpine Linux | 3.x |
 
-> 支持 标准 VPS · NAT 机器 · IPv6 单栈 / 双栈 · 低配 VPS（≥ 128MB RAM）
->
-> EUserv 专用脚本额外支持：纯 IPv6-only 环境 · Debian 系统优先适配
-
----
-
-## 🧭 如何选择
-
-| 场景 | 建议 |
-| --- | --- |
-| 普通 IPv4 / 双栈 VPS | 优先使用 Hysteria 2 |
-| NAT VPS | 使用 Hysteria 2 或 Shadowsocks，并按提示填写外网映射端口 |
-| 纯 IPv6 VPS | Hysteria 2 与 Shadowsocks 均可，客户端必须具备 IPv6 可达性 |
-| EUserv 免费 IPv6-only VPS | 使用 `euservhy2.sh` |
-| UDP 被限制的网络 | 尝试 Shadowsocks；Hysteria 2 依赖 UDP |
-| 需要 SS-2022 | 使用 `ss.sh`，并确保服务端和客户端时间准确 |
+支持标准 VPS、NAT VPS、IPv6-only、双栈环境与低配机器。EUserv 专用脚本优先适配 Debian IPv6-only 环境。
 
 ---
 
 ## 🛠️ 常见问题
 
-### 执行后无法输入
+### 运行后无法输入
 
-请使用文档中的 `bash <(curl ...)` 命令，不要使用 `curl ... | sh`。脚本包含 TTY 修复，但交互式菜单仍要求系统存在 `/dev/tty`。
+请使用文档中的 `bash <(curl ...)`，不要使用 `curl ... | sh`。交互式菜单需要可用的 `/dev/tty`。
 
-### 下载失败或 GitHub API 限频
+### GitHub 下载失败
 
-确认 VPS 的 DNS、系统时间及 GitHub 连通性：
+先检查 VPS 网络、DNS 和系统时间：
 
 ```bash
 curl -I https://raw.githubusercontent.com
@@ -271,32 +152,45 @@ curl -I https://api.github.com
 date
 ```
 
-EUserv 脚本会自动尝试 IPv6、NAT64 和镜像等多级下载方式；普通脚本下载失败时，请先解决 VPS 到 GitHub 的网络问题。
+如果刚发布后仍显示旧版本，请使用上文的 `nocache` 命令排查 GitHub raw 缓存。
 
 ### 服务已安装但无法连接
 
-1. 检查云服务商安全组是否放行对应 UDP 端口。
-2. 检查脚本菜单中的服务状态和运行日志。
-3. NAT VPS 需确认外网端口映射到脚本配置的内网端口。
-4. Hysteria 2 端口跳跃需要放行整个 UDP 端口范围。
-5. SS-2022 超时优先检查服务端与客户端时钟。
+优先检查：
 
-### 本地修改为什么没有生效
+1. 云服务商安全组是否放行端口。
+2. 脚本菜单中的服务状态和日志。
+3. NAT VPS 的外网端口是否映射到脚本配置端口。
+4. Hysteria 2 是否放行 UDP 端口。
+5. SS-2022 客户端和服务端时间是否准确。
 
-`install.sh` 始终下载 GitHub `main` 分支的远程脚本，不会调用当前目录中的 `hy2.sh`、`ss.sh`、`anytls.sh` 或 `euservhy2.sh`。开发调试时应直接运行本地文件：
+### 本地修改为什么没生效
+
+远程入口默认下载 GitHub `main` 分支脚本，不会调用当前目录里的本地文件。开发调试请直接运行本地脚本，例如：
 
 ```bash
+bash install.sh
 bash hy2.sh
 ```
 
 ---
 
-## 🔒 安全说明
+## 📸 运行截图
 
-- 建议先下载并审阅脚本，再以 root 权限运行。
-- 节点链接和二维码包含连接凭据，请勿公开分享。
-- 卸载前请自行备份需要保留的配置；卸载功能会删除对应服务、配置和自动更新任务。
-- 本项目安装的是上游最新版本，未使用锁文件固定 Hysteria 2、Shadowsocks-Rust 或 sing-box 版本。
+截图后续替换即可，建议保留以下几类：
+
+| 截图 | 建议内容 |
+| --- | --- |
+| 首页总览 | 展示版本、系统、IP、BBR、协议状态和主菜单 |
+| 安装流程 | 展示选择协议、端口、安装完成 |
+| 节点导出 | 展示 URI、客户端配置、二维码入口 |
+| 系统工具 | 展示 BBR 状态、系统检测、缓存排查说明 |
+
+<!--
+后续可将截图放在 docs/assets/，或使用 GitHub issue / release 上传后的图片链接。
+示例：
+![main menu](docs/assets/main-menu.png)
+-->
 
 ---
 
@@ -304,58 +198,27 @@ bash hy2.sh
 
 | 文件 | 用途 |
 | --- | --- |
-| `install.sh` | 远程统一入口，从 GitHub `main` 下载子脚本并直接调度对应动作 |
-| `hy2.sh` | Hysteria 2 安装与管理 |
-| `ss.sh` | Shadowsocks-Rust 安装与管理 |
-| `anytls.sh` | 基于 sing-box 原生入站的 AnyTLS 安装与管理 |
+| `install.sh` | 统一入口，负责菜单、调度、缓存和跨协议管理 |
+| `hy2.sh` | Hysteria 2 安装、管理、升级、卸载与导出 |
+| `ss.sh` | Shadowsocks-Rust 安装、管理、升级、卸载与导出 |
+| `anytls.sh` | AnyTLS / sing-box 原生入站安装与管理 |
 | `euservhy2.sh` | EUserv IPv6-only 专用 Hysteria 2 脚本 |
-| `tests/validate_scripts.sh` | Bash 语法、版本、换行、兼容规则及自动更新脚本检查 |
-| `tests/validate_anytls.sh` | AnyTLS 输入、下载 URL、配置、URI、服务文件与 ELF 行为测试 |
-| `docs/ARCHITECTURE.md` | 代码结构、兼容性约束和开发注意事项 |
-| `CHANGELOG.md` | 项目版本变更记录 |
+| `tests/validate_scripts.sh` | 静态验证、版本、换行、菜单和兼容性检查 |
+| `tests/validate_anytls.sh` | AnyTLS 行为验证 |
+| `docs/` | 架构、测试、发布和维护说明 |
+| `CHANGELOG.md` | 版本变更记录 |
 
 ---
 
 ## 📚 开发文档
 
-| 文档 | 适用对象 |
-| --- | --- |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献者的开发流程、修改原则和 PR 清单 |
-| [AGENTS.md](AGENTS.md) | Codex 等通用 AI Agent 的仓库约束 |
-| [CLAUDE.md](CLAUDE.md) | Claude Code 的项目上下文和维护约束 |
-| [架构说明](docs/ARCHITECTURE.md) | 脚本边界、执行模型和代码模板 |
-| [测试指南](docs/TESTING.md) | 静态验证、VPS 矩阵和故障注入 |
-| [发布流程](docs/RELEASE.md) | 版本同步、验收、发布和紧急回滚 |
-| [维护说明](docs/MAINTENANCE.md) | 外部依赖、安全边界、已知限制和 AI 接手协议 |
-
-新开发者或 AI 工具建议按以下顺序阅读：
-
-```text
-AGENTS.md / CLAUDE.md
-        ↓
-docs/ARCHITECTURE.md
-        ↓
-CONTRIBUTING.md
-        ↓
-docs/TESTING.md
-        ↓
-docs/RELEASE.md
-```
-
----
-
-## 📸 运行截图
-
-#### Hysteria 2 安装示例
-<img width="1187" height="1365" alt="hysteria2 install" src="https://github.com/user-attachments/assets/1c798220-b59e-4e1f-81ce-2052d45820b9" />
-
-#### Shadowsocks 安装示例
-<img width="1186" height="1367" alt="ssdev" src="https://github.com/user-attachments/assets/f4440535-4880-48ab-bf5e-3c163817bee7" />
-
-#### Euserv ipv6 only Hysteria 2 安装示例
-
-<img width="701" height="625" alt="euserv hysteria2 install 1" src="https://github.com/user-attachments/assets/59bc7560-b09f-4aab-84fb-d32a56ce4659" />
-<img width="1186" height="1735" alt="euserv hysteria2 install 2" src="https://github.com/user-attachments/assets/78492236-d611-4b29-8e92-29ab73ab10f6" />
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [AGENTS.md](AGENTS.md)
+- [CLAUDE.md](CLAUDE.md)
+- [架构说明](docs/ARCHITECTURE.md)
+- [测试指南](docs/TESTING.md)
+- [发布流程](docs/RELEASE.md)
+- [维护说明](docs/MAINTENANCE.md)
 
 ---
 
@@ -363,19 +226,18 @@ docs/RELEASE.md
 
 | | |
 | --- | --- |
-| **Author** | Jensfrank |
-| **Blog** | [Seedloc 博客](https://seedloc.com) — 分享技术与生活 |
-| **Website** | [VPSknow](https://vpsknow.com) — VPS 测评与推荐 |
-| **Forum** | [Nodeloc 论坛](https://nodeloc.com) — 主机爱好者社区 |
+| Author | Jensfrank |
+| GitHub | [everett7623/hy2](https://github.com/everett7623/hy2) |
+| Blog | [seedloc.com](https://seedloc.com) |
+| Review | [vpsknow.com](https://vpsknow.com) |
+| Forum | [nodeloc.com](https://nodeloc.com) |
 
 ---
 
 ## ⚠️ 免责声明
 
-- 本项目仅供学习、技术研究和网络底层协议交流使用。
+- 本项目仅供学习、技术研究和网络协议交流使用。
 - 请勿将本项目用于任何违反当地法律法规的用途。
-- 使用本项目产生的任何后果（包括但不限于 IP 被封锁、机器被服务商收回等）由使用者自行承担。
+- 使用本项目产生的任何后果由使用者自行承担。
 
----
-
-**觉得脚本好用？请点击右上角 ⭐️ Star 支持一下，这是对作者最大的鼓励！**
+如果脚本对你有帮助，欢迎点个 Star 支持一下。

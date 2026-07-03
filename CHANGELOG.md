@@ -11,6 +11,7 @@
 - Clarify upgrade and uninstall prompts so users create VPS config backups manually when needed.
 - Keep local source rollback archives outside the repository for development/testing recovery.
 - Document the optional GitHub raw `nocache` command for post-release cache troubleshooting.
+- Refresh and simplify the README structure, removing outdated screenshot embeds and repeated menu details.
 
 ---
 
