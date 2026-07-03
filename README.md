@@ -59,6 +59,14 @@ sb
 > `sb` 会优先拉取 GitHub `main` 的最新主入口；远程下载失败或内容异常时，会尝试使用已验证的本地缓存继续执行。
 > 更新菜单可刷新本地脚本缓存；远程下载失败或内容异常时，统一入口会尝试使用已验证的缓存脚本继续执行。
 
+#### GitHub raw 缓存排查（可选）
+
+普通用户优先使用上面的简洁命令。若项目刚更新后 VPS 上仍显示旧版本，通常是 GitHub raw 边缘缓存尚未刷新；测试或排障时可临时使用带 `nocache` 的命令强制拉取最新内容：
+
+```bash
+bash <(curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/everett7623/hy2/main/install.sh?nocache=$(date +%s)")
+```
+
 ### Hysteria 2（主推）
 
 适用于绝大多数网络环境，UDP 协议极速占满带宽，抗封锁能力强。

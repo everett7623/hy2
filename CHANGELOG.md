@@ -10,6 +10,7 @@
 - Keep VPS configuration backup as an explicit manual action in the “备份 / 恢复” menu.
 - Clarify upgrade and uninstall prompts so users create VPS config backups manually when needed.
 - Keep local source rollback archives outside the repository for development/testing recovery.
+- Document the optional GitHub raw `nocache` command for post-release cache troubleshooting.
 
 ---
 
