@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.0.4
+# 版本：v2.0.5
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -918,16 +918,16 @@ show_node() {
     print_copy_block "$(export_mihomo_ss "$_ip" "$_port" "$_node")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}Loon 配置:${PLAIN}"
-    print_copy_block "$(export_loon_ss "$_ip" "$_port" "$_node")"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
     echo -e "${GREEN}Surfboard 配置:${PLAIN}"
     print_copy_block "$(export_surfboard_ss "$_ip" "$_port" "$_node")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
     print_copy_block "$(export_shadowrocket_ss "$_ip" "$_port" "$_node")"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    echo -e "${GREEN}Loon 配置:${PLAIN}"
+    print_copy_block "$(export_loon_ss "$_ip" "$_port" "$_node")"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
@@ -1493,7 +1493,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.4${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.5${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

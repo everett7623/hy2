@@ -4,6 +4,14 @@
 
 ---
 
+## v2.0.5 (2026-07-03)
+
+- 调整统一入口与四个协议脚本的客户端输出顺序：`Loon 配置` 移到 `Shadowrocket 配置` 后面。
+- README 和测试说明同步新的输出顺序。
+- 静态验证新增输出顺序检查，确保 Shadowrocket 始终排在 Loon 前。
+
+---
+
 ## v2.0.4 (2026-07-03)
 
 - 移除 Hysteria2、Shadowsocks、AnyTLS 与 EUserv HY2 的 Throne 客户端导出，避免继续输出不可用或不稳定的导入格式。

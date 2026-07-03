@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.4
+# 版本：v2.0.5
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -277,7 +277,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.4${PLAIN}"
+    echo -e "  ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.5${PLAIN}"
     echo -e "  ${DIM}AnyTLS | Hysteria2 | Shadowsocks | EUserv HY2${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}==========================================================${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN}   ${WHITE}Jensfrank${PLAIN}  ${DIM}│${PLAIN}  ${DIM}项目${PLAIN}  ${YELLOW}github.com/everett7623/hy2${PLAIN}"
@@ -342,9 +342,9 @@ export_config_menu() {
         echo ""
         echo -e "  [1] URI 分享链接"
         echo -e "  [2] Mihomo / Clash Meta / Clash Verge 单行配置"
-        echo -e "  [3] Loon 配置"
-        echo -e "  [4] Surfboard 配置"
-        echo -e "  [5] Shadowrocket 配置"
+        echo -e "  [3] Surfboard 配置"
+        echo -e "  [4] Shadowrocket 配置"
+        echo -e "  [5] Loon 配置"
         echo -e "  [6] Quantumult X 配置"
         echo -e "  [7] 全部输出"
         echo -e "  [0] 返回"
@@ -517,7 +517,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.4" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.5" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] 备份完成: ${_file}${PLAIN}"
 }
 

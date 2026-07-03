@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.4
+#  版本: v2.0.5
 #  更新时间: 2026-07-03
 # ============================================================
 
@@ -61,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.4"
+SCRIPT_VERSION="2.0.5"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -793,14 +793,14 @@ show_node_info() {
     echo -e "${CYAN}Mihomo / Clash Meta / Clash Verge 单行配置:${NC}"
     print_copy_block "- {name: \"${safe_node}\", type: hysteria2, server: \"${ipv6_raw}\", port: ${port}, password: \"${safe_password}\", sni: \"${safe_sni}\", skip-cert-verify: true, fast-open: true, udp: true}"
     echo ""
-    echo -e "${CYAN}Loon 配置:${NC}"
-    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, \"${password}\", skip-cert-verify=true, sni=${sni}"
-    echo ""
     echo -e "${CYAN}Surfboard 配置:${NC}"
     print_copy_block "${full_node} = hysteria2, ${ipv6_raw}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
     echo ""
     echo -e "${CYAN}Shadowrocket 配置:${NC}"
     print_copy_block "$hy2_link"
+    echo ""
+    echo -e "${CYAN}Loon 配置:${NC}"
+    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, \"${password}\", skip-cert-verify=true, sni=${sni}"
     echo ""
     echo -e "${CYAN}Quantumult X 配置:${NC}"
     print_copy_block "Quantumult X 暂不支持该协议的配置格式。"

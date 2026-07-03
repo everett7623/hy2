@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
-EXPECTED_VERSION="v2.0.4"
+EXPECTED_VERSION="v2.0.5"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -85,7 +85,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.4"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.5"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -99,6 +99,15 @@ grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
     grep -q "printf '%s %s | %s | %s | %s'" "$script"
     grep -q '^get_country_flag()' "$script"
+done
+
+for script in install.sh hy2.sh ss.sh anytls.sh euservhy2.sh; do
+    _shadow_line=$(grep -n 'Shadowrocket 配置' "$script" | head -1 | cut -d: -f1)
+    _loon_line=$(grep -n 'Loon 配置' "$script" | head -1 | cut -d: -f1)
+    if [ -z "$_shadow_line" ] || [ -z "$_loon_line" ] || [ "$_shadow_line" -ge "$_loon_line" ]; then
+        echo "Loon must appear after Shadowrocket in $script" >&2
+        exit 1
+    fi
 done
 
 bash tests/validate_anytls.sh
