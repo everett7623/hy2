@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.14
+# 版本：v2.0.15
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1294,8 +1294,13 @@ print_certificate_verification_status() {
     fi
 }
 
+should_show_output() {
+    local _mode="${1:-all}" _section="$2"
+    [ "$_mode" = "all" ] || [ "$_mode" = "$_section" ]
+}
+
 show_node() {
-    local _server="$1" _port="$2" _tag="$3"
+    local _server="$1" _port="$2" _tag="$3" _mode="${4:-all}"
     [ -z "$_server" ] && return
     validate_server_address "$_server" || {
         echo -e "${RED}节点地址格式无效: ${_server}${PLAIN}"
@@ -1320,48 +1325,65 @@ show_node() {
     print_copy_block "$_node"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}URI 分享链接:${PLAIN}"
-    print_copy_block "$_uri"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
-    print_copy_block "$(export_mihomo_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Surfboard 配置:${PLAIN}"
-    print_copy_block "$(export_surfboard_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
-    print_copy_block "$(export_shadowrocket_anytls "$_server" "$_port" "$_node" "$_cert_pin")"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Loon 配置:${PLAIN}"
-    print_copy_block "$(export_loon_anytls "$_server" "$_port" "$_node")"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
-    print_copy_block "$(export_quantumultx_anytls)"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}二维码:${PLAIN}"
-    if generate_terminal_qrcode "$_uri"; then
-        echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
-        _png=$(generate_local_qrcode_png "$_uri" "anytls" "$_ip_type" 2>/dev/null || true)
-        [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
-    else
-        echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
+    if should_show_output "$_mode" "uri"; then
+        echo -e "${GREEN}URI 分享链接:${PLAIN}"
+        print_copy_block "$_uri"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
-    echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
-    print_copy_block "$_qr_url"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    if should_show_output "$_mode" "mihomo"; then
+        echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
+        print_copy_block "$(export_mihomo_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "surfboard"; then
+        echo -e "${GREEN}Surfboard 配置:${PLAIN}"
+        print_copy_block "$(export_surfboard_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "shadowrocket"; then
+        echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
+        print_copy_block "$(export_shadowrocket_anytls "$_server" "$_port" "$_node" "$_cert_pin")"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "loon"; then
+        echo -e "${GREEN}Loon 配置:${PLAIN}"
+        print_copy_block "$(export_loon_anytls "$_server" "$_port" "$_node")"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "quantumult"; then
+        echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
+        print_copy_block "$(export_quantumultx_anytls)"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if [ "$_mode" = "all" ]; then
+        print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "qrcode"; then
+        echo -e "${GREEN}二维码:${PLAIN}"
+        if generate_terminal_qrcode "$_uri"; then
+            echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
+            _png=$(generate_local_qrcode_png "$_uri" "anytls" "$_ip_type" 2>/dev/null || true)
+            [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
+        else
+            echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
+        fi
+        echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
+        print_copy_block "$_qr_url"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
 
 }
 
 show_config() {
+    local _mode="${1:-all}"
     read_config_live || { echo -e "${RED}未找到 AnyTLS 配置${PLAIN}"; sleep 2; return; }
 
     local _country _server_name _cert_pin _cert_fingerprint
@@ -1388,23 +1410,25 @@ show_config() {
     echo -e "通用 URI : ${YELLOW}insecure=1 / skip-cert-verify=true${PLAIN}"
     [ "$NAT_MODE" = "1" ] && echo -e "机器类型 : ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    if [ "$_mode" = "all" ]; then
+        print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
 
     if [ -n "$PUBLIC_IP" ]; then
         echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
-        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+        show_node "$PUBLIC_IP" "$EXT_PORT" "v4" "$_mode"
     fi
     if [ -n "$PUBLIC_IPV6" ]; then
         echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
-        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
+        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6" "$_mode"
     fi
 
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         read -r -p "未检测到公网 IP，请手动输入节点地址: " _manual_addr
         if [ -n "$_manual_addr" ]; then
             echo -e "${YELLOW}▼ 手动地址节点配置${PLAIN}"
-            show_node "$_manual_addr" "$EXT_PORT" "manual"
+            show_node "$_manual_addr" "$EXT_PORT" "manual" "$_mode"
         fi
     fi
 
@@ -1681,7 +1705,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.14${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.15${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
@@ -1737,7 +1761,14 @@ check_sys
 detect_init
 case "${1:-menu}" in
     install) install_anytls ;;
-    info|node|export|qrcode) show_config ;;
+    info|node|export|all) show_config ;;
+    uri|link) show_config uri ;;
+    mihomo|clash) show_config mihomo ;;
+    surfboard) show_config surfboard ;;
+    shadowrocket) show_config shadowrocket ;;
+    loon) show_config loon ;;
+    quantumult|quantumultx) show_config quantumult ;;
+    qrcode|qr) show_config qrcode ;;
     manage|service|config) manage_anytls ;;
     upgrade|update) upgrade_anytls ;;
     uninstall|remove) uninstall_anytls ;;

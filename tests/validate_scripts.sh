@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.14"
+EXPECTED_VERSION="v2.0.15"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -88,7 +88,7 @@ for script in hy2.sh ss.sh anytls.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.14"' euservhy2.sh
+grep -q 'SCRIPT_VERSION="2.0.15"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
@@ -122,6 +122,14 @@ grep -q '^uninstall_all_protocols()' install.sh
 grep -q 'VPS 配置备份完成' install.sh
 grep -q '如需 VPS 配置备份，请先' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "$_action"' install.sh
+grep -q 'select_protocol_and_run "选择协议以导出 URI 分享链接" "uri"' install.sh
+grep -q 'select_protocol_and_run "选择协议以导出 Mihomo / Clash 配置" "mihomo"' install.sh
+grep -q 'select_protocol_and_run "选择协议以导出 Shadowrocket 配置" "shadowrocket"' install.sh
+grep -q 'select_protocol_and_run "生成二维码" "qrcode"' install.sh
+! grep -q '协议脚本会输出当前支持的全部格式' install.sh
+grep -q '\[4\] 生成二维码' install.sh
+grep -q '\[5\] 服务管理' install.sh
+! grep -q '\[5\] 生成二维码' install.sh
 grep -q 'etc/sysctl.d/99-singbox-tools-bbr.conf' install.sh
 ! grep -R -qE 'bbr3|tcp_bbr3' install.sh hy2.sh ss.sh README.md CHANGELOG.md
 grep -q 'net.ipv4.tcp_congestion_control = bbr' install.sh
@@ -143,6 +151,7 @@ for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
     grep -q "printf '%s %s | %s | %s | %s'" "$script"
     grep -q '^get_country_flag()' "$script"
     grep -q '^yaml_single_quote_escape()' "$script"
+    grep -q '^should_show_output()' "$script"
 done
 
 grep -q "name: '\${_safe_node}'" hy2.sh
@@ -174,17 +183,32 @@ grep -q 'return "\$_status"' install.sh
 grep -q '使用本地缓存脚本' install.sh
 grep -q 'select_protocol_and_run "安装 / 重装协议" "install"' install.sh
 grep -q 'select_protocol_and_run "查看节点信息" "info"' install.sh
-grep -q 'select_protocol_and_run "生成二维码" "info"' install.sh
+grep -q 'select_protocol_and_run "生成二维码" "qrcode"' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "upgrade"' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "uninstall"' install.sh
 grep -q 'install) install_hy2' hy2.sh
-grep -q 'info|node|export|qrcode) show_config' hy2.sh
+grep -q 'info|node|export|all) show_config' hy2.sh
+grep -q 'qrcode|qr) show_config qrcode' hy2.sh
 grep -q 'install) install_ss' ss.sh
-grep -q 'info|node|export|qrcode) show_config' ss.sh
+grep -q 'info|node|export|all) show_config' ss.sh
+grep -q 'qrcode|qr) show_config qrcode' ss.sh
 grep -q 'install) install_anytls' anytls.sh
-grep -q 'info|node|export|qrcode) show_config' anytls.sh
+grep -q 'info|node|export|all) show_config' anytls.sh
+grep -q 'qrcode|qr) show_config qrcode' anytls.sh
 grep -q 'install) do_install' euservhy2.sh
-grep -q 'info|node|export|qrcode) show_banner; show_node_info' euservhy2.sh
+grep -q 'info|node|export|all) show_banner; show_node_info' euservhy2.sh
+grep -q 'qrcode|qr) show_banner; show_node_info qrcode' euservhy2.sh
+
+for img in \
+    docs/assets/screenshots/01-main-menu.png \
+    docs/assets/screenshots/02-anytls-install-export.png \
+    docs/assets/screenshots/03-system-detect.png \
+    docs/assets/screenshots/04-upgrade-center.png \
+    docs/assets/screenshots/05-uninstall-center.png
+do
+    [ -s "$img" ] || { echo "Required screenshot missing or empty: $img" >&2; exit 1; }
+    grep -q "$img" README.md
+done
 
 bash tests/validate_anytls.sh
 

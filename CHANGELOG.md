@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.15 (2026-07-04)
+
+- Add five README screenshot slots backed by `docs/assets/screenshots/` images.
+- Make the unified export menu pass the selected output format to protocol scripts.
+- Make the QR menu output QR content only instead of all client formats.
+- Add per-format output modes for Hysteria2, Shadowsocks, AnyTLS, and EUserv HY2.
+
+---
+
 ## v2.0.14 (2026-07-04)
 
 - Remove automatic VPS-side rollback archive creation from install, upgrade, uninstall, config-delete, and BBR flows.

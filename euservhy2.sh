@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.14
+#  版本: v2.0.15
 #  更新时间: 2026-07-04
 # ============================================================
 
@@ -61,7 +61,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.14"
+SCRIPT_VERSION="2.0.15"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -740,7 +740,13 @@ _read_node_conf() {
 # ============================================================
 #  显示节点信息
 # ============================================================
+should_show_output() {
+    local _mode="${1:-all}" _section="$2"
+    [ "$_mode" = "all" ] || [ "$_mode" = "$_section" ]
+}
+
 show_node_info() {
+    local _mode="${1:-all}"
     if ! _read_node_conf; then
         warn "未找到节点配置，请先安装 Hysteria2（选项 1）"
         return
@@ -791,36 +797,50 @@ show_node_info() {
     echo -e "${CYAN}节点名称:${NC}"
     print_copy_block "$full_node"
     echo ""
-    echo -e "${CYAN}URI 分享链接:${NC}"
-    print_copy_block "$hy2_link"
-    echo ""
-    echo -e "${CYAN}Mihomo / Clash Meta / Clash Verge 单行配置:${NC}"
-    print_copy_block "- {name: '${safe_node}', type: hysteria2, server: '${ipv6_raw}', port: ${port}, password: '${safe_password}', sni: '${safe_sni}', skip-cert-verify: true, fast-open: true, udp: true}"
-    echo ""
-    echo -e "${CYAN}Surfboard 配置:${NC}"
-    print_copy_block "${full_node} = hysteria2, ${ipv6_raw}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
-    echo ""
-    echo -e "${CYAN}Shadowrocket 配置:${NC}"
-    print_copy_block "$hy2_link"
-    echo ""
-    echo -e "${CYAN}Loon 配置:${NC}"
-    print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, '${password}', skip-cert-verify=true, sni=${sni}"
-    echo ""
-    echo -e "${CYAN}Quantumult X 配置:${NC}"
-    print_copy_block "Quantumult X 暂不支持该协议的配置格式。"
-    echo ""
-
-    echo -e "${CYAN}二维码:${NC}"
-    if generate_terminal_qrcode "$hy2_link"; then
-        success "终端二维码已生成"
-        qrcode_png=$(generate_local_qrcode_png "$hy2_link" 2>/dev/null || true)
-        [ -n "$qrcode_png" ] && echo -e "本地二维码图片: ${CYAN}${qrcode_png}${NC}"
-    else
-        warn "未安装 qrencode，跳过终端和本地 PNG 二维码"
+    if should_show_output "$_mode" "uri"; then
+        echo -e "${CYAN}URI 分享链接:${NC}"
+        print_copy_block "$hy2_link"
+        echo ""
     fi
-    warn "在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。"
-    print_copy_block "$qr_url"
-    echo ""
+    if should_show_output "$_mode" "mihomo"; then
+        echo -e "${CYAN}Mihomo / Clash Meta / Clash Verge 单行配置:${NC}"
+        print_copy_block "- {name: '${safe_node}', type: hysteria2, server: '${ipv6_raw}', port: ${port}, password: '${safe_password}', sni: '${safe_sni}', skip-cert-verify: true, fast-open: true, udp: true}"
+        echo ""
+    fi
+    if should_show_output "$_mode" "surfboard"; then
+        echo -e "${CYAN}Surfboard 配置:${NC}"
+        print_copy_block "${full_node} = hysteria2, ${ipv6_raw}, ${port}, password=${password}, sni=${sni}, skip-cert-verify=true"
+        echo ""
+    fi
+    if should_show_output "$_mode" "shadowrocket"; then
+        echo -e "${CYAN}Shadowrocket 配置:${NC}"
+        print_copy_block "$hy2_link"
+        echo ""
+    fi
+    if should_show_output "$_mode" "loon"; then
+        echo -e "${CYAN}Loon 配置:${NC}"
+        print_copy_block "${full_node} = Hysteria2, ${ipv6_raw}, ${port}, '${password}', skip-cert-verify=true, sni=${sni}"
+        echo ""
+    fi
+    if should_show_output "$_mode" "quantumult"; then
+        echo -e "${CYAN}Quantumult X 配置:${NC}"
+        print_copy_block "Quantumult X 暂不支持该协议的配置格式。"
+        echo ""
+    fi
+
+    if should_show_output "$_mode" "qrcode"; then
+        echo -e "${CYAN}二维码:${NC}"
+        if generate_terminal_qrcode "$hy2_link"; then
+            success "终端二维码已生成"
+            qrcode_png=$(generate_local_qrcode_png "$hy2_link" 2>/dev/null || true)
+            [ -n "$qrcode_png" ] && echo -e "本地二维码图片: ${CYAN}${qrcode_png}${NC}"
+        else
+            warn "未安装 qrencode，跳过终端和本地 PNG 二维码"
+        fi
+        warn "在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。"
+        print_copy_block "$qr_url"
+        echo ""
+    fi
     echo -e "${DIM}EUserv 为纯 IPv6 环境，客户端需支持 IPv6 连接${NC}"
     echo -e "${DIM}国内宽带开启 IPv6 / 手机 4G·5G 可直连；无 IPv6 请先装 WARP（选项 8）${NC}"
     echo -e "${WHITE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -1404,7 +1424,14 @@ main() {
     cmd=$(echo "${1:-menu}" | tr '[:upper:]' '[:lower:]')
     case "$cmd" in
         install) do_install; exit $? ;;
-        info|node|export|qrcode) show_banner; show_node_info; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        info|node|export|all) show_banner; show_node_info; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        uri|link) show_banner; show_node_info uri; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        mihomo|clash) show_banner; show_node_info mihomo; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        surfboard) show_banner; show_node_info surfboard; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        shadowrocket) show_banner; show_node_info shadowrocket; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        loon) show_banner; show_node_info loon; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        quantumult|quantumultx) show_banner; show_node_info quantumult; read -rp "  按 Enter 返回..." _; exit 0 ;;
+        qrcode|qr) show_banner; show_node_info qrcode; read -rp "  按 Enter 返回..." _; exit 0 ;;
         manage|service|config) manage_service; exit $? ;;
         upgrade|update) do_upgrade; exit $? ;;
         uninstall|remove) do_uninstall; exit $? ;;

@@ -8,8 +8,8 @@
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
 
-> 当前版本：v2.0.14（2026-07-04）
-> 本次更新：移除 VPS 运行时自动回滚包；新增手动标准 `bbr + fq` 优化入口；README 结构精简优化。
+> 当前版本：v2.0.15（2026-07-04）
+> 本次更新：新增 README 五张运行截图；导出配置和二维码按所选格式输出，不再默认刷出全部客户端格式。
 
 ---
 
@@ -177,20 +177,27 @@ bash hy2.sh
 
 ## 📸 运行截图
 
-截图后续替换即可，建议保留以下几类：
+截图统一放在 `docs/assets/screenshots/`。后续如需替换，保持文件名不变即可。
 
-| 截图 | 建议内容 |
-| --- | --- |
-| 首页总览 | 展示版本、系统、IP、BBR、协议状态和主菜单 |
-| 安装流程 | 展示选择协议、端口、安装完成 |
-| 节点导出 | 展示 URI、客户端配置、二维码入口 |
-| 系统工具 | 展示 BBR 状态、系统检测、缓存排查说明 |
+### 首页总览
 
-<!--
-后续可将截图放在 docs/assets/，或使用 GitHub issue / release 上传后的图片链接。
-示例：
-![main menu](docs/assets/main-menu.png)
--->
+![首页总览](docs/assets/screenshots/01-main-menu.png)
+
+### AnyTLS 安装与节点导出
+
+![AnyTLS 安装与节点导出](docs/assets/screenshots/02-anytls-install-export.png)
+
+### 系统检测
+
+![系统检测](docs/assets/screenshots/03-system-detect.png)
+
+### 更新 / 升级中心
+
+![更新 / 升级中心](docs/assets/screenshots/04-upgrade-center.png)
+
+### 卸载 / 清理中心
+
+![卸载 / 清理中心](docs/assets/screenshots/05-uninstall-center.png)
 
 ---
 

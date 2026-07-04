@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.0.14
+# 版本：v2.0.15
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -969,8 +969,13 @@ export_surfboard_hy2() {
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
 
+should_show_output() {
+    local _mode="${1:-all}" _section="$2"
+    [ "$_mode" = "all" ] || [ "$_mode" = "$_section" ]
+}
+
 show_node() {
-    local _ip="$1" _port="$2" _tag="$3"
+    local _ip="$1" _port="$2" _tag="$3" _mode="${4:-all}"
     local _ip_type _country _server_name _node _uri _qr_url _png
     case "$_tag" in
         v6|IPv6|ipv6) _ip_type="IPv6" ;;
@@ -986,42 +991,56 @@ show_node() {
     print_copy_block "$_node"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
-    echo -e "${GREEN}URI 分享链接:${PLAIN}"
-    print_copy_block "$_uri"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
-    print_copy_block "$(export_mihomo_hy2 "$_ip" "$_port" "$_node")"
-    [ -n "$PORT_HOP" ] && echo -e "${YELLOW}[WARN] 端口跳跃: ${PORT_HOP}，客户端需按实际支持手动适配。${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Surfboard 配置:${PLAIN}"
-    print_copy_block "$(export_surfboard_hy2 "$_ip" "$_port" "$_node")"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
-    print_copy_block "$_uri"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Loon 配置:${PLAIN}"
-    print_copy_block "$(export_loon_hy2 "$_ip" "$_port" "$_node")"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
-    print_copy_block "Quantumult X 暂不支持该协议的配置格式。"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    echo -e "${GREEN}二维码:${PLAIN}"
-    if generate_terminal_qrcode "$_uri"; then
-        echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
-        _png=$(generate_local_qrcode_png "$_uri" "hysteria2" "$_ip_type" 2>/dev/null || true)
-        [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
-    else
-        echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
+    if should_show_output "$_mode" "uri"; then
+        echo -e "${GREEN}URI 分享链接:${PLAIN}"
+        print_copy_block "$_uri"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
-    echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
-    print_copy_block "$_qr_url"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    if should_show_output "$_mode" "mihomo"; then
+        echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
+        print_copy_block "$(export_mihomo_hy2 "$_ip" "$_port" "$_node")"
+        [ -n "$PORT_HOP" ] && echo -e "${YELLOW}[WARN] 端口跳跃: ${PORT_HOP}，客户端需按实际支持手动适配。${PLAIN}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "surfboard"; then
+        echo -e "${GREEN}Surfboard 配置:${PLAIN}"
+        print_copy_block "$(export_surfboard_hy2 "$_ip" "$_port" "$_node")"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "shadowrocket"; then
+        echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
+        print_copy_block "$_uri"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "loon"; then
+        echo -e "${GREEN}Loon 配置:${PLAIN}"
+        print_copy_block "$(export_loon_hy2 "$_ip" "$_port" "$_node")"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "quantumult"; then
+        echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
+        print_copy_block "Quantumult X 暂不支持该协议的配置格式。"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
+
+    if should_show_output "$_mode" "qrcode"; then
+        echo -e "${GREEN}二维码:${PLAIN}"
+        if generate_terminal_qrcode "$_uri"; then
+            echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
+            _png=$(generate_local_qrcode_png "$_uri" "hysteria2" "$_ip_type" 2>/dev/null || true)
+            [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
+        else
+            echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
+        fi
+        echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
+        print_copy_block "$_qr_url"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    fi
 }
 
 # ============================================================
@@ -1029,6 +1048,7 @@ show_node() {
 # ============================================================
 
 show_config() {
+    local _mode="${1:-all}"
     if [ ! -f "$HY_CONFIG" ]; then
         echo -e "${RED}未找到配置文件${PLAIN}"
         read -r -p "按回车返回..." _tmp
@@ -1067,16 +1087,16 @@ show_config() {
     # IPv4 节点
     if [ -n "$PUBLIC_IP" ]; then
         echo -e "${YELLOW}▼ IPv4 节点${PLAIN}"
-        show_node "$PUBLIC_IP" "$EXT_PORT" "v4"
+        show_node "$PUBLIC_IP" "$EXT_PORT" "v4" "$_mode"
     fi
 
     # IPv6 节点（双栈或纯 IPv6）
     if [ -n "$PUBLIC_IPV6" ]; then
         echo -e "${YELLOW}▼ IPv6 节点${PLAIN}"
-        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6"
+        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6" "$_mode"
     fi
 
-    echo -e "${YELLOW}提示: Quantumult X 暂不支持 Hy2 协议。${PLAIN}"
+    [ "$_mode" = "all" ] && echo -e "${YELLOW}提示: Quantumult X 暂不支持 Hy2 协议。${PLAIN}"
     [ "$NAT_MODE" = "1" ] && \
         echo -e "${YELLOW}NAT 提示: 若无法连接，请确认宿主机已将 UDP ${EXT_PORT} 转发到本机 UDP ${LISTEN_PORT}${PLAIN}"
     echo ""
@@ -1604,7 +1624,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.14${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.15${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"
@@ -1646,7 +1666,14 @@ if [ "${EXPORT_LIB_ONLY:-0}" != "1" ]; then
     detect_init
     case "${1:-menu}" in
         install) install_hy2 ;;
-        info|node|export|qrcode) show_config ;;
+        info|node|export|all) show_config ;;
+        uri|link) show_config uri ;;
+        mihomo|clash) show_config mihomo ;;
+        surfboard) show_config surfboard ;;
+        shadowrocket) show_config shadowrocket ;;
+        loon) show_config loon ;;
+        quantumult|quantumultx) show_config quantumult ;;
+        qrcode|qr) show_config qrcode ;;
         manage|service|config) manage_hy2 ;;
         upgrade|update) upgrade_hy2 ;;
         uninstall|remove) uninstall_hy2 ;;

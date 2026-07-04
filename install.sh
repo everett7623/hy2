@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：Jensfrank
-# 版本：v2.0.14
+# 版本：v2.0.15
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -364,7 +364,7 @@ get_status() {
 show_header() {
     clear
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.14${PLAIN} ${DIM}AnyTLS · HY2 · SS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.15${PLAIN} ${DIM}AnyTLS · HY2 · SS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}Jensfrank${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -423,7 +423,7 @@ export_config_menu() {
     while true; do
         show_header
         echo -e "${WHITE}${BOLD}导出客户端配置${PLAIN}"
-        echo -e "${DIM}选择格式后会加载对应协议脚本的节点详情页；协议脚本会输出当前支持的全部格式。${PLAIN}"
+        echo -e "${DIM}选择格式后只输出对应配置；需要全部格式请选 [7]。${PLAIN}"
         echo ""
         echo -e "  [1] URI 分享链接"
         echo -e "  [2] Mihomo / Clash Meta / Clash Verge 单行配置"
@@ -436,7 +436,13 @@ export_config_menu() {
         echo ""
         read -r -p "  请选择导出格式 [0-7]: " fmt
         case "$fmt" in
-            1|2|3|4|5|6|7) select_protocol_and_run "选择协议以导出配置" "info"; return ;;
+            1) select_protocol_and_run "选择协议以导出 URI 分享链接" "uri"; return ;;
+            2) select_protocol_and_run "选择协议以导出 Mihomo / Clash 配置" "mihomo"; return ;;
+            3) select_protocol_and_run "选择协议以导出 Surfboard 配置" "surfboard"; return ;;
+            4) select_protocol_and_run "选择协议以导出 Shadowrocket 配置" "shadowrocket"; return ;;
+            5) select_protocol_and_run "选择协议以导出 Loon 配置" "loon"; return ;;
+            6) select_protocol_and_run "选择协议以导出 Quantumult X 配置" "quantumult"; return ;;
+            7) select_protocol_and_run "选择协议以导出全部配置" "info"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -545,7 +551,7 @@ service_management_menu() {
 }
 
 qrcode_menu() {
-    select_protocol_and_run "生成二维码" "info"
+    select_protocol_and_run "生成二维码" "qrcode"
 }
 
 system_detect() {
@@ -693,7 +699,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.14" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.15" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -965,10 +971,10 @@ main_menu() {
         echo -e "  [1] 安装 / 重装协议"
         echo -e "  [2] 查看节点信息"
         echo -e "  [3] 导出客户端配置"
-        echo -e "  [5] 生成二维码"
+        echo -e "  [4] 生成二维码"
         echo ""
         echo -e "  ${DIM}运维与安全${PLAIN}"
-        echo -e "  [4] 服务管理"
+        echo -e "  [5] 服务管理"
         echo -e "  [6] 系统检测 / BBR 优化"
         echo -e "  [7] 备份 / 恢复"
         echo -e "  [8] 更新 / 升级中心"
@@ -981,8 +987,8 @@ main_menu() {
             1) install_menu ;;
             2) node_info_menu ;;
             3) export_config_menu ;;
-            4) service_management_menu ;;
-            5) qrcode_menu ;;
+            4) qrcode_menu ;;
+            5) service_management_menu ;;
             6) system_tools_menu ;;
             7) backup_restore_menu ;;
             8) update_menu ;;
