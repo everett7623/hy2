@@ -10,6 +10,7 @@
 - Make the unified export menu pass the selected output format to protocol scripts.
 - Make the QR menu output QR content only instead of all client formats.
 - Add per-format output modes for Hysteria2, Shadowsocks, AnyTLS, and EUserv HY2.
+- Replace the broken third-party Project Views badge with stable shields.io GitHub stars and last-commit badges.
 
 ---
 

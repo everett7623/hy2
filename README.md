@@ -6,7 +6,8 @@
 ![GitHub release](https://img.shields.io/github/v/release/everett7623/hy2?color=blue&label=Latest%20Version)
 ![Shell Script](https://img.shields.io/badge/Language-Shell-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
-![Project Views](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Feverett7623%2Fhy2&count_bg=%2379C83D&title_bg=%23555555&icon=github.svg&icon_color=%23E7E7E7&title=views&edge_flat=false)
+![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)
+![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)
 
 > 当前版本：v2.0.15（2026-07-04）
 > 本次更新：新增 README 五张运行截图；导出配置和二维码按所选格式输出，不再默认刷出全部客户端格式。
