@@ -81,6 +81,8 @@ HAS_IPV4=0
 HAS_IPV6=0
 PUBLIC_IP=""
 PUBLIC_IPV6=""
+DEFAULT_EGRESS_IPV4=""
+WARP_ACTIVE=0
 BIND_FAMILY="v4"
 LISTEN_HOST="::"
 LISTEN_PORT=""
@@ -320,10 +322,64 @@ set_latest_version_tag() {
 # ============================================================
 # 网络检测
 # ============================================================
+get_native_public_ipv4() {
+    command -v ip >/dev/null 2>&1 || return 1
+    local _iface _local_ip _ip _url
+    _iface=$(ip -4 route show default 2>/dev/null | awk '
+        /default/ {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "dev" && $(i + 1) !~ /wgcf|warp|^tun|^wg|tailscale|zt/) {
+                    print $(i + 1)
+                    exit
+                }
+            }
+        }
+    ')
+    [ -n "$_iface" ] || return 1
+    _local_ip=$(ip -4 addr show dev "$_iface" scope global 2>/dev/null | awk '
+        /inet / { addr=$2; sub(/\/.*/, "", addr); print addr; exit }
+    ')
+    [ -n "$_local_ip" ] || return 1
+
+    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
+        _ip=$(curl -s4 --interface "$_local_ip" --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            printf '%s' "$_ip"
+            return 0
+        fi
+    done
+    return 1
+}
+
+get_default_public_ipv4() {
+    local _ip _url
+    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            printf '%s' "$_ip"
+            return 0
+        fi
+    done
+    return 1
+}
+
+detect_warp() {
+    if command -v ip >/dev/null 2>&1 && ip link show 2>/dev/null | grep -qE '^[0-9]+: (wgcf|warp|wg)[^:]*:'; then
+        return 0
+    fi
+    if command -v warp-cli >/dev/null 2>&1 && warp-cli status 2>/dev/null | grep -qiE 'connected|已连接'; then
+        return 0
+    fi
+    return 1
+}
+
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
-    NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; BIND_FAMILY="v4"; LISTEN_HOST="::"
+    NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; DEFAULT_EGRESS_IPV4=""; WARP_ACTIVE=0; BIND_FAMILY="v4"; LISTEN_HOST="::"
     local _ip _url
+
+    detect_warp && WARP_ACTIVE=1 || true
+    DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
 
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
@@ -341,17 +397,21 @@ detect_network() {
         ')
         if [ -n "$_real_ipv6" ]; then
             HAS_IPV6=1
-            [ -z "$PUBLIC_IPV6" ] && PUBLIC_IPV6="$_real_ipv6"
+            PUBLIC_IPV6="$_real_ipv6"
         else
             HAS_IPV6=0
             PUBLIC_IPV6=""
         fi
     fi
 
-    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then PUBLIC_IP="$_ip"; HAS_IPV4=1; break; fi
-    done
+    _ip=$(get_native_public_ipv4 2>/dev/null || true)
+    if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        PUBLIC_IP="$_ip"
+        HAS_IPV4=1
+    elif [ "$WARP_ACTIVE" = "0" ] && echo "$DEFAULT_EGRESS_IPV4" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        PUBLIC_IP="$DEFAULT_EGRESS_IPV4"
+        HAS_IPV4=1
+    fi
 
     if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
         local _real_ipv4
@@ -377,6 +437,15 @@ detect_network() {
     elif [ "$HAS_IPV6"     = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv6: ${PUBLIC_IPV6} | IPv4: ${PUBLIC_IP}）"
     elif [ "$HAS_IPV4"     = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
     else                                  echo -e "  机器类型: ${RED}无法检测，请手动输入节点地址${PLAIN}"
+    fi
+    if [ "$WARP_ACTIVE" = "1" ]; then
+        echo -e "  WARP 状态: ${YELLOW}已检测到${PLAIN}（仅作为出站，不用于节点入口）"
+        [ -n "$DEFAULT_EGRESS_IPV4" ] && echo -e "  默认出口 IPv4: ${YELLOW}${DEFAULT_EGRESS_IPV4}${PLAIN}"
+        if [ -z "$PUBLIC_IP" ]; then
+            echo -e "  ${RED}未能确认原生 IPv4，已拒绝使用 WARP 出口生成节点${PLAIN}"
+        elif [ -n "$DEFAULT_EGRESS_IPV4" ] && [ "$DEFAULT_EGRESS_IPV4" != "$PUBLIC_IP" ]; then
+            echo -e "  原生入口 IPv4: ${GREEN}${PUBLIC_IP}${PLAIN}"
+        fi
     fi
 }
 

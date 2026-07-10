@@ -52,6 +52,33 @@ get_latest_version >/dev/null
 [ "$LAST_VERSION_TAG" = "$SING_BOX_STABLE_FALLBACK_TAG" ]
 unset -f curl
 
+# WARP 开启时必须绑定原生网卡查询公网入口，不能导出 WARP 出口地址。
+ip() {
+    case "$*" in
+        '-4 route show default') printf '%s\n' 'default dev warp0' 'default via 192.0.2.1 dev eth0' ;;
+        '-4 addr show dev eth0 scope global') printf '%s\n' '    inet 192.0.2.10/24 scope global eth0' ;;
+        '-4 addr show scope global') printf '%s\n' '2: eth0: <UP>' '    inet 203.0.113.10/24 scope global eth0' ;;
+        '-6 addr show scope global') return 0 ;;
+        'addr show') printf '%s\n' '2: eth0    inet 203.0.113.10/24 scope global eth0' ;;
+        'link show') printf '%s\n' '1: lo: <UP>' '3: warp0: <UP>' ;;
+        *) return 0 ;;
+    esac
+}
+curl() {
+    case " $* " in
+        *' --interface 192.0.2.10 '*) printf '%s' '203.0.113.10' ;;
+        *' -s4 '*) printf '%s' '104.28.195.185' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null
+[ "$PUBLIC_IP" = "203.0.113.10" ]
+[ "$PUBLIC_IP" != "104.28.195.185" ]
+[ "$DEFAULT_EGRESS_IPV4" = "104.28.195.185" ]
+[ "$WARP_ACTIVE" = "1" ]
+[ "$NAT_MODE" = "0" ]
+unset -f ip curl
+
 LISTEN_PORT=8443; BIND_FAMILY=v6
 [ "$(listen_address)" = "[::]:8443" ]
 [ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
