@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.0.16
+# 版本：v2.0.17
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -69,6 +69,20 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 SKYBLUE='\033[0;36m'
 PLAIN='\033[0m'
+
+clear_screen() {
+    [ -t 1 ] || return 0
+    command -v clear >/dev/null 2>&1 && clear 2>/dev/null && return 0
+    printf '\033[2J\033[H'
+}
+
+disk_tmp_dir() {
+    if [ -d /var/tmp ] && [ -w /var/tmp ]; then
+        printf '%s' /var/tmp
+    else
+        printf '%s' "${TMPDIR:-/tmp}"
+    fi
+}
 BOLD='\033[1m'
 DIM='\033[2m'
 
@@ -82,6 +96,9 @@ OPENRC_SERVICE="/etc/init.d/hysteria-server"
 AUTO_UPDATE_SCRIPT="/usr/local/bin/hy2-autoupdate.sh"
 AUTO_UPDATE_LOG="/var/log/hy2-autoupdate.log"
 INSTALL_BACKUP_DIR=""
+INSTALL_ROLLBACK_ARMED=0
+INSTALL_PREV_INT_TRAP=""
+INSTALL_PREV_TERM_TRAP=""
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -204,6 +221,16 @@ service_is_active() {
     fi
 }
 
+service_is_enabled() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl is-enabled --quiet hysteria-server 2>/dev/null
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-update show default 2>/dev/null | grep -qE '(^|[[:space:]])hysteria-server([[:space:]]|$)'
+    else
+        return 1
+    fi
+}
+
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
         journalctl -u hysteria-server -n 50 --no-pager
@@ -255,7 +282,7 @@ EOF
 }
 
 backup_current_install() {
-    INSTALL_BACKUP_DIR=$(mktemp -d /tmp/hy2-install-backup-XXXXXX 2>/dev/null) || return 1
+    INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/hy2-install-backup-XXXXXX" 2>/dev/null) || return 1
     [ ! -f "$HY_BIN" ] || cp -a "$HY_BIN" "$INSTALL_BACKUP_DIR/bin" || { discard_install_backup; return 1; }
     [ ! -f "$HY_CONFIG" ] || cp -a "$HY_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
     [ ! -d "$HY_META" ] || cp -a "$HY_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
@@ -263,16 +290,47 @@ backup_current_install() {
     [ ! -f "$SERVICE_FILE" ] || cp -a "$SERVICE_FILE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
     [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
     service_is_active && : > "$INSTALL_BACKUP_DIR/was-active" || true
+    service_is_enabled && : > "$INSTALL_BACKUP_DIR/was-enabled" || true
+    arm_install_rollback
+}
+
+arm_install_rollback() {
+    [ "$INSTALL_ROLLBACK_ARMED" = "0" ] || return 0
+    INSTALL_PREV_INT_TRAP=$(trap -p INT)
+    INSTALL_PREV_TERM_TRAP=$(trap -p TERM)
+    trap 'rollback_install_on_signal 130' INT
+    trap 'rollback_install_on_signal 143' TERM
+    INSTALL_ROLLBACK_ARMED=1
+}
+
+disarm_install_rollback() {
+    [ "$INSTALL_ROLLBACK_ARMED" = "1" ] || return 0
+    trap - INT TERM
+    [ -z "$INSTALL_PREV_INT_TRAP" ] || eval "$INSTALL_PREV_INT_TRAP"
+    [ -z "$INSTALL_PREV_TERM_TRAP" ] || eval "$INSTALL_PREV_TERM_TRAP"
+    INSTALL_PREV_INT_TRAP=""
+    INSTALL_PREV_TERM_TRAP=""
+    INSTALL_ROLLBACK_ARMED=0
+}
+
+rollback_install_on_signal() {
+    local _status="$1"
+    trap - INT TERM
+    echo -e "\n${YELLOW}安装被中断，正在恢复原配置和服务...${PLAIN}" >&2
+    restore_current_install
+    exit "$_status"
 }
 
 discard_install_backup() {
     [ -n "$INSTALL_BACKUP_DIR" ] && rm -rf "$INSTALL_BACKUP_DIR"
     INSTALL_BACKUP_DIR=""
+    disarm_install_rollback
 }
 
 restore_current_install() {
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
     service_stop
+    service_disable
     rm -f "$HY_BIN" "$HY_CONFIG" "$SERVICE_FILE" "$OPENRC_SERVICE"
     rm -rf "$HY_META" "$HY_CERT_DIR"
     [ -f "$INSTALL_BACKUP_DIR/bin" ] && cp -a "$INSTALL_BACKUP_DIR/bin" "$HY_BIN"
@@ -282,6 +340,7 @@ restore_current_install() {
     [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SERVICE_FILE"
     [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
+    [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
     [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
     discard_install_backup
 }
@@ -292,6 +351,13 @@ restore_current_install() {
 
 is_valid_ipv4() {
     echo "$1" | awk -F. 'NF != 4 { exit 1 } { for (i=1; i<=4; i++) if ($i !~ /^[0-9]+$/ || $i > 255) exit 1 }'
+}
+
+is_valid_ipv6() {
+    case "$1" in
+        *:*) echo "$1" | grep -qE '^[0-9A-Fa-f:]+$' ;;
+        *) return 1 ;;
+    esac
 }
 
 detect_warp() {
@@ -339,7 +405,7 @@ detect_network() {
 
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -q ':'; then
+        if is_valid_ipv6 "$_ip"; then
             PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break
         fi
     done
@@ -367,7 +433,16 @@ detect_network() {
 # ============================================================
 
 install_dependencies() {
-    echo -e "${YELLOW}正在安装依赖...${PLAIN}"
+    local _cmd _ready=1
+    for _cmd in curl openssl ip; do
+        command -v "$_cmd" >/dev/null 2>&1 || _ready=0
+    done
+    if [ "$_ready" = "1" ]; then
+        echo -e "${GREEN}✓ 核心依赖已就绪，跳过软件源刷新${PLAIN}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}正在补齐必要依赖...${PLAIN}"
     case "$RELEASE" in
         alpine)
             apk update -q >/dev/null 2>&1
@@ -397,13 +472,22 @@ install_dependencies() {
             fi
             ;;
     esac
-    local _cmd
-    for _cmd in curl wget openssl; do
+    for _cmd in curl openssl ip; do
         command -v "$_cmd" >/dev/null 2>&1 || {
             echo -e "${RED}依赖安装失败: 缺少 ${_cmd}${PLAIN}"
             return 1
         }
     done
+}
+
+download_file() {
+    local _url="$1" _dest="$2"
+    if command -v curl >/dev/null 2>&1 && \
+       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
+        return 0
+    fi
+    command -v wget >/dev/null 2>&1 && \
+        wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
 }
 
 valid_port() {
@@ -471,7 +555,7 @@ download_hy2() {
     local _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
 
     local _tmp_bin
-    _tmp_bin=$(mktemp /tmp/hysteria-XXXXXX 2>/dev/null) || {
+    _tmp_bin=$(mktemp "$(disk_tmp_dir)/hysteria-XXXXXX" 2>/dev/null) || {
         echo -e "${RED}无法创建下载临时文件${PLAIN}"
         return 1
     }
@@ -479,9 +563,9 @@ download_hy2() {
     echo -e "${YELLOW}正在下载 hysteria-linux-${_arch}...${PLAIN}"
 
     local _source=""
-    if wget -q --show-progress --timeout=30 -O "$_tmp_bin" "$_url_github" 2>/dev/null; then
+    if download_file "$_url_github" "$_tmp_bin"; then
         _source="GitHub"
-    elif wget -q --show-progress --timeout=30 -O "$_tmp_bin" "$_url_mirror" 2>/dev/null; then
+    elif download_file "$_url_mirror" "$_tmp_bin"; then
         _source="官方镜像"
     else
         rm -f "$_tmp_bin"
@@ -1320,7 +1404,7 @@ change_bandwidth() {
 
 manage_hy2() {
     while true; do
-        clear
+        clear_screen
         echo -e "\n${SKYBLUE}--- 管理 Hysteria2 ---${PLAIN}"
         echo -e "1. 查看配置 (全客户端兼容)"
         echo -e "2. 重启服务"
@@ -1482,6 +1566,20 @@ restart_service() {
     fi
 }
 
+download_file() {
+    local _url="$1" _dest="$2"
+    if command -v curl >/dev/null 2>&1 && \
+       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
+        return 0
+    fi
+    command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
+}
+
+disk_tmp_dir() {
+    [ -d /var/tmp ] && [ -w /var/tmp ] && { printf '%s' /var/tmp; return; }
+    printf '%s' "${TMPDIR:-/tmp}"
+}
+
 main() {
     local _info _tag _latest _current _arch _url _url_mirror
     local _tmp_bin _backup _was_active=0
@@ -1505,7 +1603,7 @@ main() {
 
     _url="https://github.com/apernet/hysteria/releases/download/${_tag}/hysteria-linux-${_arch}"
     _url_mirror="https://download.hysteria.network/app/latest/hysteria-linux-${_arch}"
-    _tmp_bin=$(mktemp /tmp/hy2-autoupdate-XXXXXX 2>/dev/null)
+    _tmp_bin=$(mktemp "$(disk_tmp_dir)/hy2-autoupdate-XXXXXX" 2>/dev/null)
     _backup="${HY_BIN}.autoupdate.bak"
 
     if [ -z "$_tmp_bin" ]; then
@@ -1513,9 +1611,9 @@ main() {
         return
     fi
 
-    if ! wget -q --timeout=60 -O "$_tmp_bin" "$_url" 2>/dev/null; then
+    if ! download_file "$_url" "$_tmp_bin"; then
         echo "[$TIMESTAMP] GitHub 下载失败，尝试备用镜像..." >> "$LOG"
-        wget -q --timeout=60 -O "$_tmp_bin" "$_url_mirror" 2>/dev/null || {
+        download_file "$_url_mirror" "$_tmp_bin" || {
             rm -f "$_tmp_bin"
             echo "[$TIMESTAMP] 更新下载失败，当前版本保持不变" >> "$LOG"
             return
@@ -1687,7 +1785,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clear
+        clear_screen
         echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
         echo -e "1. 开启标准 BBR + fq"
         echo -e "2. 查看 BBR 状态"
@@ -1716,7 +1814,7 @@ server_tools_menu() {
 
 main_menu() {
     while true; do
-        clear
+        clear_screen
 
         local STATUS
         if [ -f "$HY_BIN" ]; then
@@ -1733,7 +1831,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.16${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.17${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

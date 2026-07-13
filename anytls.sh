@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.16
+# 版本：v2.0.17
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -59,6 +59,20 @@ PLAIN='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
 
+clear_screen() {
+    [ -t 1 ] || return 0
+    command -v clear >/dev/null 2>&1 && clear 2>/dev/null && return 0
+    printf '\033[2J\033[H'
+}
+
+disk_tmp_dir() {
+    if [ -d /var/tmp ] && [ -w /var/tmp ]; then
+        printf '%s' /var/tmp
+    else
+        printf '%s' "${TMPDIR:-/tmp}"
+    fi
+}
+
 # --- 路径 ---
 ANYTLS_BIN="${ANYTLS_BIN:-/usr/local/bin/anytls-server}"
 SING_BOX_BIN="${SING_BOX_BIN:-/usr/local/bin/sing-box}"
@@ -94,6 +108,9 @@ MANAGED_SING_BOX=0
 LAST_VERSION_TAG=""
 SING_BOX_STABLE_FALLBACK_TAG="${SING_BOX_STABLE_FALLBACK_TAG:-v1.13.14}"
 INSTALL_BACKUP_DIR=""
+INSTALL_ROLLBACK_ARMED=0
+INSTALL_PREV_INT_TRAP=""
+INSTALL_PREV_TERM_TRAP=""
 
 
 # ============================================================
@@ -138,7 +155,16 @@ detect_init() {
 }
 
 install_dependencies() {
-    echo -e "${YELLOW}正在检查并安装必要依赖...${PLAIN}"
+    local _cmd _ready=1
+    for _cmd in curl tar openssl ip; do
+        command -v "$_cmd" >/dev/null 2>&1 || _ready=0
+    done
+    if [ "$_ready" = "1" ]; then
+        echo -e "${GREEN}✓ 核心依赖已就绪，跳过软件源刷新${PLAIN}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}正在补齐必要依赖...${PLAIN}"
     case "$RELEASE" in
         alpine)
             apk update -q >/dev/null 2>&1
@@ -169,8 +195,8 @@ install_dependencies() {
             ;;
     esac
 
-    local _missing=0 _cmd
-    for _cmd in curl wget tar openssl; do
+    local _missing=0
+    for _cmd in curl tar openssl ip; do
         if ! command -v "$_cmd" >/dev/null 2>&1; then
             echo -e "${RED}致命错误: 缺少组件 [ $_cmd ]，请手动安装后重试${PLAIN}"
             _missing=1
@@ -333,6 +359,13 @@ is_valid_ipv4() {
     '
 }
 
+is_valid_ipv6() {
+    case "$1" in
+        *:*) echo "$1" | grep -qE '^[0-9A-Fa-f:]+$' ;;
+        *) return 1 ;;
+    esac
+}
+
 get_native_public_ipv4() {
     command -v ip >/dev/null 2>&1 || return 1
     local _iface _local_ip _ip _url
@@ -394,7 +427,7 @@ detect_network() {
 
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -q ':'; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
+        if is_valid_ipv6 "$_ip"; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
     done
 
     if command -v ip >/dev/null 2>&1; then
@@ -602,7 +635,7 @@ download_anytls() {
     )
 
     local _tmp_archive _tmp_dir _ok=0 _url _host
-    _tmp_dir=$(mktemp -d /tmp/sing-box-XXXXXX) || return 1
+    _tmp_dir=$(mktemp -d "$(disk_tmp_dir)/sing-box-XXXXXX") || return 1
     _tmp_archive="${_tmp_dir}/${_asset}"
 
     for _url in "${_urls[@]}"; do
@@ -918,7 +951,7 @@ generate_certificate() {
     if [ "$_force" != "force" ] && [ -s "$ANYTLS_CERT" ] && [ -s "$ANYTLS_KEY" ]; then
         return 0
     fi
-    _tmp_dir=$(mktemp -d /tmp/anytls-cert-XXXXXX) || return 1
+    _tmp_dir=$(mktemp -d "$(disk_tmp_dir)/anytls-cert-XXXXXX") || return 1
     _tmp_cert="$_tmp_dir/cert.pem"
     _tmp_key="$_tmp_dir/private.key"
     if openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
@@ -970,7 +1003,7 @@ check_config() {
 }
 
 backup_current_install() {
-    INSTALL_BACKUP_DIR=$(mktemp -d /tmp/anytls-backup-XXXXXX) || return 1
+    INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/anytls-backup-XXXXXX") || return 1
     [ ! -f "$ANYTLS_CONFIG" ] || cp -a "$ANYTLS_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
     [ ! -d "$ANYTLS_META" ] || cp -a "$ANYTLS_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
     [ ! -d "$ANYTLS_CERT_DIR" ] || cp -a "$ANYTLS_CERT_DIR" "$INSTALL_BACKUP_DIR/cert" || { discard_install_backup; return 1; }
@@ -979,17 +1012,48 @@ backup_current_install() {
     [ ! -f "$SYSTEMD_SERVICE" ] || cp -a "$SYSTEMD_SERVICE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
     [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
     service_is_active && : > "$INSTALL_BACKUP_DIR/was-active" || true
+    service_is_enabled && : > "$INSTALL_BACKUP_DIR/was-enabled" || true
+    arm_install_rollback
     return 0
+}
+
+arm_install_rollback() {
+    [ "$INSTALL_ROLLBACK_ARMED" = "0" ] || return 0
+    INSTALL_PREV_INT_TRAP=$(trap -p INT)
+    INSTALL_PREV_TERM_TRAP=$(trap -p TERM)
+    trap 'rollback_install_on_signal 130' INT
+    trap 'rollback_install_on_signal 143' TERM
+    INSTALL_ROLLBACK_ARMED=1
+}
+
+disarm_install_rollback() {
+    [ "$INSTALL_ROLLBACK_ARMED" = "1" ] || return 0
+    trap - INT TERM
+    [ -z "$INSTALL_PREV_INT_TRAP" ] || eval "$INSTALL_PREV_INT_TRAP"
+    [ -z "$INSTALL_PREV_TERM_TRAP" ] || eval "$INSTALL_PREV_TERM_TRAP"
+    INSTALL_PREV_INT_TRAP=""
+    INSTALL_PREV_TERM_TRAP=""
+    INSTALL_ROLLBACK_ARMED=0
+}
+
+rollback_install_on_signal() {
+    local _status="$1"
+    trap - INT TERM
+    echo -e "\n${YELLOW}安装被中断，正在恢复原配置和服务...${PLAIN}" >&2
+    restore_current_install
+    exit "$_status"
 }
 
 discard_install_backup() {
     [ -n "$INSTALL_BACKUP_DIR" ] && rm -rf "$INSTALL_BACKUP_DIR"
     INSTALL_BACKUP_DIR=""
+    disarm_install_rollback
 }
 
 restore_current_install() {
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
     service_stop
+    service_disable
     rm -f "$ANYTLS_CONFIG" "$ANYTLS_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
     rm -rf "$ANYTLS_META" "$ANYTLS_CERT_DIR"
 
@@ -1005,6 +1069,7 @@ restore_current_install() {
     [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SYSTEMD_SERVICE"
     [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
+    [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
     [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
     discard_install_backup
 }
@@ -1142,6 +1207,16 @@ service_is_active() {
         rc-service anytls-server status 2>/dev/null | grep -q "started"
     else
         [ -f /var/run/anytls-server.pid ] && kill -0 "$(cat /var/run/anytls-server.pid)" 2>/dev/null
+    fi
+}
+
+service_is_enabled() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl is-enabled --quiet anytls-server 2>/dev/null
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-update show default 2>/dev/null | grep -qE '(^|[[:space:]])anytls-server([[:space:]]|$)'
+    else
+        return 1
     fi
 }
 
@@ -1697,7 +1772,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clear
+        clear_screen
         local _auto_status="${RED}未启用${PLAIN}"
         if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$AUTO_UPDATE_SCRIPT"; then
             _auto_status="${GREEN}已启用${PLAIN}"
@@ -1733,7 +1808,7 @@ manage_anytls() {
         return
     fi
     while true; do
-        clear
+        clear_screen
         local STATUS
         service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
 
@@ -1784,7 +1859,7 @@ manage_anytls() {
 # ============================================================
 main_menu() {
     while true; do
-        clear
+        clear_screen
         local STATUS _ver_line
         if [ -f "$ANYTLS_CONFIG" ] && [ -x "$ANYTLS_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
             service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
@@ -1799,7 +1874,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.16${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.17${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

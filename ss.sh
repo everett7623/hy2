@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.0.16
+# 版本：v2.0.17
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -57,6 +57,20 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
+clear_screen() {
+    [ -t 1 ] || return 0
+    command -v clear >/dev/null 2>&1 && clear 2>/dev/null && return 0
+    printf '\033[2J\033[H'
+}
+
+disk_tmp_dir() {
+    if [ -d /var/tmp ] && [ -w /var/tmp ]; then
+        printf '%s' /var/tmp
+    else
+        printf '%s' "${TMPDIR:-/tmp}"
+    fi
+}
+
 # --- 路径 ---
 SS_BIN="/usr/local/bin/ssserver"
 SS_CONFIG="/etc/shadowsocks-rust/config.json"
@@ -66,6 +80,9 @@ OPENRC_SERVICE="/etc/init.d/shadowsocks-server"
 AUTO_UPDATE_SCRIPT="/usr/local/bin/ss-autoupdate.sh"
 AUTO_UPDATE_LOG="/var/log/ss-autoupdate.log"
 INSTALL_BACKUP_DIR=""
+INSTALL_ROLLBACK_ARMED=0
+INSTALL_PREV_INT_TRAP=""
+INSTALL_PREV_TERM_TRAP=""
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -123,6 +140,13 @@ is_valid_ipv4() {
     echo "$1" | awk -F. 'NF != 4 { exit 1 } { for (i=1; i<=4; i++) if ($i !~ /^[0-9]+$/ || $i > 255) exit 1 }'
 }
 
+is_valid_ipv6() {
+    case "$1" in
+        *:*) echo "$1" | grep -qE '^[0-9A-Fa-f:]+$' ;;
+        *) return 1 ;;
+    esac
+}
+
 detect_warp() {
     if command -v ip >/dev/null 2>&1 && ip link show 2>/dev/null | grep -qE '^[0-9]+: (wgcf|warp|wg)[^:]*:'; then
         return 0
@@ -161,7 +185,7 @@ detect_network() {
     # IPv6 优先探测
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -q ':'; then
+        if is_valid_ipv6 "$_ip"; then
             PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break
         fi
     done
@@ -196,7 +220,7 @@ detect_network() {
         echo -e "${YELLOW}建议在 双栈(IPv4+IPv6) 或 纯 IPv6 的 VPS 上使用。${PLAIN}"
         echo -e "${RED}==========================================================${PLAIN}"
         read -r -p "是否强制继续安装？(风险自负) [y/N]: " _force
-        [[ ! "$_force" =~ ^[yY]$ ]] && echo "已取消。" && exit 1
+        [[ "$_force" =~ ^[yY]$ ]] || { echo "已取消。"; return 1; }
     fi
 }
 
@@ -310,6 +334,16 @@ service_is_active() {
     fi
 }
 
+service_is_enabled() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl is-enabled --quiet shadowsocks-server 2>/dev/null
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-update show default 2>/dev/null | grep -qE '(^|[[:space:]])shadowsocks-server([[:space:]]|$)'
+    else
+        return 1
+    fi
+}
+
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
         journalctl -u shadowsocks-server -n 50 --no-pager
@@ -361,23 +395,54 @@ EOF
 }
 
 backup_current_install() {
-    INSTALL_BACKUP_DIR=$(mktemp -d /tmp/ss-install-backup-XXXXXX 2>/dev/null) || return 1
+    INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/ss-install-backup-XXXXXX" 2>/dev/null) || return 1
     [ ! -f "$SS_BIN" ] || cp -a "$SS_BIN" "$INSTALL_BACKUP_DIR/bin" || { discard_install_backup; return 1; }
     [ ! -f "$SS_CONFIG" ] || cp -a "$SS_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
     [ ! -d "$SS_META" ] || cp -a "$SS_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
     [ ! -f "$SERVICE_FILE" ] || cp -a "$SERVICE_FILE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
     [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
     service_is_active && : > "$INSTALL_BACKUP_DIR/was-active" || true
+    service_is_enabled && : > "$INSTALL_BACKUP_DIR/was-enabled" || true
+    arm_install_rollback
+}
+
+arm_install_rollback() {
+    [ "$INSTALL_ROLLBACK_ARMED" = "0" ] || return 0
+    INSTALL_PREV_INT_TRAP=$(trap -p INT)
+    INSTALL_PREV_TERM_TRAP=$(trap -p TERM)
+    trap 'rollback_install_on_signal 130' INT
+    trap 'rollback_install_on_signal 143' TERM
+    INSTALL_ROLLBACK_ARMED=1
+}
+
+disarm_install_rollback() {
+    [ "$INSTALL_ROLLBACK_ARMED" = "1" ] || return 0
+    trap - INT TERM
+    [ -z "$INSTALL_PREV_INT_TRAP" ] || eval "$INSTALL_PREV_INT_TRAP"
+    [ -z "$INSTALL_PREV_TERM_TRAP" ] || eval "$INSTALL_PREV_TERM_TRAP"
+    INSTALL_PREV_INT_TRAP=""
+    INSTALL_PREV_TERM_TRAP=""
+    INSTALL_ROLLBACK_ARMED=0
+}
+
+rollback_install_on_signal() {
+    local _status="$1"
+    trap - INT TERM
+    echo -e "\n${YELLOW}安装被中断，正在恢复原配置和服务...${PLAIN}" >&2
+    restore_current_install
+    exit "$_status"
 }
 
 discard_install_backup() {
     [ -n "$INSTALL_BACKUP_DIR" ] && rm -rf "$INSTALL_BACKUP_DIR"
     INSTALL_BACKUP_DIR=""
+    disarm_install_rollback
 }
 
 restore_current_install() {
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
     service_stop
+    service_disable
     rm -f "$SS_BIN" "$SS_CONFIG" "$SERVICE_FILE" "$OPENRC_SERVICE"
     rm -rf "$SS_META"
     [ -f "$INSTALL_BACKUP_DIR/bin" ] && cp -a "$INSTALL_BACKUP_DIR/bin" "$SS_BIN"
@@ -386,6 +451,7 @@ restore_current_install() {
     [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SERVICE_FILE"
     [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
+    [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
     [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
     discard_install_backup
 }
@@ -395,7 +461,16 @@ restore_current_install() {
 # ============================================================
 
 install_dependencies() {
-    echo -e "${YELLOW}正在安装必要依赖...${PLAIN}"
+    local _cmd _ready=1
+    for _cmd in curl openssl tar xz ip; do
+        command -v "$_cmd" >/dev/null 2>&1 || _ready=0
+    done
+    if [ "$_ready" = "1" ]; then
+        echo -e "${GREEN}✓ 核心依赖已就绪，跳过软件源刷新${PLAIN}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}正在补齐必要依赖...${PLAIN}"
 
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -qq >/dev/null 2>&1
@@ -418,13 +493,24 @@ install_dependencies() {
     fi
 
     local _missing=0
-    for pkg in curl wget openssl tar; do
-        if ! command -v $pkg >/dev/null 2>&1; then
-            echo -e "${RED}致命错误: 系统中缺少组件 [ $pkg ]${PLAIN}"
+    for _cmd in curl openssl tar xz ip; do
+        if ! command -v "$_cmd" >/dev/null 2>&1; then
+            echo -e "${RED}致命错误: 系统中缺少组件 [ $_cmd ]${PLAIN}"
             _missing=1
         fi
     done
-    [ "$_missing" -eq 1 ] && exit 1
+    [ "$_missing" -eq 1 ] && return 1
+    return 0
+}
+
+download_file() {
+    local _url="$1" _dest="$2"
+    if command -v curl >/dev/null 2>&1 && \
+       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
+        return 0
+    fi
+    command -v wget >/dev/null 2>&1 && \
+        wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
 }
 
 valid_port() {
@@ -472,18 +558,18 @@ download_ss() {
 
     local _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${LAST_VERSION}/shadowsocks-${LAST_VERSION}.${_arch}.tar.xz"
     local _tmp_archive _tmp_dir
-    _tmp_archive=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz 2>/dev/null) || {
+    _tmp_archive=$(mktemp "$(disk_tmp_dir)/ss-rust-XXXXXX.tar.xz" 2>/dev/null) || {
         echo -e "${RED}无法创建下载临时文件${PLAIN}"
         return 1
     }
-    _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX 2>/dev/null) || {
+    _tmp_dir=$(mktemp -d "$(disk_tmp_dir)/ss-rust-XXXXXX" 2>/dev/null) || {
         rm -f "$_tmp_archive"
         echo -e "${RED}无法创建解压临时目录${PLAIN}"
         return 1
     }
 
     echo -e "${YELLOW}正在下载 shadowsocks-rust ${LAST_VERSION} (${_arch})...${PLAIN}"
-    wget -q --show-progress --timeout=30 -O "$_tmp_archive" "$_url" \
+    download_file "$_url" "$_tmp_archive" \
         || { echo -e "${RED}下载失败，请检查网络${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
     tar -xf "$_tmp_archive" -C "$_tmp_dir" ssserver \
         || { echo -e "${RED}解压失败${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
@@ -507,7 +593,7 @@ download_ss() {
 
 install_ss() {
     install_dependencies || return
-    detect_network
+    detect_network || return
     get_latest_version || return
     backup_current_install || { echo -e "${RED}无法创建重装备份，已取消安装${PLAIN}"; return; }
     download_ss || { restore_current_install; return; }
@@ -1198,7 +1284,7 @@ test_connection() {
 
 manage_ss() {
     while true; do
-        clear
+        clear_screen
         echo -e "\n${SKYBLUE}--- 管理 Shadowsocks ---${PLAIN}"
         echo -e "1. 查看配置 (全客户端兼容)"
         echo -e "2. 重启服务"
@@ -1357,6 +1443,20 @@ restart_service() {
     fi
 }
 
+download_file() {
+    local _url="$1" _dest="$2"
+    if command -v curl >/dev/null 2>&1 && \
+       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
+        return 0
+    fi
+    command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
+}
+
+disk_tmp_dir() {
+    [ -d /var/tmp ] && [ -w /var/tmp ] && { printf '%s' /var/tmp; return; }
+    printf '%s' "${TMPDIR:-/tmp}"
+}
+
 main() {
     local _latest _current _arch _url
     local _tmp_a _tmp_dir _candidate _backup _was_active=0
@@ -1377,10 +1477,10 @@ main() {
     echo "[$TIMESTAMP] 发现新版本: $_current → $_latest，开始更新..." >> "$LOG"
 
     _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${_latest}/shadowsocks-${_latest}.${_arch}.tar.xz"
-    _tmp_a=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz 2>/dev/null)
-    _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX 2>/dev/null)
+    _tmp_a=$(mktemp "$(disk_tmp_dir)/ss-rust-XXXXXX.tar.xz" 2>/dev/null)
+    _tmp_dir=$(mktemp -d "$(disk_tmp_dir)/ss-rust-XXXXXX" 2>/dev/null)
     if [ -n "$_tmp_a" ] && [ -n "$_tmp_dir" ] && \
-       wget -q --timeout=60 -O "$_tmp_a" "$_url" 2>/dev/null && \
+       download_file "$_url" "$_tmp_a" && \
        tar -xf "$_tmp_a" -C "$_tmp_dir" ssserver 2>/dev/null; then
         _candidate="$_tmp_dir/ssserver"
         chmod +x "$_candidate"
@@ -1556,7 +1656,7 @@ show_system_info() {
 
 server_tools_menu() {
     while true; do
-        clear
+        clear_screen
         echo -e "\n${SKYBLUE}--- 服务器工具 ---${PLAIN}"
         echo -e "1. 开启标准 BBR + fq"
         echo -e "2. 查看 BBR 状态"
@@ -1585,7 +1685,7 @@ server_tools_menu() {
 
 main_menu() {
     while true; do
-        clear
+        clear_screen
 
         local STATUS
         if [ -f "$SS_BIN" ]; then
@@ -1602,7 +1702,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.16${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.17${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

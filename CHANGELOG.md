@@ -4,6 +4,18 @@
 
 ---
 
+## v2.0.17 (2026-07-13)
+
+- Restore Hysteria 2, Shadowsocks, and AnyTLS files plus service active/enabled state when reinstall is interrupted by `Ctrl+C` or `TERM`.
+- Skip package-manager refreshes when core dependencies already exist, reducing install time and failures caused by slow mirrors or package locks.
+- Allow Hysteria 2, Shadowsocks, and generated auto-updaters to fall back between curl and wget instead of requiring one downloader.
+- Prefer disk-backed `/var/tmp` for large downloads, extraction, and transactional backups to reduce tmpfs memory pressure on small VPS instances.
+- Reject malformed IPv6 discovery responses and cancel only the current Shadowsocks install when the IPv4-only warning is declined.
+- Make menu clearing safe in non-TTY, container, serial-console, and missing-TERM environments.
+- Add regression coverage for interrupted rollback, service enablement restoration, downloader fallback, IPv6 validation, and IPv4-only cancellation.
+
+---
+
 ## v2.0.16 (2026-07-13)
 
 - Prevent AnyTLS, Hysteria 2, and Shadowsocks exports from using a WARP egress IPv4 as the inbound node address.

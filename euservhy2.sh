@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.16
+#  版本: v2.0.17
 #  更新时间: 2026-07-13
 # ============================================================
 
@@ -54,6 +54,12 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
+clear_screen() {
+    [ -t 1 ] || return 0
+    command -v clear >/dev/null 2>&1 && clear 2>/dev/null && return 0
+    printf '\033[2J\033[H'
+}
+
 # ---- 全局变量 ----
 HY2_VERSION=""
 HY2_CONFIG_DIR="/etc/hysteria"
@@ -61,7 +67,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.16"
+SCRIPT_VERSION="2.0.17"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -278,7 +284,7 @@ restore_dns() {
 #  Banner
 # ============================================================
 show_banner() {
-    clear
+    clear_screen
     echo -e "${CYAN}"
     echo "  ███████╗██╗   ██╗███████╗███████╗██████╗ ██╗   ██╗    ██╗  ██╗██╗   ██╗██████╗ "
     echo "  ██╔════╝██║   ██║██╔════╝██╔════╝██╔══██╗██║   ██║    ██║  ██║╚██╗ ██╔╝╚════██╗"

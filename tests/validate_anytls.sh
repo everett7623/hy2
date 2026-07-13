@@ -60,6 +60,9 @@ is_valid_ipv4 '255.255.255.255'
 ! is_valid_ipv4 '999.999.999.999'
 ! is_valid_ipv4 '1.2.3'
 ! is_valid_ipv4 '1.2.3.4.example'
+is_valid_ipv6 '2001:db8::10'
+! is_valid_ipv6 'upstream:error'
+! is_valid_ipv6 '<html>:error'
 
 # WARP 开启时必须绑定原生网卡查询公网入口，不能导出 WARP 出口地址。
 ip() {
@@ -180,12 +183,41 @@ printf '#!/bin/sh\necho "sing-box version 1.13.14"\n' > "$SING_BOX_BIN"
 chmod +x "$SING_BOX_BIN"
 ANYTLS_BIN="$tmp/anytls-server"
 write_wrapper
+service_is_active() { return 0; }
+service_is_enabled() { return 0; }
+service_stop() { : > "$tmp/stopped"; }
+service_disable() { : > "$tmp/disabled"; }
+service_enable() { : > "$tmp/enabled"; }
+service_start() { : > "$tmp/restarted"; }
+trap -p INT > "$tmp/int-trap-before"
 backup_current_install
 printf 'broken' > "$ANYTLS_CONFIG"
 printf 'broken' > "$SING_BOX_BIN"
 restore_current_install
 grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
 grep -q 'sing-box version 1.13.14' "$SING_BOX_BIN"
+[ -f "$tmp/disabled" ]
+[ -f "$tmp/enabled" ]
+[ -f "$tmp/restarted" ]
+trap -p INT > "$tmp/int-trap-after"
+cmp -s "$tmp/int-trap-before" "$tmp/int-trap-after"
+
+# Ctrl+C/TERM 处理器必须回滚半成品并保留标准退出码。
+rm -f "$tmp/stopped" "$tmp/disabled" "$tmp/enabled" "$tmp/restarted"
+backup_current_install
+printf 'interrupted' > "$ANYTLS_CONFIG"
+trap - ERR
+set +e
+(rollback_install_on_signal 130) 2>/dev/null
+rollback_status=$?
+set -e
+trap 'echo "AnyTLS validation failed at line $LINENO" >&2' ERR
+[ "$rollback_status" = '130' ]
+grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
+[ -f "$tmp/enabled" ]
+[ -f "$tmp/restarted" ]
+INSTALL_BACKUP_DIR=""
+disarm_install_rollback
 
 # 已是最新版时不得重复下载或替换二进制。
 get_latest_version() { LAST_VERSION_TAG=v1.13.14; return 0; }

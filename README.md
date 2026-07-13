@@ -9,8 +9,8 @@
 ![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)
 ![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)
 
-> 当前版本：v2.0.16（2026-07-13）
-> 本次更新：修复 WARP 环境下节点地址误用出口 IPv4，并增强 Hysteria 2 与 Shadowsocks 的升级、重装回滚和配置原子写入。
+> 当前版本：v2.0.17（2026-07-13）
+> 本次更新：全面加固低内存、NAT、IPv6-only、极简系统和非标准终端环境下的安装、下载、回滚与交互体验。
 
 ---
 
@@ -25,7 +25,7 @@
 | 更新升级 | 区分脚本缓存刷新与核心二进制升级，避免误操作 |
 | 手动备份 | VPS 配置备份 / 恢复由用户手动选择，不在安装时自动写入回滚包 |
 | BBR 优化 | 默认只展示状态；需要时手动开启标准 `bbr + fq` |
-| 低依赖 | 纯 Bash 管理逻辑，不依赖 `jq`；Shadowsocks 使用 musl 静态编译 |
+| 低依赖 | 纯 Bash 管理逻辑，不依赖 `jq`；支持 curl / wget 下载降级，Shadowsocks 使用 musl 静态编译 |
 
 ---
 
@@ -133,7 +133,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 | Arch / Manjaro | 滚动版 |
 | Alpine Linux | 3.x |
 
-支持标准 VPS、NAT VPS、IPv6-only、双栈环境与低配机器。EUserv 专用脚本优先适配 Debian IPv6-only 环境。
+支持标准 VPS、NAT VPS、IPv6-only、双栈环境与低配机器。安装会复用已有核心依赖，大文件下载、解压和事务备份优先使用磁盘型 `/var/tmp`，减少小内存机器的 tmpfs 占用。EUserv 专用脚本优先适配 Debian IPv6-only 环境。
 
 ---
 
