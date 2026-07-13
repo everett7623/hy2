@@ -6,6 +6,7 @@
 - [x] 为升级流程保留原服务停止状态并校验目标版本
 - [x] 通过同目录临时文件原子写入 HY2/SS 配置
 - [x] 增加 HY2/SS 网络检测与回滚测试
+- [x] 同步五个脚本、菜单、README、测试断言和 CHANGELOG 至 v2.0.16
 - [x] 运行 `bash tests/validate_scripts.sh`
 - [ ] 在一次性 VPS 验证 systemd/OpenRC、WARP 和升级失败回滚
 

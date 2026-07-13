@@ -9,8 +9,8 @@
 ![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)
 ![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)
 
-> 当前版本：v2.0.15（2026-07-04）
-> 本次更新：新增 README 五张运行截图；导出配置和二维码按所选格式输出，不再默认刷出全部客户端格式。
+> 当前版本：v2.0.16（2026-07-13）
+> 本次更新：修复 WARP 环境下节点地址误用出口 IPv4，并增强 Hysteria 2 与 Shadowsocks 的升级、重装回滚和配置原子写入。
 
 ---
 

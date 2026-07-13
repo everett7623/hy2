@@ -4,13 +4,18 @@
 
 ---
 
-## v2.0.15 (2026-07-04)
+## v2.0.16 (2026-07-13)
 
 - Prevent AnyTLS, Hysteria 2, and Shadowsocks exports from using a WARP egress IPv4 as the inbound node address.
 - Repair legacy metadata containing a confirmed WARP address when a native public IPv4 can be detected.
 - Preserve stopped service state during HY2 and Shadowsocks core upgrades, with target-version validation before replacement.
 - Add transactional reinstall rollback for HY2 and Shadowsocks binaries, configs, metadata, certificates, and service files.
 - Write HY2 YAML and Shadowsocks JSON configs through same-directory temporary files before atomic replacement.
+
+---
+
+## v2.0.15 (2026-07-04)
+
 - Add five README screenshot slots backed by `docs/assets/screenshots/` images.
 - Make the unified export menu pass the selected output format to protocol scripts.
 - Make the QR menu output QR content only instead of all client formats.
