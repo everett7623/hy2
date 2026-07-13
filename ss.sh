@@ -65,6 +65,7 @@ SERVICE_FILE="/etc/systemd/system/shadowsocks-server.service"
 OPENRC_SERVICE="/etc/init.d/shadowsocks-server"
 AUTO_UPDATE_SCRIPT="/usr/local/bin/ss-autoupdate.sh"
 AUTO_UPDATE_LOG="/var/log/ss-autoupdate.log"
+INSTALL_BACKUP_DIR=""
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -118,8 +119,43 @@ detect_init() {
     fi
 }
 
+is_valid_ipv4() {
+    echo "$1" | awk -F. 'NF != 4 { exit 1 } { for (i=1; i<=4; i++) if ($i !~ /^[0-9]+$/ || $i > 255) exit 1 }'
+}
+
+detect_warp() {
+    if command -v ip >/dev/null 2>&1 && ip link show 2>/dev/null | grep -qE '^[0-9]+: (wgcf|warp|wg)[^:]*:'; then
+        return 0
+    fi
+    command -v warp-cli >/dev/null 2>&1 && warp-cli status 2>/dev/null | grep -qiE 'connected|已连接'
+}
+
+get_native_public_ipv4() {
+    command -v ip >/dev/null 2>&1 || return 1
+    local _iface _local_ip _ip _url
+    _iface=$(ip -4 route show default 2>/dev/null | awk '/default/ { for(i=1;i<=NF;i++) if($i=="dev" && $(i+1) !~ /wgcf|warp|^tun|^wg|tailscale|zt/) { print $(i+1); exit } }')
+    [ -n "$_iface" ] || return 1
+    _local_ip=$(ip -4 addr show dev "$_iface" scope global 2>/dev/null | awk '/inet / { sub(/\/.*/, "", $2); print $2; exit }')
+    [ -n "$_local_ip" ] || return 1
+    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
+        _ip=$(curl -s4 --interface "$_local_ip" --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        is_valid_ipv4 "$_ip" && { printf '%s' "$_ip"; return 0; }
+    done
+    return 1
+}
+
+get_default_public_ipv4() {
+    local _ip _url
+    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        is_valid_ipv4 "$_ip" && { printf '%s' "$_ip"; return 0; }
+    done
+    return 1
+}
+
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
+    NAT_MODE=0; IPV6_ONLY=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""
     local _ip _url
 
     # IPv6 优先探测
@@ -130,22 +166,12 @@ detect_network() {
         fi
     done
 
-    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-            PUBLIC_IP="$_ip"; HAS_IPV4=1; break
-        fi
-    done
-
-    # 过滤 WARP/隧道 虚拟 IPv4：纯 IPv6 VPS + WARP 场景下，
-    # curl -4 会通过 WARP 拿到 Cloudflare 的 IPv4，但无法用于入站连接
-    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
-        local _real_ipv4
-        _real_ipv4=$(ip -4 addr show scope global 2>/dev/null | awk '
-            /^[0-9]+:/ { iface=$2; sub(/:.*/,"",iface) }
-            /inet / && iface !~ /wgcf|warp|^tun|^wg|tailscale|zt/ { print "1"; exit }
-        ')
-        [ -z "$_real_ipv4" ] && { HAS_IPV4=0; PUBLIC_IP=""; }
+    _ip=$(get_native_public_ipv4 2>/dev/null || true)
+    if is_valid_ipv4 "$_ip"; then
+        PUBLIC_IP="$_ip"; HAS_IPV4=1
+    elif ! detect_warp; then
+        _ip=$(get_default_public_ipv4 2>/dev/null || true)
+        is_valid_ipv4 "$_ip" && { PUBLIC_IP="$_ip"; HAS_IPV4=1; }
     fi
 
     if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
@@ -334,6 +360,36 @@ EOF
     chmod +x "$OPENRC_SERVICE"
 }
 
+backup_current_install() {
+    INSTALL_BACKUP_DIR=$(mktemp -d /tmp/ss-install-backup-XXXXXX 2>/dev/null) || return 1
+    [ ! -f "$SS_BIN" ] || cp -a "$SS_BIN" "$INSTALL_BACKUP_DIR/bin" || { discard_install_backup; return 1; }
+    [ ! -f "$SS_CONFIG" ] || cp -a "$SS_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
+    [ ! -d "$SS_META" ] || cp -a "$SS_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
+    [ ! -f "$SERVICE_FILE" ] || cp -a "$SERVICE_FILE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
+    [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
+    service_is_active && : > "$INSTALL_BACKUP_DIR/was-active" || true
+}
+
+discard_install_backup() {
+    [ -n "$INSTALL_BACKUP_DIR" ] && rm -rf "$INSTALL_BACKUP_DIR"
+    INSTALL_BACKUP_DIR=""
+}
+
+restore_current_install() {
+    [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
+    service_stop
+    rm -f "$SS_BIN" "$SS_CONFIG" "$SERVICE_FILE" "$OPENRC_SERVICE"
+    rm -rf "$SS_META"
+    [ -f "$INSTALL_BACKUP_DIR/bin" ] && cp -a "$INSTALL_BACKUP_DIR/bin" "$SS_BIN"
+    [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$SS_CONFIG"
+    [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$SS_META"
+    [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SERVICE_FILE"
+    [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
+    [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
+    [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
+    discard_install_backup
+}
+
 # ============================================================
 # 依赖安装
 # ============================================================
@@ -416,8 +472,15 @@ download_ss() {
 
     local _url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${LAST_VERSION}/shadowsocks-${LAST_VERSION}.${_arch}.tar.xz"
     local _tmp_archive _tmp_dir
-    _tmp_archive=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz)
-    _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX)
+    _tmp_archive=$(mktemp /tmp/ss-rust-XXXXXX.tar.xz 2>/dev/null) || {
+        echo -e "${RED}无法创建下载临时文件${PLAIN}"
+        return 1
+    }
+    _tmp_dir=$(mktemp -d /tmp/ss-rust-XXXXXX 2>/dev/null) || {
+        rm -f "$_tmp_archive"
+        echo -e "${RED}无法创建解压临时目录${PLAIN}"
+        return 1
+    }
 
     echo -e "${YELLOW}正在下载 shadowsocks-rust ${LAST_VERSION} (${_arch})...${PLAIN}"
     wget -q --show-progress --timeout=30 -O "$_tmp_archive" "$_url" \
@@ -425,8 +488,14 @@ download_ss() {
     tar -xf "$_tmp_archive" -C "$_tmp_dir" ssserver \
         || { echo -e "${RED}解压失败${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
     chmod +x "$_tmp_dir/ssserver"
-    "$_tmp_dir/ssserver" --version >/dev/null 2>&1 \
-        || { echo -e "${RED}下载的二进制无效${PLAIN}"; rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"; return 1; }
+    local _downloaded_raw _downloaded_version
+    _downloaded_raw=$("$_tmp_dir/ssserver" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    [ -n "$_downloaded_raw" ] && _downloaded_version="v${_downloaded_raw}"
+    if [ "${_downloaded_version:-}" != "$LAST_VERSION" ]; then
+        echo -e "${RED}下载的二进制版本校验失败（期望 ${LAST_VERSION}，得到 ${_downloaded_version:-未知}）${PLAIN}"
+        rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"
+        return 1
+    fi
     mv -f "$_tmp_dir/ssserver" "$SS_BIN"
     rm -f "$_tmp_archive"; rm -rf "$_tmp_dir"
     echo -e "${GREEN}下载完成${PLAIN}"
@@ -440,7 +509,8 @@ install_ss() {
     install_dependencies || return
     detect_network
     get_latest_version || return
-    download_ss || return
+    backup_current_install || { echo -e "${RED}无法创建重装备份，已取消安装${PLAIN}"; return; }
+    download_ss || { restore_current_install; return; }
 
     mkdir -p /etc/shadowsocks-rust "$SS_META"
 
@@ -448,19 +518,23 @@ install_ss() {
     if [ "$NAT_MODE" = "1" ]; then
         read -r -p "请输入本机监听端口 [默认 28888]: " LISTEN_PORT
         [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="28888"
-        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return; }
+        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; restore_current_install; return; }
         read -r -p "请输入对外转发端口 [留空=与监听端口相同]: " EXT_PORT
         [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
-        valid_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return; }
+        valid_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; restore_current_install; return; }
     else
         read -r -p "请输入端口 [默认 28888]: " LISTEN_PORT
         [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="28888"
-        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return; }
+        valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; restore_current_install; return; }
         EXT_PORT="$LISTEN_PORT"
     fi
 
-    _select_cipher || return
-    _write_config
+    _select_cipher || { restore_current_install; return; }
+    _write_config || {
+        echo -e "${RED}配置文件写入失败${PLAIN}"
+        restore_current_install
+        return
+    }
     _save_meta
 
     open_ports "$LISTEN_PORT"
@@ -482,10 +556,13 @@ install_ss() {
     else
         echo -e "${RED}✗ 启动失败，请查看以下日志排查原因：${PLAIN}"
         service_logs
+        restore_current_install
+        echo -e "${YELLOW}已恢复安装前的 Shadowsocks 配置和服务${PLAIN}"
         read -r -p "按回车键返回主菜单..." _tmp
         return
     fi
 
+    discard_install_backup
     show_config
 }
 
@@ -516,10 +593,12 @@ _select_cipher() {
 
 # 写入 config.json
 _write_config() {
-    local LISTEN_ADDR="0.0.0.0"
+    local LISTEN_ADDR="0.0.0.0" _config_dir _tmp_config
     [ "$HAS_IPV6" = "1" ] && LISTEN_ADDR="::"
 
-    cat > "$SS_CONFIG" <<EOF
+    _config_dir=$(dirname "$SS_CONFIG")
+    _tmp_config=$(mktemp "${_config_dir}/config.json.XXXXXX" 2>/dev/null) || return 1
+    if ! cat > "$_tmp_config" <<EOF
 {
     "server": "$LISTEN_ADDR",
     "server_port": $LISTEN_PORT,
@@ -529,6 +608,12 @@ _write_config() {
     "timeout": 300
 }
 EOF
+    then
+        rm -f "$_tmp_config"
+        return 1
+    fi
+    chmod 600 "$_tmp_config" || { rm -f "$_tmp_config"; return 1; }
+    mv -f "$_tmp_config" "$SS_CONFIG"
 }
 
 # 写入 meta 目录
@@ -566,6 +651,9 @@ upgrade_ss() {
 
     echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
 
+    local _was_active=0
+    service_is_active && _was_active=1 || true
+
     # 备份旧二进制，下载/启动失败时回滚
     cp "$SS_BIN" "${SS_BIN}.bak" 2>/dev/null || {
         echo -e "${RED}无法备份当前二进制，取消升级${PLAIN}"
@@ -573,10 +661,9 @@ upgrade_ss() {
     }
 
     if download_ss; then
-        service_restart
-        sleep 2
+        [ "$_was_active" = "0" ] || { service_restart; sleep 2; }
 
-        if service_is_active; then
+        if [ "$_was_active" = "0" ] || service_is_active; then
             local _new_raw _new_ver=""
             _new_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             [ -n "$_new_raw" ] && _new_ver="v${_new_raw}"
@@ -585,14 +672,14 @@ upgrade_ss() {
         else
             echo -e "${RED}✗ 升级后服务启动失败，回滚中...${PLAIN}"
             mv "${SS_BIN}.bak" "$SS_BIN"
-            service_restart
+            [ "$_was_active" = "0" ] || service_restart
             echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
             service_logs
         fi
     else
         echo -e "${RED}✗ 下载失败，回滚中...${PLAIN}"
         mv "${SS_BIN}.bak" "$SS_BIN"
-        service_restart
+        [ "$_was_active" = "0" ] || service_restart
         echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
     fi
     sleep 2
@@ -672,7 +759,12 @@ modify_config() {
     cp "$SS_CONFIG" "$_config_backup"
     cp -a "$SS_META"/. "$_meta_backup"/ 2>/dev/null || true
 
-    _write_config
+    if ! _write_config; then
+        rm -f "$_config_backup"
+        rm -rf "$_meta_backup"
+        echo -e "${RED}配置文件写入失败，原配置未改变${PLAIN}"
+        return
+    fi
     _save_meta
     service_restart
     sleep 1
@@ -886,9 +978,22 @@ read_config_vars() {
     [[ -z "$PASSWORD"  ]] && PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
     [[ -z "$METHOD"    ]] && METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
 
+    if detect_warp; then
+        local _native_ipv4 _default_ipv4
+        _native_ipv4=$(get_native_public_ipv4 2>/dev/null || true)
+        _default_ipv4=$(get_default_public_ipv4 2>/dev/null || true)
+        if is_valid_ipv4 "$_native_ipv4"; then
+            PUBLIC_IP="$_native_ipv4"
+            [ ! -d "$SS_META" ] || printf '%s' "$PUBLIC_IP" > "$SS_META/public_ip"
+        elif is_valid_ipv4 "$_default_ipv4" && [ "$PUBLIC_IP" = "$_default_ipv4" ]; then
+            PUBLIC_IP=""
+            [ ! -d "$SS_META" ] || : > "$SS_META/public_ip"
+        fi
+    fi
+
     # IP 兜底
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
-        PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+        detect_warp || PUBLIC_IP=$(get_default_public_ipv4 2>/dev/null || true)
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
     fi
 }

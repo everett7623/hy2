@@ -192,6 +192,10 @@ grep -q 'qrcode|qr) show_config qrcode' hy2.sh
 grep -q 'install) install_ss' ss.sh
 grep -q 'info|node|export|all) show_config' ss.sh
 grep -q 'qrcode|qr) show_config qrcode' ss.sh
+grep -q '_downloaded_version.*LAST_VERSION' hy2.sh
+grep -q '_downloaded_version.*LAST_VERSION' ss.sh
+grep -q '\[ "\$_was_active" = "0" \] || { service_restart; sleep 2; }' hy2.sh
+grep -q '\[ "\$_was_active" = "0" \] || { service_restart; sleep 2; }' ss.sh
 grep -q 'install) install_anytls' anytls.sh
 grep -q 'info|node|export|all) show_config' anytls.sh
 grep -q 'qrcode|qr) show_config qrcode' anytls.sh
@@ -211,6 +215,8 @@ do
 done
 
 bash tests/validate_anytls.sh
+bash tests/validate_hy2_network.sh
+bash tests/validate_ss_network.sh
 
 tmp=$(mktemp)
 awk '

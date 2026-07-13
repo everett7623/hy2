@@ -81,6 +81,7 @@ SERVICE_FILE="/etc/systemd/system/hysteria-server.service"
 OPENRC_SERVICE="/etc/init.d/hysteria-server"
 AUTO_UPDATE_SCRIPT="/usr/local/bin/hy2-autoupdate.sh"
 AUTO_UPDATE_LOG="/var/log/hy2-autoupdate.log"
+INSTALL_BACKUP_DIR=""
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -253,20 +254,88 @@ EOF
     chmod +x "$OPENRC_SERVICE"
 }
 
+backup_current_install() {
+    INSTALL_BACKUP_DIR=$(mktemp -d /tmp/hy2-install-backup-XXXXXX 2>/dev/null) || return 1
+    [ ! -f "$HY_BIN" ] || cp -a "$HY_BIN" "$INSTALL_BACKUP_DIR/bin" || { discard_install_backup; return 1; }
+    [ ! -f "$HY_CONFIG" ] || cp -a "$HY_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
+    [ ! -d "$HY_META" ] || cp -a "$HY_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
+    [ ! -d "$HY_CERT_DIR" ] || cp -a "$HY_CERT_DIR" "$INSTALL_BACKUP_DIR/cert" || { discard_install_backup; return 1; }
+    [ ! -f "$SERVICE_FILE" ] || cp -a "$SERVICE_FILE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
+    [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
+    service_is_active && : > "$INSTALL_BACKUP_DIR/was-active" || true
+}
+
+discard_install_backup() {
+    [ -n "$INSTALL_BACKUP_DIR" ] && rm -rf "$INSTALL_BACKUP_DIR"
+    INSTALL_BACKUP_DIR=""
+}
+
+restore_current_install() {
+    [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
+    service_stop
+    rm -f "$HY_BIN" "$HY_CONFIG" "$SERVICE_FILE" "$OPENRC_SERVICE"
+    rm -rf "$HY_META" "$HY_CERT_DIR"
+    [ -f "$INSTALL_BACKUP_DIR/bin" ] && cp -a "$INSTALL_BACKUP_DIR/bin" "$HY_BIN"
+    [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$HY_CONFIG"
+    [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$HY_META"
+    [ -d "$INSTALL_BACKUP_DIR/cert" ] && cp -a "$INSTALL_BACKUP_DIR/cert" "$HY_CERT_DIR"
+    [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SERVICE_FILE"
+    [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
+    [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
+    [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
+    discard_install_backup
+}
+
 # ============================================================
 # 网络检测
 # ============================================================
 
-detect_network() {
-    echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
+is_valid_ipv4() {
+    echo "$1" | awk -F. 'NF != 4 { exit 1 } { for (i=1; i<=4; i++) if ($i !~ /^[0-9]+$/ || $i > 255) exit 1 }'
+}
 
+detect_warp() {
+    if command -v ip >/dev/null 2>&1 && ip link show 2>/dev/null | grep -qE '^[0-9]+: (wgcf|warp|wg)[^:]*:'; then
+        return 0
+    fi
+    command -v warp-cli >/dev/null 2>&1 && warp-cli status 2>/dev/null | grep -qiE 'connected|已连接'
+}
+
+get_native_public_ipv4() {
+    command -v ip >/dev/null 2>&1 || return 1
+    local _iface _local_ip _ip _url
+    _iface=$(ip -4 route show default 2>/dev/null | awk '/default/ { for(i=1;i<=NF;i++) if($i=="dev" && $(i+1) !~ /wgcf|warp|^tun|^wg|tailscale|zt/) { print $(i+1); exit } }')
+    [ -n "$_iface" ] || return 1
+    _local_ip=$(ip -4 addr show dev "$_iface" scope global 2>/dev/null | awk '/inet / { sub(/\/.*/, "", $2); print $2; exit }')
+    [ -n "$_local_ip" ] || return 1
+    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
+        _ip=$(curl -s4 --interface "$_local_ip" --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+        is_valid_ipv4 "$_ip" && { printf '%s' "$_ip"; return 0; }
+    done
+    return 1
+}
+
+get_default_public_ipv4() {
     local _ip _url
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
         _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-            PUBLIC_IP="$_ip"; HAS_IPV4=1; break
-        fi
+        is_valid_ipv4 "$_ip" && { printf '%s' "$_ip"; return 0; }
     done
+    return 1
+}
+
+detect_network() {
+    echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
+    NAT_MODE=0; IPV6_ONLY=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""
+
+    local _ip _url
+    _ip=$(get_native_public_ipv4 2>/dev/null || true)
+    if is_valid_ipv4 "$_ip"; then
+        PUBLIC_IP="$_ip"; HAS_IPV4=1
+    elif ! detect_warp; then
+        _ip=$(get_default_public_ipv4 2>/dev/null || true)
+        is_valid_ipv4 "$_ip" && { PUBLIC_IP="$_ip"; HAS_IPV4=1; }
+    fi
 
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
@@ -421,9 +490,11 @@ download_hy2() {
     fi
 
     chmod +x "$_tmp_bin"
-    if ! "$_tmp_bin" version >/dev/null 2>&1; then
+    local _downloaded_version
+    _downloaded_version=$("$_tmp_bin" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [ "$_downloaded_version" != "$LAST_VERSION" ]; then
         rm -f "$_tmp_bin"
-        echo -e "${RED}下载的二进制无效，已保留当前版本${PLAIN}"
+        echo -e "${RED}下载的二进制版本校验失败（期望 ${LAST_VERSION}，得到 ${_downloaded_version:-未知}）${PLAIN}"
         return 1
     fi
     mv -f "$_tmp_bin" "$HY_BIN"
@@ -565,6 +636,39 @@ gen_password() {
     printf '%s' "${_pass:0:20}"
 }
 
+write_hy2_config() {
+    local _listen_addr="$1" _config_dir _tmp_config
+    _config_dir=$(dirname "$HY_CONFIG")
+    _tmp_config=$(mktemp "${_config_dir}/config.yaml.XXXXXX" 2>/dev/null) || return 1
+    if ! cat > "$_tmp_config" <<EOF
+listen: $_listen_addr
+
+tls:
+  cert: $HY_CERT_DIR/server.crt
+  key: $HY_CERT_DIR/server.key
+
+auth:
+  type: password
+  password: "$PASSWORD"
+
+bandwidth:
+  up: ${BW_UP} mbps
+  down: ${BW_DOWN} mbps
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://$SNI/
+    rewriteHost: true
+EOF
+    then
+        rm -f "$_tmp_config"
+        return 1
+    fi
+    chmod 600 "$_tmp_config" || { rm -f "$_tmp_config"; return 1; }
+    mv -f "$_tmp_config" "$HY_CONFIG"
+}
+
 # ============================================================
 # 安装
 # ============================================================
@@ -574,16 +678,17 @@ install_hy2() {
     detect_network
     echo ""
     get_latest_version || return
-    download_hy2 || return
+    backup_current_install || { echo -e "${RED}无法创建重装备份，已取消安装${PLAIN}"; return; }
+    download_hy2 || { restore_current_install; return; }
 
     mkdir -p /etc/hysteria "$HY_CERT_DIR" "$HY_META"
 
     echo -e "\n${SKYBLUE}--- 配置 Hysteria2 ---${PLAIN}"
 
     if [ "$NAT_MODE" = "1" ]; then
-        configure_nat_port || return
+        configure_nat_port || { restore_current_install; return; }
     else
-        configure_std_port || return
+        configure_std_port || { restore_current_install; return; }
     fi
 
     # 自动放行端口（端口跳跃时放行整个范围）
@@ -601,6 +706,7 @@ install_hy2() {
     [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
     echo "$PASSWORD" | grep -qE '["\\$`]|[[:cntrl:]]' && {
         echo -e "${RED}密码不能包含引号、反斜杠、美元符、反引号或控制字符${PLAIN}"
+        restore_current_install
         return
     }
 
@@ -628,6 +734,7 @@ install_hy2() {
         -keyout "$HY_CERT_DIR/server.key" -out "$HY_CERT_DIR/server.crt" \
         -subj "/CN=${SNI}" >/dev/null 2>&1 || {
             echo -e "${RED}证书生成失败${PLAIN}"
+            restore_current_install
             return
         }
     chmod 600 "$HY_CERT_DIR/server.key"
@@ -643,31 +750,16 @@ install_hy2() {
         [[ -n "$_dn" ]] && BW_DOWN="$_dn"
         valid_positive_number "$BW_UP" && valid_positive_number "$BW_DOWN" || {
             echo -e "${RED}带宽必须为大于 0 的数字${PLAIN}"
+            restore_current_install
             return
         }
     fi
 
-    cat > "$HY_CONFIG" <<EOF
-listen: $LISTEN_ADDR
-
-tls:
-  cert: $HY_CERT_DIR/server.crt
-  key: $HY_CERT_DIR/server.key
-
-auth:
-  type: password
-  password: "$PASSWORD"
-
-bandwidth:
-  up: ${BW_UP} mbps
-  down: ${BW_DOWN} mbps
-
-masquerade:
-  type: proxy
-  proxy:
-    url: https://$SNI/
-    rewriteHost: true
-EOF
+    write_hy2_config "$LISTEN_ADDR" || {
+        echo -e "${RED}配置文件写入失败${PLAIN}"
+        restore_current_install
+        return
+    }
 
     # 保存元数据
     echo "$NAT_MODE"    > "$HY_META/nat_mode"
@@ -700,9 +792,11 @@ EOF
     else
         echo -e "${RED}✗ 启动失败，请查看日志${PLAIN}"
         service_logs
+        restore_current_install
         return
     fi
 
+    discard_install_backup
     echo -e "${GREEN}安装完成！${PLAIN}"
     show_config
 }
@@ -732,6 +826,9 @@ upgrade_hy2() {
 
     echo -e "${YELLOW}开始升级: ${_cur_ver:-未知} → ${LAST_VERSION}${PLAIN}"
 
+    local _was_active=0
+    service_is_active && _was_active=1 || true
+
     # 备份旧二进制，下载/启动失败时回滚
     cp "$HY_BIN" "${HY_BIN}.bak" 2>/dev/null || {
         echo -e "${RED}无法备份当前二进制，取消升级${PLAIN}"
@@ -739,10 +836,9 @@ upgrade_hy2() {
     }
 
     if download_hy2; then
-        service_restart
-        sleep 2
+        [ "$_was_active" = "0" ] || { service_restart; sleep 2; }
 
-        if service_is_active; then
+        if [ "$_was_active" = "0" ] || service_is_active; then
             local _new_ver
             _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
@@ -750,14 +846,14 @@ upgrade_hy2() {
         else
             echo -e "${RED}✗ 升级后服务启动失败，回滚中...${PLAIN}"
             mv "${HY_BIN}.bak" "$HY_BIN"
-            service_restart
+            [ "$_was_active" = "0" ] || service_restart
             echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
             service_logs
         fi
     else
         echo -e "${RED}✗ 下载失败，回滚中...${PLAIN}"
         mv "${HY_BIN}.bak" "$HY_BIN"
-        service_restart
+        [ "$_was_active" = "0" ] || service_restart
         echo -e "${YELLOW}已回滚至旧版本 ${_cur_ver}${PLAIN}"
     fi
     sleep 2
@@ -788,9 +884,22 @@ read_config_vars() {
     [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
     [[ -z "$NAT_MODE" ]] && NAT_MODE=0
 
+    if detect_warp; then
+        local _native_ipv4 _default_ipv4
+        _native_ipv4=$(get_native_public_ipv4 2>/dev/null || true)
+        _default_ipv4=$(get_default_public_ipv4 2>/dev/null || true)
+        if is_valid_ipv4 "$_native_ipv4"; then
+            PUBLIC_IP="$_native_ipv4"
+            [ ! -d "$HY_META" ] || printf '%s' "$PUBLIC_IP" > "$HY_META/public_ip"
+        elif is_valid_ipv4 "$_default_ipv4" && [ "$PUBLIC_IP" = "$_default_ipv4" ]; then
+            PUBLIC_IP=""
+            [ ! -d "$HY_META" ] || : > "$HY_META/public_ip"
+        fi
+    fi
+
     # IP 兜底（元数据为空时重新检测）
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
-        PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+        detect_warp || PUBLIC_IP=$(get_default_public_ipv4 2>/dev/null || true)
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
     fi
 }

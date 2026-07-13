@@ -322,6 +322,17 @@ set_latest_version_tag() {
 # ============================================================
 # 网络检测
 # ============================================================
+is_valid_ipv4() {
+    echo "$1" | awk -F. '
+        NF != 4 { exit 1 }
+        {
+            for (i = 1; i <= 4; i++) {
+                if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
+            }
+        }
+    '
+}
+
 get_native_public_ipv4() {
     command -v ip >/dev/null 2>&1 || return 1
     local _iface _local_ip _ip _url
@@ -343,7 +354,7 @@ get_native_public_ipv4() {
 
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
         _ip=$(curl -s4 --interface "$_local_ip" --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        if is_valid_ipv4 "$_ip"; then
             printf '%s' "$_ip"
             return 0
         fi
@@ -355,7 +366,7 @@ get_default_public_ipv4() {
     local _ip _url
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
         _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        if is_valid_ipv4 "$_ip"; then
             printf '%s' "$_ip"
             return 0
         fi
@@ -405,10 +416,10 @@ detect_network() {
     fi
 
     _ip=$(get_native_public_ipv4 2>/dev/null || true)
-    if echo "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    if is_valid_ipv4 "$_ip"; then
         PUBLIC_IP="$_ip"
         HAS_IPV4=1
-    elif [ "$WARP_ACTIVE" = "0" ] && echo "$DEFAULT_EGRESS_IPV4" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    elif [ "$WARP_ACTIVE" = "0" ] && is_valid_ipv4 "$DEFAULT_EGRESS_IPV4"; then
         PUBLIC_IP="$DEFAULT_EGRESS_IPV4"
         HAS_IPV4=1
     fi
@@ -1000,8 +1011,22 @@ restore_current_install() {
 
 read_config_live() {
     read_config || return 1
+    local _warp_active=0
+    if detect_warp; then
+        _warp_active=1
+        local _native_ipv4 _default_ipv4
+        _native_ipv4=$(get_native_public_ipv4 2>/dev/null || true)
+        _default_ipv4=$(get_default_public_ipv4 2>/dev/null || true)
+        if is_valid_ipv4 "$_native_ipv4"; then
+            PUBLIC_IP="$_native_ipv4"
+            printf '%s' "$PUBLIC_IP" > "$ANYTLS_META/public_ip"
+        elif is_valid_ipv4 "$_default_ipv4" && [ "$PUBLIC_IP" = "$_default_ipv4" ]; then
+            PUBLIC_IP=""
+            : > "$ANYTLS_META/public_ip"
+        fi
+    fi
     if [ -z "${PUBLIC_IP:-}" ] && [ -z "${PUBLIC_IPV6:-}" ]; then
-        PUBLIC_IP=$(curl -s4 --max-time 6 https://api.ipify.org 2>/dev/null | tr -d '[:space:]') || true
+        [ "$_warp_active" = "1" ] || PUBLIC_IP=$(get_default_public_ipv4 2>/dev/null || true)
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]') || true
     fi
 }

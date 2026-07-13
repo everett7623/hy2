@@ -52,6 +52,15 @@ get_latest_version >/dev/null
 [ "$LAST_VERSION_TAG" = "$SING_BOX_STABLE_FALLBACK_TAG" ]
 unset -f curl
 
+# 公网地址接口返回格式异常时不得作为节点 IPv4。
+is_valid_ipv4 '0.0.0.0'
+is_valid_ipv4 '203.0.113.10'
+is_valid_ipv4 '255.255.255.255'
+! is_valid_ipv4 '256.0.0.1'
+! is_valid_ipv4 '999.999.999.999'
+! is_valid_ipv4 '1.2.3'
+! is_valid_ipv4 '1.2.3.4.example'
+
 # WARP 开启时必须绑定原生网卡查询公网入口，不能导出 WARP 出口地址。
 ip() {
     case "$*" in
@@ -136,6 +145,25 @@ read_config
 [ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6::::www.example.com:1" ]
 PUBLIC_IP=192.0.2.1; PUBLIC_IPV6=2001:db8::1
 read_config
+
+# 升级后读取旧元数据时，应自动修正曾保存的 WARP 出口地址。
+printf '%s' '104.28.195.185' > "$ANYTLS_META/public_ip"
+PUBLIC_IP=""; PUBLIC_IPV6=""
+detect_warp() { return 0; }
+get_native_public_ipv4() { printf '%s' '203.0.113.10'; }
+get_default_public_ipv4() { printf '%s' '104.28.195.185'; }
+read_config_live
+[ "$PUBLIC_IP" = '203.0.113.10' ]
+[ "$(cat "$ANYTLS_META/public_ip")" = '203.0.113.10' ]
+
+# 原生入口查询失败时，不得继续导出已确认的 WARP 出口。
+printf '%s' '104.28.195.185' > "$ANYTLS_META/public_ip"
+PUBLIC_IP=""; PUBLIC_IPV6=""
+get_native_public_ipv4() { return 1; }
+read_config_live
+[ -z "$PUBLIC_IP" ]
+[ ! -s "$ANYTLS_META/public_ip" ]
+unset -f detect_warp get_native_public_ipv4 get_default_public_ipv4
 
 SYSTEMD_SERVICE="$tmp/anytls.service"; ANYTLS_BIN=/usr/local/bin/anytls-server
 write_systemd_service
