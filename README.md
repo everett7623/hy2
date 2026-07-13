@@ -9,8 +9,8 @@
 ![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)
 ![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)
 
-> 当前版本：v2.0.17（2026-07-13）
-> 本次更新：全面加固低内存、NAT、IPv6-only、极简系统和非标准终端环境下的安装、下载、回滚与交互体验。
+> 当前版本：v2.0.18（2026-07-14）
+> 本次更新：加强配置事务、防火墙规则所有权、升级并发控制、磁盘空间预检、服务监听验证与弱网络自动重试，进一步提升小内存、NAT 和极简 VPS 的稳定性。
 
 ---
 

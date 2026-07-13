@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：Jensfrank
-# 版本：v2.0.17
+# 版本：v2.0.18
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-13
+# 更新日期: 2026-07-14
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
@@ -83,6 +83,8 @@ INSTALL_BACKUP_DIR=""
 INSTALL_ROLLBACK_ARMED=0
 INSTALL_PREV_INT_TRAP=""
 INSTALL_PREV_TERM_TRAP=""
+UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/ss-upgrade.lock}"
+UPGRADE_LOCK_MODE=""
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -230,12 +232,18 @@ detect_network() {
 
 open_ports() {
     local _port=$1
+    local _fw_meta="$SS_META/firewall" _proto
+    mkdir -p "$_fw_meta" 2>/dev/null || true
     echo -e "${YELLOW}正在自动放行 Linux 系统防火墙端口 ${_port}...${PLAIN}"
 
     # firewalld：用 --state 判断运行状态（比 is-active 更可靠）
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1
-        firewall-cmd --permanent --add-port="${_port}/udp" >/dev/null 2>&1
+        for _proto in tcp udp; do
+            if ! firewall-cmd --permanent --query-port="${_port}/${_proto}" >/dev/null 2>&1; then
+                firewall-cmd --permanent --add-port="${_port}/${_proto}" >/dev/null 2>&1 && \
+                    : > "$_fw_meta/firewalld-${_port}-${_proto}"
+            fi
+        done
         firewall-cmd --reload >/dev/null 2>&1
         echo -e "  ${GREEN}✓ firewalld 已放行 tcp+udp/${_port}${PLAIN}"
         return
@@ -243,22 +251,29 @@ open_ports() {
 
     # ufw：用 ufw status 判断 active（比 is-active 更可靠）
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
-        ufw allow "${_port}/tcp" >/dev/null 2>&1
-        ufw allow "${_port}/udp" >/dev/null 2>&1
+        for _proto in tcp udp; do
+            if ! ufw status 2>/dev/null | grep -qE "^${_port}/${_proto}[[:space:]]+ALLOW"; then
+                ufw allow "${_port}/${_proto}" >/dev/null 2>&1 && : > "$_fw_meta/ufw-${_port}-${_proto}"
+            fi
+        done
         echo -e "  ${GREEN}✓ ufw 已放行 tcp+udp/${_port}${PLAIN}"
         return
     fi
 
     if command -v iptables >/dev/null 2>&1; then
-        iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-            iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
-        iptables -C INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-            iptables -I INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        for _proto in tcp udp; do
+            if ! iptables -C INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+                iptables -I INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
+                    : > "$_fw_meta/iptables4-${_port}-${_proto}"
+            fi
+        done
         if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
-            ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-                ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
-            ip6tables -C INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-                ip6tables -I INPUT -p udp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+            for _proto in tcp udp; do
+                if ! ip6tables -C INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+                    ip6tables -I INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
+                        : > "$_fw_meta/iptables6-${_port}-${_proto}"
+                fi
+            done
         fi
         if command -v netfilter-persistent >/dev/null 2>&1; then
             netfilter-persistent save >/dev/null 2>&1
@@ -267,6 +282,32 @@ open_ports() {
         fi
         echo -e "  ${GREEN}✓ iptables 已放行 tcp+udp/${_port}${PLAIN}"
     fi
+}
+
+close_ports() {
+    local _port="$1" _fw_meta="$SS_META/firewall" _backend _proto
+    valid_port "$_port" || return 0
+    for _proto in tcp udp; do
+        if [ -f "$_fw_meta/firewalld-${_port}-${_proto}" ] && command -v firewall-cmd >/dev/null 2>&1; then
+            firewall-cmd --permanent --remove-port="${_port}/${_proto}" >/dev/null 2>&1 || true
+            rm -f "$_fw_meta/firewalld-${_port}-${_proto}"
+        fi
+        if [ -f "$_fw_meta/ufw-${_port}-${_proto}" ] && command -v ufw >/dev/null 2>&1; then
+            ufw delete allow "${_port}/${_proto}" >/dev/null 2>&1 || true
+            rm -f "$_fw_meta/ufw-${_port}-${_proto}"
+        fi
+        for _backend in iptables4 iptables6; do
+            [ -f "$_fw_meta/${_backend}-${_port}-${_proto}" ] || continue
+            if [ "$_backend" = "iptables4" ] && command -v iptables >/dev/null 2>&1; then
+                iptables -D INPUT -p "$_proto" --dport "$_port" -j ACCEPT >/dev/null 2>&1 || true
+            elif [ "$_backend" = "iptables6" ] && command -v ip6tables >/dev/null 2>&1; then
+                ip6tables -D INPUT -p "$_proto" --dport "$_port" -j ACCEPT >/dev/null 2>&1 || true
+            fi
+            rm -f "$_fw_meta/${_backend}-${_port}-${_proto}"
+        done
+    done
+    command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --reload >/dev/null 2>&1 || true
+    command -v netfilter-persistent >/dev/null 2>&1 && netfilter-persistent save >/dev/null 2>&1 || true
 }
 
 # ============================================================
@@ -332,6 +373,31 @@ service_is_active() {
     else
         [ -f /var/run/ssserver.pid ] && kill -0 "$(cat /var/run/ssserver.pid)" 2>/dev/null
     fi
+}
+
+service_is_healthy() {
+    service_is_active || return 1
+    valid_port "${LISTEN_PORT:-}" || return 0
+    command -v ss >/dev/null 2>&1 || return 0
+    ss -lntu 2>/dev/null | awk -v port="$LISTEN_PORT" '
+        NR > 1 { addr=$5; if (addr == "") addr=$4; if (addr ~ (":" port "$")) found=1 }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
+has_free_space_mb() {
+    local _path="$1" _required="$2" _available
+    command -v df >/dev/null 2>&1 || return 0
+    _available=$(df -Pk "$_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
+    [ -z "$_available" ] && return 0
+    [ "$_available" -ge $((_required * 1024)) ]
+}
+
+check_download_space() {
+    has_free_space_mb "$(disk_tmp_dir)" 128 && has_free_space_mb "$(dirname "$SS_BIN")" 32 || {
+        echo -e "${RED}磁盘空间不足：下载并解压 Shadowsocks 至少需要临时分区 128MB、目标分区 32MB${PLAIN}"
+        return 1
+    }
 }
 
 service_is_enabled() {
@@ -443,6 +509,7 @@ restore_current_install() {
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
     service_stop
     service_disable
+    close_ports "${LISTEN_PORT:-}"
     rm -f "$SS_BIN" "$SS_CONFIG" "$SERVICE_FILE" "$OPENRC_SERVICE"
     rm -rf "$SS_META"
     [ -f "$INSTALL_BACKUP_DIR/bin" ] && cp -a "$INSTALL_BACKUP_DIR/bin" "$SS_BIN"
@@ -460,6 +527,18 @@ restore_current_install() {
 # 依赖安装
 # ============================================================
 
+retry_command() {
+    local _attempt=1 _max=3 _delay=2
+    while [ "$_attempt" -le "$_max" ]; do
+        "$@" && return 0
+        [ "$_attempt" -ge "$_max" ] && break
+        echo -e "${YELLOW}命令执行失败或包管理器被占用，${_delay} 秒后重试 (${_attempt}/${_max})...${PLAIN}" >&2
+        sleep "$_delay"
+        _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
+}
+
 install_dependencies() {
     local _cmd _ready=1
     for _cmd in curl openssl tar xz ip; do
@@ -473,22 +552,22 @@ install_dependencies() {
     echo -e "${YELLOW}正在补齐必要依赖...${PLAIN}"
 
     if command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq >/dev/null 2>&1
+        retry_command apt-get update -qq >/dev/null 2>&1
         # qrencode 用于终端内渲染二维码
-        apt-get install -y -qq curl wget ca-certificates openssl tar xz-utils iproute2 procps >/dev/null 2>&1
+        retry_command apt-get install -y -qq curl wget ca-certificates openssl tar xz-utils iproute2 procps >/dev/null 2>&1
         apt-get install -y -qq qrencode >/dev/null 2>&1 || true
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y curl wget ca-certificates openssl tar xz iproute procps-ng >/dev/null 2>&1
+        retry_command dnf install -y curl wget ca-certificates openssl tar xz iproute procps-ng >/dev/null 2>&1
         dnf install -y qrencode >/dev/null 2>&1 || true
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y curl wget ca-certificates openssl tar xz iproute procps-ng >/dev/null 2>&1
+        retry_command yum install -y curl wget ca-certificates openssl tar xz iproute procps-ng >/dev/null 2>&1
         yum install -y qrencode >/dev/null 2>&1 || true
     elif command -v pacman >/dev/null 2>&1; then
-        pacman -Sy --noconfirm curl wget ca-certificates openssl tar xz iproute2 procps-ng >/dev/null 2>&1
+        retry_command pacman -Sy --noconfirm curl wget ca-certificates openssl tar xz iproute2 procps-ng >/dev/null 2>&1
         pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
     elif command -v apk >/dev/null 2>&1; then
-        apk update -q >/dev/null 2>&1
-        apk add --no-cache bash curl wget ca-certificates openssl tar xz iproute2 procps >/dev/null 2>&1
+        retry_command apk update -q >/dev/null 2>&1
+        retry_command apk add --no-cache bash curl wget ca-certificates openssl tar xz iproute2 procps >/dev/null 2>&1
         apk add --no-cache libqrencode >/dev/null 2>&1 || true
     fi
 
@@ -504,13 +583,15 @@ install_dependencies() {
 }
 
 download_file() {
-    local _url="$1" _dest="$2"
-    if command -v curl >/dev/null 2>&1 && \
-       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
-        return 0
-    fi
-    command -v wget >/dev/null 2>&1 && \
-        wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
+    local _url="$1" _dest="$2" _attempt=1 _delay=2
+    while [ "$_attempt" -le 3 ]; do
+        if command -v curl >/dev/null 2>&1 && curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        if command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        rm -f "$_dest"
+        [ "$_attempt" -ge 3 ] && break
+        sleep "$_delay"; _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
 }
 
 valid_port() {
@@ -544,6 +625,7 @@ get_latest_version() {
 }
 
 download_ss() {
+    check_download_space || return 1
     local _arch
     case $(uname -m) in
         x86_64)          _arch="x86_64-unknown-linux-musl" ;;
@@ -637,7 +719,7 @@ install_ss() {
     fi
 
     sleep 2
-    if service_is_active; then
+    if service_is_healthy; then
         echo -e "${GREEN}✓ Shadowsocks 服务端启动成功${PLAIN}"
     else
         echo -e "${RED}✗ 启动失败，请查看以下日志排查原因：${PLAIN}"
@@ -717,7 +799,47 @@ _save_meta() {
 # 升级（保留配置，仅替换二进制）
 # ============================================================
 
+acquire_upgrade_lock() {
+    local _lock_dir="${UPGRADE_LOCK_FILE}.d" _owner=""
+    mkdir -p "$(dirname "$UPGRADE_LOCK_FILE")" 2>/dev/null || return 1
+    if command -v flock >/dev/null 2>&1; then
+        exec 8>"$UPGRADE_LOCK_FILE" || return 1
+        flock -n 8 || { exec 8>&-; return 1; }
+        UPGRADE_LOCK_MODE="flock"
+        return 0
+    fi
+    if ! mkdir "$_lock_dir" 2>/dev/null; then
+        _owner=$(cat "$_lock_dir/pid" 2>/dev/null || true)
+        if [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; then
+            rm -rf "$_lock_dir"
+            mkdir "$_lock_dir" 2>/dev/null || return 1
+        else
+            return 1
+        fi
+    fi
+    printf '%s' "$$" > "$_lock_dir/pid"
+    UPGRADE_LOCK_MODE="mkdir"
+}
+
+release_upgrade_lock() {
+    if [ "$UPGRADE_LOCK_MODE" = "flock" ]; then
+        flock -u 8 2>/dev/null || true
+        exec 8>&-
+    elif [ "$UPGRADE_LOCK_MODE" = "mkdir" ]; then
+        rm -rf "${UPGRADE_LOCK_FILE}.d"
+    fi
+    UPGRADE_LOCK_MODE=""
+}
+
 upgrade_ss() {
+    acquire_upgrade_lock || { echo -e "${YELLOW}另一个 Shadowsocks 升级任务正在运行，请稍后重试${PLAIN}"; return 1; }
+    local _status=0
+    _upgrade_ss_locked || _status=$?
+    release_upgrade_lock
+    return "$_status"
+}
+
+_upgrade_ss_locked() {
     if [ ! -f "$SS_BIN" ]; then
         echo -e "${RED}未检测到已安装的 Shadowsocks-Rust，请先安装${PLAIN}"
         sleep 2; return
@@ -749,7 +871,7 @@ upgrade_ss() {
     if download_ss; then
         [ "$_was_active" = "0" ] || { service_restart; sleep 2; }
 
-        if [ "$_was_active" = "0" ] || service_is_active; then
+        if [ "$_was_active" = "0" ] || service_is_healthy; then
             local _new_raw _new_ver=""
             _new_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             [ -n "$_new_raw" ] && _new_ver="v${_new_raw}"
@@ -782,6 +904,7 @@ modify_config() {
         sleep 2; return
     fi
 
+    local _old_listen_port="$LISTEN_PORT"
     echo -e "\n${SKYBLUE}--- 修改配置 ---${PLAIN}"
     echo -e "  当前端口: ${YELLOW}${EXT_PORT}${PLAIN}  密码: ${YELLOW}${PASSWORD}${PLAIN}  加密: ${YELLOW}${METHOD}${PLAIN}"
     echo ""
@@ -806,7 +929,6 @@ modify_config() {
                 valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; sleep 1; return; }
                 EXT_PORT="$LISTEN_PORT"
             fi
-            open_ports "$LISTEN_PORT"
             ;;
         2)
             if echo "$METHOD" | grep -q "2022"; then
@@ -852,16 +974,19 @@ modify_config() {
         return
     fi
     _save_meta
-    service_restart
+    [ "$_old_listen_port" = "$LISTEN_PORT" ] || open_ports "$LISTEN_PORT"
+    service_restart || true
     sleep 1
 
-    if service_is_active; then
+    if service_is_healthy; then
+        [ "$_old_listen_port" = "$LISTEN_PORT" ] || close_ports "$_old_listen_port"
         rm -f "$_config_backup"
         rm -rf "$_meta_backup"
         echo -e "${GREEN}✓ 配置已更新，服务已重启${PLAIN}"
         sleep 1
         show_config
     else
+        [ "$_old_listen_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
         cp "$_config_backup" "$SS_CONFIG"
         rm -rf "$SS_META"
         mkdir -p "$SS_META"
@@ -1316,8 +1441,10 @@ manage_ss() {
 uninstall_ss() {
     read -r -p "确定卸载? [y/N]: " confirm
     if [[ "$confirm" =~ ^[yY]$ ]]; then
+        read_config_vars 2>/dev/null || true
         service_stop
         service_disable
+        close_ports "${LISTEN_PORT:-}"
         rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$SS_BIN"
         rm -rf /etc/shadowsocks-rust
         remove_auto_update_quiet
@@ -1411,6 +1538,31 @@ install_auto_update() {
 SS_BIN="/usr/local/bin/ssserver"
 LOG="/var/log/ss-autoupdate.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+LOCK_FILE="/var/lock/ss-upgrade.lock"
+LOCK_MODE=""
+
+acquire_lock() {
+    local _dir="${LOCK_FILE}.d" _owner=""
+    mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || return 1
+    if command -v flock >/dev/null 2>&1; then
+        exec 8>"$LOCK_FILE" || return 1
+        flock -n 8 || { exec 8>&-; return 1; }
+        LOCK_MODE="flock"; return 0
+    fi
+    if ! mkdir "$_dir" 2>/dev/null; then
+        _owner=$(cat "$_dir/pid" 2>/dev/null || true)
+        [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null || return 1
+        rm -rf "$_dir"; mkdir "$_dir" 2>/dev/null || return 1
+    fi
+    printf '%s' "$$" > "$_dir/pid"
+    LOCK_MODE="mkdir"
+}
+
+release_lock() {
+    [ "$LOCK_MODE" != "flock" ] || { flock -u 8 2>/dev/null || true; exec 8>&-; }
+    [ "$LOCK_MODE" != "mkdir" ] || rm -rf "${LOCK_FILE}.d"
+    LOCK_MODE=""
+}
 
 get_latest() {
     curl -Ls --max-time 15 \
@@ -1444,12 +1596,15 @@ restart_service() {
 }
 
 download_file() {
-    local _url="$1" _dest="$2"
-    if command -v curl >/dev/null 2>&1 && \
-       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
-        return 0
-    fi
-    command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
+    local _url="$1" _dest="$2" _attempt=1 _delay=2
+    while [ "$_attempt" -le 3 ]; do
+        if command -v curl >/dev/null 2>&1 && curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        if command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        rm -f "$_dest"
+        [ "$_attempt" -ge 3 ] && break
+        sleep "$_delay"; _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
 }
 
 disk_tmp_dir() {
@@ -1458,6 +1613,8 @@ disk_tmp_dir() {
 }
 
 main() {
+    acquire_lock || { echo "[$TIMESTAMP] 另一个升级任务正在运行，跳过本次更新" >> "$LOG"; return; }
+    trap release_lock EXIT INT TERM
     local _latest _current _arch _url
     local _tmp_a _tmp_dir _candidate _backup _was_active=0
     _latest=$(get_latest)
@@ -1702,7 +1859,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.17${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.18${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

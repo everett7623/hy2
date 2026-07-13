@@ -52,6 +52,31 @@ get_latest_version >/dev/null
 [ "$LAST_VERSION_TAG" = "$SING_BOX_STABLE_FALLBACK_TAG" ]
 unset -f curl
 
+# 临时网络故障应自动重试，且包管理命令采用相同的有界退避策略。
+download_tmp=$(mktemp)
+download_attempts=0
+sleep() { :; }
+curl() {
+    local _dest=""
+    download_attempts=$((download_attempts + 1))
+    [ "$download_attempts" -lt 3 ] && return 1
+    while [ "$#" -gt 0 ]; do
+        [ "$1" = '-o' ] && { shift; _dest="$1"; }
+        shift
+    done
+    printf '%s' 'curl-download' > "$_dest"
+}
+wget() { return 1; }
+download_file 'https://example.invalid/sing-box' "$download_tmp"
+[ "$(cat "$download_tmp")" = 'curl-download' ]
+[ "$download_attempts" -eq 3 ]
+rm -f "$download_tmp"
+retry_attempts=0
+eventually_succeeds() { retry_attempts=$((retry_attempts + 1)); [ "$retry_attempts" -ge 3 ]; }
+retry_command eventually_succeeds
+[ "$retry_attempts" -eq 3 ]
+unset -f curl wget eventually_succeeds
+
 # 公网地址接口返回格式异常时不得作为节点 IPv4。
 is_valid_ipv4 '0.0.0.0'
 is_valid_ipv4 '203.0.113.10'
@@ -125,11 +150,56 @@ echo "$node_output" | grep -q 'Shadowrocket 配置'
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
+
+# 升级锁必须拒绝并发任务，并在释放后允许重试。
+UPGRADE_LOCK_FILE="$tmp/anytls-upgrade.lock"; lock_busy=0
+flock() { [ "$1" = '-u' ] && return 0; [ "$lock_busy" = '0' ]; }
+acquire_upgrade_lock
+release_upgrade_lock
+lock_busy=1
+! acquire_upgrade_lock
+lock_busy=0
+acquire_upgrade_lock
+release_upgrade_lock
+unset -f flock
+
+# active 但无 TCP 监听不得判定健康；低磁盘空间必须提前拒绝。
+LISTEN_PORT=8443
+service_is_active() { return 0; }
+ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.0.0:8443'; }
+service_is_healthy
+ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.0.0:9443'; }
+! service_is_healthy
+df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 200000 1 200000 1% /'; }
+has_free_space_mb "$tmp" 160
+df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 100000 99999 1 99% /'; }
+! has_free_space_mb "$tmp" 160
+unset -f ss df service_is_active
 ANYTLS_DIR="$tmp/etc"; ANYTLS_CONFIG="$ANYTLS_DIR/anytls.json"
 ANYTLS_META="$ANYTLS_DIR/anytls-meta"; ANYTLS_CERT_DIR="$ANYTLS_DIR/anytls-cert"
 ANYTLS_CERT="$ANYTLS_CERT_DIR/cert.pem"; ANYTLS_KEY="$ANYTLS_CERT_DIR/private.key"
 LISTEN_PORT=8443; EXT_PORT=9443; PASSWORD=Abcdef12; NAT_MODE=1; BIND_FAMILY=v6
 LISTEN_HOST=::; SERVER_NAME=www.example.com; MANAGED_SING_BOX=1; PUBLIC_IP=""; PUBLIC_IPV6=""
+
+# 只删除脚本实际创建的防火墙规则，保留用户预先存在的规则。
+firewall_log="$tmp/firewall.log"; firewall_existing=0; HAS_IPV6=0
+iptables() {
+    case "$1" in
+        -C) [ "$firewall_existing" = '1' ] ;;
+        -I) echo add >> "$firewall_log" ;;
+        -D) echo delete >> "$firewall_log" ;;
+    esac
+}
+open_ports 8443 >/dev/null
+[ -f "$ANYTLS_META/firewall/iptables4-8443-tcp" ]
+close_ports 8443
+grep -q '^delete$' "$firewall_log"
+: > "$firewall_log"; firewall_existing=1
+open_ports 9443 >/dev/null
+[ ! -e "$ANYTLS_META/firewall/iptables4-9443-tcp" ]
+close_ports 9443
+[ ! -s "$firewall_log" ]
+unset -f iptables
 case "$(uname -s)" in
     MINGW*|MSYS*) ;;
     *)
@@ -143,6 +213,14 @@ grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
 grep -q '"listen_port": 8443' "$ANYTLS_CONFIG"
 grep -q '"listen": "::"' "$ANYTLS_CONFIG"
 grep -q '"server_name": "www.example.com"' "$ANYTLS_CONFIG"
+[ -z "$(find "$ANYTLS_DIR" -type f -name '*.new.*' -print -quit)" ]
+
+# 临时文件创建失败时不得截断当前可用配置。
+config_before=$(cat "$ANYTLS_CONFIG")
+mktemp() { return 1; }
+! write_config
+unset -f mktemp
+[ "$(cat "$ANYTLS_CONFIG")" = "$config_before" ]
 LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4; LISTEN_HOST=""; SERVER_NAME=""; MANAGED_SING_BOX=0
 read_config
 [ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6::::www.example.com:1" ]

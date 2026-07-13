@@ -56,8 +56,12 @@ curl() {
 
 # 下载器必须在 wget 不可用时使用 curl，适配极简 VPS。
 download_tmp=$(mktemp)
+download_attempts=0
+sleep() { :; }
 curl() {
     local _dest=""
+    download_attempts=$((download_attempts + 1))
+    [ "$download_attempts" -lt 3 ] && return 1
     while [ "$#" -gt 0 ]; do
         [ "$1" = '-o' ] && { shift; _dest="$1"; }
         shift
@@ -67,7 +71,12 @@ curl() {
 wget() { return 1; }
 download_file 'https://example.invalid/shadowsocks' "$download_tmp"
 [ "$(cat "$download_tmp")" = 'curl-download' ]
+[ "$download_attempts" -eq 3 ]
 rm -f "$download_tmp"
+retry_attempts=0
+eventually_succeeds() { retry_attempts=$((retry_attempts + 1)); [ "$retry_attempts" -ge 3 ]; }
+retry_command eventually_succeeds
+[ "$retry_attempts" -eq 3 ]
 curl() {
     case " $* " in
         *' -s6 '*) printf '%s' '2001:db8::10' ;;
@@ -79,8 +88,54 @@ curl() {
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
+
+# 升级锁必须拒绝并发任务，并在释放后允许重试。
+UPGRADE_LOCK_FILE="$tmp/ss-upgrade.lock"; lock_busy=0
+flock() { [ "$1" = '-u' ] && return 0; [ "$lock_busy" = '0' ]; }
+acquire_upgrade_lock
+release_upgrade_lock
+lock_busy=1
+! acquire_upgrade_lock
+lock_busy=0
+acquire_upgrade_lock
+release_upgrade_lock
+unset -f flock
+
+# active 但无 TCP/UDP 监听不得判定健康；低磁盘空间必须提前拒绝。
+LISTEN_PORT=8443
+service_is_active() { return 0; }
+ss() { printf '%s\n' 'Netid State Recv-Q Send-Q Local Address:Port' 'tcp LISTEN 0 128 0.0.0.0:8443'; }
+service_is_healthy
+ss() { printf '%s\n' 'Netid State Recv-Q Send-Q Local Address:Port' 'tcp LISTEN 0 128 0.0.0.0:9443'; }
+! service_is_healthy
+df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 200000 1 200000 1% /'; }
+has_free_space_mb "$tmp" 128
+df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 100000 99999 1 99% /'; }
+! has_free_space_mb "$tmp" 128
+unset -f ss df service_is_active
 SS_CONFIG="$tmp/config.json"; SS_META="$tmp/meta"
 mkdir -p "$SS_META"
+
+# 只删除脚本实际创建的规则，用户预先存在的规则不得被接管。
+firewall_log="$tmp/firewall.log"; firewall_existing=0; HAS_IPV6=0
+iptables() {
+    case "$1" in
+        -C) [ "$firewall_existing" = '1' ] ;;
+        -I) echo add >> "$firewall_log" ;;
+        -D) echo delete >> "$firewall_log" ;;
+    esac
+}
+open_ports 8443 >/dev/null
+[ -f "$SS_META/firewall/iptables4-8443-tcp" ]
+[ -f "$SS_META/firewall/iptables4-8443-udp" ]
+close_ports 8443
+[ "$(grep -c '^delete$' "$firewall_log")" = '2' ]
+: > "$firewall_log"; firewall_existing=1
+open_ports 9443 >/dev/null
+[ ! -e "$SS_META/firewall/iptables4-9443-tcp" ]
+close_ports 9443
+[ ! -s "$firewall_log" ]
+unset -f iptables
 printf '%s\n' '{"server_port":8443,"password":"testpass","method":"aes-256-gcm"}' > "$SS_CONFIG"
 printf '%s' '8443' > "$SS_META/ext_port"
 printf '%s' '0' > "$SS_META/nat_mode"

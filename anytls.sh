@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：Jensfrank
-# 版本：v2.0.17
+# 版本：v2.0.18
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-13
+# 更新日期: 2026-07-14
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -111,6 +111,8 @@ INSTALL_BACKUP_DIR=""
 INSTALL_ROLLBACK_ARMED=0
 INSTALL_PREV_INT_TRAP=""
 INSTALL_PREV_TERM_TRAP=""
+UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/anytls-upgrade.lock}"
+UPGRADE_LOCK_MODE=""
 
 
 # ============================================================
@@ -154,6 +156,18 @@ detect_init() {
     fi
 }
 
+retry_command() {
+    local _attempt=1 _max=3 _delay=2
+    while [ "$_attempt" -le "$_max" ]; do
+        "$@" && return 0
+        [ "$_attempt" -ge "$_max" ] && break
+        echo -e "${YELLOW}命令执行失败或包管理器被占用，${_delay} 秒后重试 (${_attempt}/${_max})...${PLAIN}" >&2
+        sleep "$_delay"
+        _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
+}
+
 install_dependencies() {
     local _cmd _ready=1
     for _cmd in curl tar openssl ip; do
@@ -167,26 +181,26 @@ install_dependencies() {
     echo -e "${YELLOW}正在补齐必要依赖...${PLAIN}"
     case "$RELEASE" in
         alpine)
-            apk update -q >/dev/null 2>&1
-            apk add --no-cache bash curl wget ca-certificates tar openssl iproute2 procps >/dev/null 2>&1
+            retry_command apk update -q >/dev/null 2>&1
+            retry_command apk add --no-cache bash curl wget ca-certificates tar openssl iproute2 procps >/dev/null 2>&1
             apk add --no-cache libqrencode >/dev/null 2>&1 || true
             ;;
         centos)
-            yum install -y curl wget ca-certificates tar openssl iproute procps-ng >/dev/null 2>&1
+            retry_command yum install -y curl wget ca-certificates tar openssl iproute procps-ng >/dev/null 2>&1
             yum install -y qrencode >/dev/null 2>&1 || true
             ;;
         fedora|rocky)
-            dnf install -y curl wget ca-certificates tar openssl iproute procps-ng >/dev/null 2>&1
+            retry_command dnf install -y curl wget ca-certificates tar openssl iproute procps-ng >/dev/null 2>&1
             dnf install -y qrencode >/dev/null 2>&1 || true
             ;;
         arch)
-            pacman -Sy --noconfirm curl wget ca-certificates tar openssl iproute2 procps-ng >/dev/null 2>&1
+            retry_command pacman -Sy --noconfirm curl wget ca-certificates tar openssl iproute2 procps-ng >/dev/null 2>&1
             pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
             ;;
         *)
             if command -v apt-get >/dev/null 2>&1; then
-                apt-get update -qq >/dev/null 2>&1
-                apt-get install -y -qq curl wget ca-certificates tar openssl iproute2 procps >/dev/null 2>&1
+                retry_command apt-get update -qq >/dev/null 2>&1
+                retry_command apt-get install -y -qq curl wget ca-certificates tar openssl iproute2 procps >/dev/null 2>&1
                 apt-get install -y qrencode >/dev/null 2>&1 || true
             else
                 echo -e "${RED}无法识别包管理器，请手动安装 curl wget tar openssl iproute2${PLAIN}"
@@ -495,27 +509,38 @@ detect_network() {
 
 open_ports() {
     local _port=$1
+    local _fw_meta="$ANYTLS_META/firewall"
+    mkdir -p "$_fw_meta" 2>/dev/null || true
     echo -e "${YELLOW}正在自动放行 TCP 端口 ${_port}...${PLAIN}"
 
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1
+        if ! firewall-cmd --permanent --query-port="${_port}/tcp" >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1 && \
+                : > "$_fw_meta/firewalld-${_port}-tcp"
+        fi
         firewall-cmd --reload >/dev/null 2>&1
         echo -e "  ${GREEN}✓ firewalld 已放行 tcp/${_port}${PLAIN}"
         return
     fi
 
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
-        ufw allow "${_port}/tcp" >/dev/null 2>&1
+        if ! ufw status 2>/dev/null | grep -qE "^${_port}/tcp[[:space:]]+ALLOW"; then
+            ufw allow "${_port}/tcp" >/dev/null 2>&1 && : > "$_fw_meta/ufw-${_port}-tcp"
+        fi
         echo -e "  ${GREEN}✓ ufw 已放行 tcp/${_port}${PLAIN}"
         return
     fi
 
     if command -v iptables >/dev/null 2>&1; then
-        iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-            iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+        if ! iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+            iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
+                : > "$_fw_meta/iptables4-${_port}-tcp"
+        fi
         if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
-            ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
-                ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1
+            if ! ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+                ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
+                    : > "$_fw_meta/iptables6-${_port}-tcp"
+            fi
         fi
         if command -v netfilter-persistent >/dev/null 2>&1; then
             netfilter-persistent save >/dev/null 2>&1
@@ -528,24 +553,25 @@ open_ports() {
 
 close_ports() {
     local _port="$1"
+    local _fw_meta="$ANYTLS_META/firewall"
     validate_port "$_port" || return 0
 
-    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    if [ -f "$_fw_meta/firewalld-${_port}-tcp" ] && command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         firewall-cmd --permanent --remove-port="${_port}/tcp" >/dev/null 2>&1 || true
         firewall-cmd --reload >/dev/null 2>&1 || true
+        rm -f "$_fw_meta/firewalld-${_port}-tcp"
     fi
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
+    if [ -f "$_fw_meta/ufw-${_port}-tcp" ] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
         ufw delete allow "${_port}/tcp" >/dev/null 2>&1 || true
+        rm -f "$_fw_meta/ufw-${_port}-tcp"
     fi
-    if command -v iptables >/dev/null 2>&1; then
-        while iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; do
-            iptables -D INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || break
-        done
+    if [ -f "$_fw_meta/iptables4-${_port}-tcp" ] && command -v iptables >/dev/null 2>&1; then
+        iptables -D INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || true
+        rm -f "$_fw_meta/iptables4-${_port}-tcp"
     fi
-    if command -v ip6tables >/dev/null 2>&1; then
-        while ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; do
-            ip6tables -D INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || break
-        done
+    if [ -f "$_fw_meta/iptables6-${_port}-tcp" ] && command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -D INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || true
+        rm -f "$_fw_meta/iptables6-${_port}-tcp"
     fi
     if command -v netfilter-persistent >/dev/null 2>&1; then
         netfilter-persistent save >/dev/null 2>&1 || true
@@ -620,7 +646,20 @@ get_installed_version() {
     "$SING_BOX_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
+download_file() {
+    local _url="$1" _dest="$2" _attempt=1 _delay=2
+    while [ "$_attempt" -le 3 ]; do
+        if command -v curl >/dev/null 2>&1 && curl -fL --connect-timeout 15 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        if command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        rm -f "$_dest"
+        [ "$_attempt" -ge 3 ] && break
+        sleep "$_delay"; _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
+}
+
 download_anytls() {
+    check_download_space || return 1
     local _arch
     _arch=$(detect_arch) || return 1
 
@@ -642,8 +681,7 @@ download_anytls() {
         _host=$(echo "$_url" | awk -F/ '{print $3}')
         echo -e "${YELLOW}正在下载 ${_asset}（来源: ${_host}）${PLAIN}"
         rm -f "$_tmp_archive"
-        if wget -q --show-progress --timeout=60 -O "$_tmp_archive" "$_url" 2>/dev/null || \
-           curl -fL --connect-timeout 15 --max-time 120 -o "$_tmp_archive" "$_url" 2>/dev/null; then
+        if download_file "$_url" "$_tmp_archive"; then
             if tar -tzf "$_tmp_archive" >/dev/null 2>&1; then
                 _ok=1
                 break
@@ -879,7 +917,13 @@ certificate_fingerprint_sha256() {
 write_config() {
     mkdir -p "$ANYTLS_DIR" "$ANYTLS_META" "$ANYTLS_CERT_DIR"
     chmod 700 "$ANYTLS_META" "$ANYTLS_CERT_DIR"
-    cat > "$ANYTLS_CONFIG" <<CFG
+    local _tmp_config _tmp_meta
+    _tmp_config=$(mktemp "${ANYTLS_DIR}/anytls.json.new.XXXXXX" 2>/dev/null) || return 1
+    _tmp_meta=$(mktemp "${ANYTLS_META}/config.env.new.XXXXXX" 2>/dev/null) || {
+        rm -f "$_tmp_config"
+        return 1
+    }
+    if ! cat > "$_tmp_config" <<CFG
 {
   "log": { "level": "info", "timestamp": true },
   "inbounds": [
@@ -901,8 +945,11 @@ write_config() {
   "outbounds": [{ "type": "direct", "tag": "direct" }]
 }
 CFG
-    chmod 600 "$ANYTLS_CONFIG"
-    cat > "$ANYTLS_META/config.env" <<CFG
+    then
+        rm -f "$_tmp_config" "$_tmp_meta"
+        return 1
+    fi
+    if ! cat > "$_tmp_meta" <<CFG
 LISTEN_PORT=${LISTEN_PORT}
 EXT_PORT=${EXT_PORT}
 PASSWORD=${PASSWORD}
@@ -912,9 +959,33 @@ LISTEN_HOST=${LISTEN_HOST}
 SERVER_NAME=${SERVER_NAME}
 MANAGED_SING_BOX=${MANAGED_SING_BOX}
 CFG
-    chmod 600 "$ANYTLS_META/config.env"
-    printf '%s' "$PUBLIC_IP"   > "$ANYTLS_META/public_ip"
-    printf '%s' "$PUBLIC_IPV6" > "$ANYTLS_META/public_ipv6"
+    then
+        rm -f "$_tmp_config" "$_tmp_meta"
+        return 1
+    fi
+    chmod 600 "$_tmp_config" "$_tmp_meta" || {
+        rm -f "$_tmp_config" "$_tmp_meta"
+        return 1
+    }
+    mv -f "$_tmp_meta" "$ANYTLS_META/config.env" || {
+        rm -f "$_tmp_config" "$_tmp_meta"
+        return 1
+    }
+    mv -f "$_tmp_config" "$ANYTLS_CONFIG" || {
+        rm -f "$_tmp_config"
+        return 1
+    }
+    atomic_write_meta "$ANYTLS_META/public_ip" "$PUBLIC_IP" || return 1
+    atomic_write_meta "$ANYTLS_META/public_ipv6" "$PUBLIC_IPV6" || return 1
+}
+
+atomic_write_meta() {
+    local _target="$1" _value="$2" _tmp
+    _tmp=$(mktemp "${_target}.new.XXXXXX" 2>/dev/null) || return 1
+    printf '%s' "$_value" > "$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$_target" || {
+        rm -f "$_tmp"
+        return 1
+    }
 }
 
 read_config() {
@@ -1054,6 +1125,7 @@ restore_current_install() {
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
     service_stop
     service_disable
+    close_ports "${LISTEN_PORT:-}"
     rm -f "$ANYTLS_CONFIG" "$ANYTLS_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
     rm -rf "$ANYTLS_META" "$ANYTLS_CERT_DIR"
 
@@ -1210,6 +1282,31 @@ service_is_active() {
     fi
 }
 
+service_is_healthy() {
+    service_is_active || return 1
+    validate_port "${LISTEN_PORT:-}" || return 0
+    command -v ss >/dev/null 2>&1 || return 0
+    ss -lnt 2>/dev/null | awk -v port="$LISTEN_PORT" '
+        NR > 1 { addr=$4; if (addr ~ (":" port "$")) found=1 }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
+has_free_space_mb() {
+    local _path="$1" _required="$2" _available
+    command -v df >/dev/null 2>&1 || return 0
+    _available=$(df -Pk "$_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
+    [ -z "$_available" ] && return 0
+    [ "$_available" -ge $((_required * 1024)) ]
+}
+
+check_download_space() {
+    has_free_space_mb "$(disk_tmp_dir)" 160 && has_free_space_mb "$(dirname "$SING_BOX_BIN")" 48 || {
+        echo -e "${RED}磁盘空间不足：下载并解压 sing-box 至少需要临时分区 160MB、目标分区 48MB${PLAIN}"
+        return 1
+    }
+}
+
 service_is_enabled() {
     if [ "$INIT_SYS" = "systemd" ]; then
         systemctl is-enabled --quiet anytls-server 2>/dev/null
@@ -1285,7 +1382,12 @@ install_anytls() {
         return
     }
     echo -e "${GREEN}✓ TLS 证书生成完成${PLAIN}"
-    write_config
+    write_config || {
+        echo -e "${RED}AnyTLS 配置写入失败${PLAIN}"
+        restore_current_install
+        read -r -p "按回车键返回主菜单..." _
+        return
+    }
     write_wrapper
     echo -e "${YELLOW}正在校验 sing-box 配置...${PLAIN}"
     if ! check_config; then
@@ -1309,7 +1411,7 @@ install_anytls() {
     if service_is_active; then service_restart; else service_start; fi
 
     sleep 2
-    if service_is_active; then
+    if service_is_healthy; then
         echo -e "${GREEN}✓ AnyTLS 服务端启动成功${PLAIN}"
     else
         echo -e "${RED}✗ AnyTLS 启动失败，请查看日志：${PLAIN}"
@@ -1359,25 +1461,35 @@ change_config() {
         SERVER_NAME="$_sni"
     fi
 
-    cp "$ANYTLS_CONFIG" "${ANYTLS_CONFIG}.bak" 2>/dev/null || true
-    cp "$ANYTLS_META/config.env" "$ANYTLS_META/config.env.bak" 2>/dev/null || true
-    cp "$ANYTLS_CERT" "${ANYTLS_CERT}.bak" 2>/dev/null || true
-    cp "$ANYTLS_KEY" "${ANYTLS_KEY}.bak" 2>/dev/null || true
+    cp -p "$ANYTLS_CONFIG" "${ANYTLS_CONFIG}.bak" 2>/dev/null && \
+    cp -p "$ANYTLS_META/config.env" "$ANYTLS_META/config.env.bak" 2>/dev/null && \
+    cp -p "$ANYTLS_META/public_ip" "$ANYTLS_META/public_ip.bak" 2>/dev/null && \
+    cp -p "$ANYTLS_META/public_ipv6" "$ANYTLS_META/public_ipv6.bak" 2>/dev/null && \
+    cp -p "$ANYTLS_CERT" "${ANYTLS_CERT}.bak" 2>/dev/null && \
+    cp -p "$ANYTLS_KEY" "${ANYTLS_KEY}.bak" 2>/dev/null || {
+        rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" \
+            "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ipv6.bak" \
+            "${ANYTLS_CERT}.bak" "${ANYTLS_KEY}.bak"
+        echo -e "${RED}无法创建完整配置备份，已取消修改${PLAIN}"
+        return
+    }
 
     if [ "$SERVER_NAME" != "$_old_sni" ]; then
         if ! generate_certificate force; then
             mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
             mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
-            rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak"
+            rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" \
+                "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ipv6.bak"
             echo -e "${RED}生成 TLS 证书失败${PLAIN}"
             return
         fi
     fi
 
-    write_config
-    if ! check_config; then
+    if ! write_config || ! check_config; then
         mv -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG" 2>/dev/null || true
         mv -f "$ANYTLS_META/config.env.bak" "$ANYTLS_META/config.env" 2>/dev/null || true
+        mv -f "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ip" 2>/dev/null || true
+        mv -f "$ANYTLS_META/public_ipv6.bak" "$ANYTLS_META/public_ipv6" 2>/dev/null || true
         mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
         mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
         echo -e "${RED}配置无效，已回滚${PLAIN}"
@@ -1393,9 +1505,12 @@ change_config() {
     open_ports "$LISTEN_PORT"
     [ "$_was_active" = "1" ] && service_restart
     sleep 1
-    if [ "$_was_active" = "1" ] && ! service_is_active; then
+    if [ "$_was_active" = "1" ] && ! service_is_healthy; then
+        [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
         mv -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG" 2>/dev/null || true
         mv -f "$ANYTLS_META/config.env.bak" "$ANYTLS_META/config.env" 2>/dev/null || true
+        mv -f "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ip" 2>/dev/null || true
+        mv -f "$ANYTLS_META/public_ipv6.bak" "$ANYTLS_META/public_ipv6" 2>/dev/null || true
         mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
         mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
         read_config || true
@@ -1405,7 +1520,9 @@ change_config() {
         return
     fi
     [ "$_old_port" != "$LISTEN_PORT" ] && close_ports "$_old_port"
-    rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" "${ANYTLS_CERT}.bak" "${ANYTLS_KEY}.bak"
+    rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" \
+        "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ipv6.bak" \
+        "${ANYTLS_CERT}.bak" "${ANYTLS_KEY}.bak"
     show_config
 }
 
@@ -1607,7 +1724,47 @@ show_config() {
 # ============================================================
 # 升级 / 卸载 / 工具
 # ============================================================
+acquire_upgrade_lock() {
+    local _lock_dir="${UPGRADE_LOCK_FILE}.d" _owner=""
+    mkdir -p "$(dirname "$UPGRADE_LOCK_FILE")" 2>/dev/null || return 1
+    if command -v flock >/dev/null 2>&1; then
+        exec 8>"$UPGRADE_LOCK_FILE" || return 1
+        flock -n 8 || { exec 8>&-; return 1; }
+        UPGRADE_LOCK_MODE="flock"
+        return 0
+    fi
+    if ! mkdir "$_lock_dir" 2>/dev/null; then
+        _owner=$(cat "$_lock_dir/pid" 2>/dev/null || true)
+        if [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; then
+            rm -rf "$_lock_dir"
+            mkdir "$_lock_dir" 2>/dev/null || return 1
+        else
+            return 1
+        fi
+    fi
+    printf '%s' "$$" > "$_lock_dir/pid"
+    UPGRADE_LOCK_MODE="mkdir"
+}
+
+release_upgrade_lock() {
+    if [ "$UPGRADE_LOCK_MODE" = "flock" ]; then
+        flock -u 8 2>/dev/null || true
+        exec 8>&-
+    elif [ "$UPGRADE_LOCK_MODE" = "mkdir" ]; then
+        rm -rf "${UPGRADE_LOCK_FILE}.d"
+    fi
+    UPGRADE_LOCK_MODE=""
+}
+
 upgrade_core() {
+    acquire_upgrade_lock || { echo -e "${YELLOW}另一个 AnyTLS 升级任务正在运行，请稍后重试${PLAIN}"; return 1; }
+    local _status=0
+    _upgrade_core_locked || _status=$?
+    release_upgrade_lock
+    return "$_status"
+}
+
+_upgrade_core_locked() {
     [ -f "$ANYTLS_CONFIG" ] && [ -x "$SING_BOX_BIN" ] || {
         echo -e "${RED}AnyTLS 尚未安装，请先执行安装${PLAIN}"
         return 1
@@ -1642,7 +1799,7 @@ upgrade_core() {
     if [ "$_was_active" = "1" ]; then
         service_restart
         sleep 2
-        if ! service_is_active; then
+        if ! service_is_healthy; then
             mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
             service_restart || true
             echo -e "${RED}升级后服务启动失败，已回滚${PLAIN}"
@@ -1874,7 +2031,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.17${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.18${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

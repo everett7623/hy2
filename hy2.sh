@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：Jensfrank
-# 版本：v2.0.17
+# 版本：v2.0.18
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-13
+# 更新日期: 2026-07-14
 #
 # 支持系统:
 #   Debian 10/11/12+
@@ -99,6 +99,8 @@ INSTALL_BACKUP_DIR=""
 INSTALL_ROLLBACK_ARMED=0
 INSTALL_PREV_INT_TRAP=""
 INSTALL_PREV_TERM_TRAP=""
+UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/hy2-upgrade.lock}"
+UPGRADE_LOCK_MODE=""
 
 # --- 运行时变量 ---
 NAT_MODE=0
@@ -219,6 +221,31 @@ service_is_active() {
     else
         [ -f /var/run/hysteria.pid ] && kill -0 "$(cat /var/run/hysteria.pid)" 2>/dev/null
     fi
+}
+
+service_is_healthy() {
+    service_is_active || return 1
+    valid_port "${LISTEN_PORT:-}" || return 0
+    command -v ss >/dev/null 2>&1 || return 0
+    ss -lnu 2>/dev/null | awk -v port="$LISTEN_PORT" '
+        NR > 1 { addr=$4; if (addr ~ (":" port "$")) found=1 }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
+has_free_space_mb() {
+    local _path="$1" _required="$2" _available
+    command -v df >/dev/null 2>&1 || return 0
+    _available=$(df -Pk "$_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
+    [ -z "$_available" ] && return 0
+    [ "$_available" -ge $((_required * 1024)) ]
+}
+
+check_download_space() {
+    has_free_space_mb "$(disk_tmp_dir)" 48 && has_free_space_mb "$(dirname "$HY_BIN")" 32 || {
+        echo -e "${RED}磁盘空间不足：下载 Hysteria2 至少需要临时分区 48MB、目标分区 32MB${PLAIN}"
+        return 1
+    }
 }
 
 service_is_enabled() {
@@ -432,6 +459,18 @@ detect_network() {
 # 依赖安装
 # ============================================================
 
+retry_command() {
+    local _attempt=1 _max=3 _delay=2
+    while [ "$_attempt" -le "$_max" ]; do
+        "$@" && return 0
+        [ "$_attempt" -ge "$_max" ] && break
+        echo -e "${YELLOW}命令执行失败或包管理器被占用，${_delay} 秒后重试 (${_attempt}/${_max})...${PLAIN}" >&2
+        sleep "$_delay"
+        _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
+}
+
 install_dependencies() {
     local _cmd _ready=1
     for _cmd in curl openssl ip; do
@@ -445,26 +484,26 @@ install_dependencies() {
     echo -e "${YELLOW}正在补齐必要依赖...${PLAIN}"
     case "$RELEASE" in
         alpine)
-            apk update -q >/dev/null 2>&1
-            apk add --no-cache bash curl wget ca-certificates openssl iproute2 procps >/dev/null 2>&1
+            retry_command apk update -q >/dev/null 2>&1
+            retry_command apk add --no-cache bash curl wget ca-certificates openssl iproute2 procps >/dev/null 2>&1
             apk add --no-cache libqrencode >/dev/null 2>&1 || true
             ;;
         centos)
-            yum install -y curl wget ca-certificates openssl iproute procps-ng >/dev/null 2>&1
+            retry_command yum install -y curl wget ca-certificates openssl iproute procps-ng >/dev/null 2>&1
             yum install -y qrencode >/dev/null 2>&1 || true
             ;;
         fedora|rocky)
-            dnf install -y curl wget ca-certificates openssl iproute procps-ng >/dev/null 2>&1
+            retry_command dnf install -y curl wget ca-certificates openssl iproute procps-ng >/dev/null 2>&1
             dnf install -y qrencode >/dev/null 2>&1 || true
             ;;
         arch)
-            pacman -Sy --noconfirm curl wget ca-certificates openssl iproute2 procps-ng >/dev/null 2>&1
+            retry_command pacman -Sy --noconfirm curl wget ca-certificates openssl iproute2 procps-ng >/dev/null 2>&1
             pacman -S --noconfirm qrencode >/dev/null 2>&1 || true
             ;;
         *)
             if command -v apt-get >/dev/null 2>&1; then
-                apt-get update -qq >/dev/null 2>&1
-                apt-get install -y -qq curl wget ca-certificates openssl iproute2 procps >/dev/null 2>&1
+                retry_command apt-get update -qq >/dev/null 2>&1
+                retry_command apt-get install -y -qq curl wget ca-certificates openssl iproute2 procps >/dev/null 2>&1
                 apt-get install -y -qq qrencode >/dev/null 2>&1 || true
             else
                 echo -e "${RED}无法识别包管理器，请手动安装 curl、wget、openssl 和 iproute2${PLAIN}"
@@ -481,13 +520,15 @@ install_dependencies() {
 }
 
 download_file() {
-    local _url="$1" _dest="$2"
-    if command -v curl >/dev/null 2>&1 && \
-       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
-        return 0
-    fi
-    command -v wget >/dev/null 2>&1 && \
-        wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
+    local _url="$1" _dest="$2" _attempt=1 _delay=2
+    while [ "$_attempt" -le 3 ]; do
+        if command -v curl >/dev/null 2>&1 && curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        if command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        rm -f "$_dest"
+        [ "$_attempt" -ge 3 ] && break
+        sleep "$_delay"; _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
 }
 
 valid_port() {
@@ -539,6 +580,7 @@ get_latest_version() {
 }
 
 download_hy2() {
+    check_download_space || return 1
     local _arch
     case $(uname -m) in
         x86_64)          _arch="amd64"   ;;
@@ -867,7 +909,7 @@ install_hy2() {
 
     sleep 2
     echo -e "${YELLOW}验证服务状态...${PLAIN}"
-    if service_is_active; then
+    if service_is_healthy; then
         echo -e "${GREEN}✓ Hysteria2 启动成功${PLAIN}"
         command -v ss >/dev/null 2>&1 && \
             ss -unlp 2>/dev/null | grep -q ":${LISTEN_PORT}" \
@@ -890,7 +932,47 @@ install_hy2() {
 # 版本对比使用剥离 app/ 前缀后的纯 vX.Y.Z 格式
 # ============================================================
 
+acquire_upgrade_lock() {
+    local _lock_dir="${UPGRADE_LOCK_FILE}.d" _owner=""
+    mkdir -p "$(dirname "$UPGRADE_LOCK_FILE")" 2>/dev/null || return 1
+    if command -v flock >/dev/null 2>&1; then
+        exec 8>"$UPGRADE_LOCK_FILE" || return 1
+        flock -n 8 || { exec 8>&-; return 1; }
+        UPGRADE_LOCK_MODE="flock"
+        return 0
+    fi
+    if ! mkdir "$_lock_dir" 2>/dev/null; then
+        _owner=$(cat "$_lock_dir/pid" 2>/dev/null || true)
+        if [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; then
+            rm -rf "$_lock_dir"
+            mkdir "$_lock_dir" 2>/dev/null || return 1
+        else
+            return 1
+        fi
+    fi
+    printf '%s' "$$" > "$_lock_dir/pid"
+    UPGRADE_LOCK_MODE="mkdir"
+}
+
+release_upgrade_lock() {
+    if [ "$UPGRADE_LOCK_MODE" = "flock" ]; then
+        flock -u 8 2>/dev/null || true
+        exec 8>&-
+    elif [ "$UPGRADE_LOCK_MODE" = "mkdir" ]; then
+        rm -rf "${UPGRADE_LOCK_FILE}.d"
+    fi
+    UPGRADE_LOCK_MODE=""
+}
+
 upgrade_hy2() {
+    acquire_upgrade_lock || { echo -e "${YELLOW}另一个 Hysteria2 升级任务正在运行，请稍后重试${PLAIN}"; return 1; }
+    local _status=0
+    _upgrade_hy2_locked || _status=$?
+    release_upgrade_lock
+    return "$_status"
+}
+
+_upgrade_hy2_locked() {
     if [ ! -f "$HY_BIN" ]; then
         echo -e "${RED}未检测到已安装的 Hysteria2，请先安装${PLAIN}"
         sleep 2; return
@@ -922,7 +1004,7 @@ upgrade_hy2() {
     if download_hy2; then
         [ "$_was_active" = "0" ] || { service_restart; sleep 2; }
 
-        if [ "$_was_active" = "0" ] || service_is_active; then
+        if [ "$_was_active" = "0" ] || service_is_healthy; then
             local _new_ver
             _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
@@ -1318,29 +1400,34 @@ change_password() {
         return
     fi
 
-    # 备份旧配置，失败时回滚
-    local _tmp_cfg _bak_cfg
-    _tmp_cfg=$(mktemp)
-    _bak_cfg=$(mktemp)
-    trap 'rm -f "$_tmp_cfg" "$_bak_cfg"' EXIT INT TERM
-    cp "$HY_CONFIG" "$_bak_cfg"
+    # 在配置目录内生成临时文件，确保最终替换为同文件系统原子操作。
+    local _config_dir _tmp_cfg _bak_cfg
+    _config_dir=$(dirname "$HY_CONFIG")
+    _tmp_cfg=$(mktemp "${_config_dir}/config.yaml.new.XXXXXX" 2>/dev/null) || {
+        echo -e "${RED}无法创建配置临时文件${PLAIN}"; sleep 2; return
+    }
+    _bak_cfg=$(mktemp "${_config_dir}/config.yaml.bak.XXXXXX" 2>/dev/null) || {
+        rm -f "$_tmp_cfg"; echo -e "${RED}无法创建配置备份${PLAIN}"; sleep 2; return
+    }
+    cp -p "$HY_CONFIG" "$_bak_cfg" || {
+        rm -f "$_tmp_cfg" "$_bak_cfg"; echo -e "${RED}配置备份失败${PLAIN}"; sleep 2; return
+    }
 
     awk -v pw="$NEW_PASS" '
         /^auth:/ { in_auth=1; print; next }
         in_auth && /^[^[:space:]]/ { in_auth=0 }
         in_auth && /^[[:space:]]+password:/ { sub(/password:.*/, "password: \"" pw "\""); }
         { print }
-    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG" || { rm -f "$_tmp_cfg" "$_bak_cfg"; trap - EXIT INT TERM; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return; }
-    rm -f "$_tmp_cfg"
+    ' "$HY_CONFIG" > "$_tmp_cfg" && chmod 600 "$_tmp_cfg" && mv -f "$_tmp_cfg" "$HY_CONFIG" || {
+        rm -f "$_tmp_cfg" "$_bak_cfg"; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return
+    }
 
     if service_restart && service_is_active; then
         rm -f "$_bak_cfg"
-        trap - EXIT INT TERM
         echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
     else
-        mv "$_bak_cfg" "$HY_CONFIG"
-        service_restart
-        trap - EXIT INT TERM
+        mv -f "$_bak_cfg" "$HY_CONFIG"
+        service_restart || true
         echo -e "${RED}服务重启失败，配置已回滚${PLAIN}"
         service_logs
     fi
@@ -1359,6 +1446,7 @@ change_bandwidth() {
     fi
 
     read_config_vars
+    local _old_bw_up="$BW_UP" _old_bw_down="$BW_DOWN"
     echo -e "  当前带宽: ${YELLOW}上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
     read -r -p "请输入新的上行带宽 Mbps [留空保持 ${BW_UP}]: " _new_up
     read -r -p "请输入新的下行带宽 Mbps [留空保持 ${BW_DOWN}]: " _new_dn
@@ -1370,29 +1458,43 @@ change_bandwidth() {
         return
     }
 
-    # 用 awk 精准替换 bandwidth 块下的 up/down 行，不依赖固定缩进
-    local _tmp_cfg
-    _tmp_cfg=$(mktemp)
-    trap 'rm -f "$_tmp_cfg"' EXIT INT TERM
+    # 用同目录临时文件原子替换，并保留可回滚副本。
+    local _config_dir _tmp_cfg _bak_cfg
+    _config_dir=$(dirname "$HY_CONFIG")
+    _tmp_cfg=$(mktemp "${_config_dir}/config.yaml.new.XXXXXX" 2>/dev/null) || {
+        echo -e "${RED}无法创建配置临时文件${PLAIN}"; sleep 2; return
+    }
+    _bak_cfg=$(mktemp "${_config_dir}/config.yaml.bak.XXXXXX" 2>/dev/null) || {
+        rm -f "$_tmp_cfg"; echo -e "${RED}无法创建配置备份${PLAIN}"; sleep 2; return
+    }
+    cp -p "$HY_CONFIG" "$_bak_cfg" || {
+        rm -f "$_tmp_cfg" "$_bak_cfg"; echo -e "${RED}配置备份失败${PLAIN}"; sleep 2; return
+    }
     awk -v up="${BW_UP}" -v dn="${BW_DOWN}" '
         /^bandwidth:/ { in_bw=1; print; next }
         in_bw && /^[^[:space:]]/ { in_bw=0 }
         in_bw && /^[[:space:]]+up:/ { sub(/up:.*/, "up: " up " mbps"); }
         in_bw && /^[[:space:]]+down:/ { sub(/down:.*/, "down: " dn " mbps"); }
         { print }
-    ' "$HY_CONFIG" > "$_tmp_cfg" && mv "$_tmp_cfg" "$HY_CONFIG" || { rm -f "$_tmp_cfg"; trap - EXIT INT TERM; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return; }
-    trap - EXIT INT TERM
+    ' "$HY_CONFIG" > "$_tmp_cfg" && chmod 600 "$_tmp_cfg" && mv -f "$_tmp_cfg" "$HY_CONFIG" || {
+        rm -f "$_tmp_cfg" "$_bak_cfg"; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return
+    }
 
     # 更新元数据
     echo "$BW_UP"   > "$HY_META/bw_up"
     echo "$BW_DOWN" > "$HY_META/bw_down"
 
-    service_restart
+    service_restart || true
     sleep 1
     if service_is_active; then
+        rm -f "$_bak_cfg"
         echo -e "${GREEN}带宽已更新: 上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
     else
-        echo -e "${RED}服务重启失败，请检查配置和日志${PLAIN}"
+        mv -f "$_bak_cfg" "$HY_CONFIG"
+        printf '%s' "$_old_bw_up" > "$HY_META/bw_up"
+        printf '%s' "$_old_bw_down" > "$HY_META/bw_down"
+        service_restart || true
+        echo -e "${RED}服务重启失败，配置和元数据已回滚${PLAIN}"
         service_logs
     fi
     sleep 2
@@ -1534,6 +1636,31 @@ install_auto_update() {
 HY_BIN="/usr/local/bin/hysteria"
 LOG="/var/log/hy2-autoupdate.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+LOCK_FILE="/var/lock/hy2-upgrade.lock"
+LOCK_MODE=""
+
+acquire_lock() {
+    local _dir="${LOCK_FILE}.d" _owner=""
+    mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || return 1
+    if command -v flock >/dev/null 2>&1; then
+        exec 8>"$LOCK_FILE" || return 1
+        flock -n 8 || { exec 8>&-; return 1; }
+        LOCK_MODE="flock"; return 0
+    fi
+    if ! mkdir "$_dir" 2>/dev/null; then
+        _owner=$(cat "$_dir/pid" 2>/dev/null || true)
+        [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null || return 1
+        rm -rf "$_dir"; mkdir "$_dir" 2>/dev/null || return 1
+    fi
+    printf '%s' "$$" > "$_dir/pid"
+    LOCK_MODE="mkdir"
+}
+
+release_lock() {
+    [ "$LOCK_MODE" != "flock" ] || { flock -u 8 2>/dev/null || true; exec 8>&-; }
+    [ "$LOCK_MODE" != "mkdir" ] || rm -rf "${LOCK_FILE}.d"
+    LOCK_MODE=""
+}
 
 get_latest() {
     local _raw _ver
@@ -1567,12 +1694,15 @@ restart_service() {
 }
 
 download_file() {
-    local _url="$1" _dest="$2"
-    if command -v curl >/dev/null 2>&1 && \
-       curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then
-        return 0
-    fi
-    command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null
+    local _url="$1" _dest="$2" _attempt=1 _delay=2
+    while [ "$_attempt" -le 3 ]; do
+        if command -v curl >/dev/null 2>&1 && curl -fL --connect-timeout 10 --max-time 120 -o "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        if command -v wget >/dev/null 2>&1 && wget -q --timeout=60 -O "$_dest" "$_url" 2>/dev/null; then return 0; fi
+        rm -f "$_dest"
+        [ "$_attempt" -ge 3 ] && break
+        sleep "$_delay"; _attempt=$((_attempt + 1)); _delay=$((_delay * 2))
+    done
+    return 1
 }
 
 disk_tmp_dir() {
@@ -1581,6 +1711,8 @@ disk_tmp_dir() {
 }
 
 main() {
+    acquire_lock || { echo "[$TIMESTAMP] 另一个升级任务正在运行，跳过本次更新" >> "$LOG"; return; }
+    trap release_lock EXIT INT TERM
     local _info _tag _latest _current _arch _url _url_mirror
     local _tmp_bin _backup _was_active=0
     _info=$(get_latest)
@@ -1831,7 +1963,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.17${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.18${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}Jensfrank${PLAIN}"

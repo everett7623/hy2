@@ -4,6 +4,18 @@
 
 ---
 
+## v2.0.18 (2026-07-14)
+
+- Make HY2, Shadowsocks, and AnyTLS configuration changes atomic and roll back configs, metadata, ports, and service state when validation or restart fails.
+- Track firewall rules created by the scripts so port changes and uninstall never remove pre-existing administrator rules.
+- Serialize manual and automatic core upgrades with shared locks, including stale-lock recovery on systems without `flock`.
+- Check temporary and target filesystem capacity before large downloads, extraction, backup, and binary replacement operations.
+- Require the configured TCP or UDP port to be listening before treating an active service as healthy, while degrading safely when `ss` is unavailable.
+- Retry package-manager and binary-download failures with bounded exponential backoff and curl/wget fallback.
+- Expand regression tests for atomic-write failures, rollback, firewall ownership, lock contention, low-disk conditions, missing listeners, and transient network failures.
+
+---
+
 ## v2.0.17 (2026-07-13)
 
 - Restore Hysteria 2, Shadowsocks, and AnyTLS files plus service active/enabled state when reinstall is interrupted by `Ctrl+C` or `TERM`.
