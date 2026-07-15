@@ -234,7 +234,7 @@ bash hy2.sh
 
 | | |
 | --- | --- |
-| Author | Jensfrank |
+| Author | everettlabs |
 | GitHub | [everett7623/hy2](https://github.com/everett7623/hy2) |
 | Blog | [seedloc.com](https://seedloc.com) |
 | Review | [vpsknow.com](https://vpsknow.com) |
