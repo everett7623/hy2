@@ -369,6 +369,7 @@ download_anytls() {
     chmod +x "$SING_BOX_BIN"
     MANAGED_SING_BOX=1
 }
+service_is_healthy() { return 0; }
 shared_vless_service_is_active() { return 0; }
 shared_vless_service_restart() { : > "$tmp/shared-vless-restarted"; }
 upgrade_core >/dev/null
