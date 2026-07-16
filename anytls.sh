@@ -597,6 +597,14 @@ close_acme_challenge_ports() {
     close_ports 443
 }
 
+sync_acme_challenge_ports() {
+    if [ "$CERT_MODE" = "acme" ]; then
+        open_acme_challenge_ports
+    else
+        close_acme_challenge_ports
+    fi
+}
+
 # ============================================================
 # 二进制下载 / 校验
 # ============================================================
@@ -1348,7 +1356,7 @@ restore_current_install() {
     [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SYSTEMD_SERVICE"
     [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
     if [ -f "$ANYTLS_META/config.env" ]; then
-        read_config >/dev/null 2>&1 && open_acme_challenge_ports >/dev/null 2>&1 || true
+        read_config >/dev/null 2>&1 && sync_acme_challenge_ports >/dev/null 2>&1 || true
     fi
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
     [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
@@ -1648,7 +1656,7 @@ install_anytls() {
 
     service_enable
     open_ports "$LISTEN_PORT"
-    open_acme_challenge_ports
+    sync_acme_challenge_ports
     echo -e "${YELLOW}正在启动 AnyTLS 服务...${PLAIN}"
     if service_is_active; then service_restart; else service_start; fi
 

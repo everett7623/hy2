@@ -211,6 +211,16 @@ open_acme_challenge_ports >/dev/null
 [ -f "$ANYTLS_META/firewall/iptables4-443-tcp" ]
 close_acme_challenge_ports
 grep -q '^delete$' "$firewall_log"
+
+# 从 ACME 切换到其他证书模式时必须清理项目创建的 80/443 规则。
+firewall_existing=0; CERT_MODE=acme
+sync_acme_challenge_ports >/dev/null
+[ -f "$ANYTLS_META/firewall/iptables4-80-tcp" ]
+[ -f "$ANYTLS_META/firewall/iptables4-443-tcp" ]
+CERT_MODE=existing
+sync_acme_challenge_ports
+[ ! -e "$ANYTLS_META/firewall/iptables4-80-tcp" ]
+[ ! -e "$ANYTLS_META/firewall/iptables4-443-tcp" ]
 CERT_MODE=self_signed
 unset -f iptables
 has_control_chars $'/tmp/cert\nMANAGED_SING_BOX=1'
