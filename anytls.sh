@@ -2195,10 +2195,12 @@ diagnose_anytls() {
         echo -e "  ${RED}✗ sing-box 配置无效${PLAIN}"
         check_config 2>&1 | sed 's/^/    /'
     fi
-    if [ -s "$ANYTLS_CERT" ] && openssl x509 -in "$ANYTLS_CERT" -noout -checkend 86400 >/dev/null 2>&1; then
-        echo -e "  ${GREEN}✓ TLS 证书有效${PLAIN}"
+    if [ "$CERT_MODE" = "acme" ]; then
+        echo -e "  ${GREEN}✓ TLS 证书由 sing-box ACME Certificate Provider 管理${PLAIN}"
+    elif [ -s "$CERT_PATH" ] && openssl x509 -in "$CERT_PATH" -noout -checkend 86400 >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓ TLS 证书有效: ${CERT_PATH}${PLAIN}"
     else
-        echo -e "  ${RED}✗ TLS 证书缺失、损坏或即将过期${PLAIN}"
+        echo -e "  ${RED}✗ TLS 证书缺失、损坏或即将过期: ${CERT_PATH:-未配置}${PLAIN}"
     fi
     if service_is_active; then
         echo -e "  ${GREEN}✓ AnyTLS 服务运行中${PLAIN}"

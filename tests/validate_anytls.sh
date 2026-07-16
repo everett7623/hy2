@@ -261,6 +261,31 @@ grep -q '"domain": \["www.example.com"\]' "$ANYTLS_CONFIG"
 CERT_MODE=self_signed; CERT_PATH="$ANYTLS_CERT"; KEY_PATH="$ANYTLS_KEY"; ACME_EMAIL=""
 write_config
 
+# 诊断必须检查当前证书模式的实际路径；ACME 不应误查自签证书文件。
+(
+read_config() { return 0; }
+check_config() { return 0; }
+service_is_active() { return 0; }
+ss() { printf '%s\n' 'LISTEN 0 128 0.0.0.0:8443'; }
+openssl_log="$tmp/diagnose-openssl.log"
+openssl() { printf '%s\n' "$*" >> "$openssl_log"; return 0; }
+existing_cert="$tmp/existing-fullchain.pem"
+printf '%s\n' 'mock certificate' > "$existing_cert"
+CERT_MODE=existing; CERT_PATH="$existing_cert"
+diagnose_output=$(diagnose_anytls)
+grep -q "$existing_cert" <<EOF
+$diagnose_output
+EOF
+grep -q -- "-in $existing_cert" "$openssl_log"
+: > "$openssl_log"
+CERT_MODE=acme; CERT_PATH=""
+diagnose_output=$(diagnose_anytls)
+grep -q 'ACME Certificate Provider' <<EOF
+$diagnose_output
+EOF
+[ ! -s "$openssl_log" ]
+)
+
 # 候选核心必须能加载共享目录内的全部 JSON，任一失败都要拒绝替换。
 cat > "$tmp/shared-check-bin" <<'EOF'
 #!/bin/sh
