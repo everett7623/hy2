@@ -11,7 +11,7 @@
 
 ## 修改原则
 
-- 保持 `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`euservhy2.sh` 可独立执行。
+- 保持 `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh`、`euservhy2.sh` 可独立执行。
 - 不引入共享 `source` 文件；远程启动器只下载单个脚本。
 - 保留 Bash 自举、TTY 修复和 CRLF guard。
 - 不使用 `grep -oP`、`${var,,}`、`${var^^}` 或 `head -c`。
@@ -34,11 +34,12 @@ bash tests/validate_scripts.sh
 
 项目没有共享版本文件。发布时同步修改：
 
-- 五个脚本的文件头版本和日期
-- `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh` 的菜单显示版本
+- 六个脚本的文件头版本和日期
+- `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh` 的菜单显示版本
 - `euservhy2.sh` 的 `SCRIPT_VERSION`
 - `tests/validate_scripts.sh` 的 `EXPECTED_VERSION`
 - AnyTLS 变更需同步 `tests/validate_anytls.sh`；保持 sing-box 原生 AnyTLS 入站、JSON 配置、证书与 wrapper 的测试覆盖。
+- VLESS 变更需同步 `tests/validate_vless.sh`；保持 UUID、REALITY 密钥/short ID、JSON、客户端输出、共享核心和 wrapper/service 的测试覆盖。
 - `CHANGELOG.md`
 
 完整发布步骤见 `docs/RELEASE.md`。

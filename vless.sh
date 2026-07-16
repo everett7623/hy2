@@ -1,17 +1,17 @@
 #!/bin/bash
 #====================================================================================
-# 项目：AnyTLS Management Script
+# 项目：VLESS Management Script
 # 作者：everettlabs
 # 版本：v2.0.18
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-14
+# 更新日期: 2026-07-16
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
-# 实现方式: 使用 sing-box >= 1.12.0 原生 AnyTLS 入站
+# 实现方式: 使用 sing-box >= 1.12.0 原生 VLESS 入站
 #====================================================================================
 
 # ============================================================
@@ -38,7 +38,7 @@ fi
 
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 
-[ "${ANYTLS_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ] && [ -c /dev/tty ] && exec < /dev/tty
+[ "${VLESS_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ] && [ -c /dev/tty ] && exec < /dev/tty
 
 if [ -f "$SCRIPT_PATH" ] && grep -q $'\r' "$SCRIPT_PATH" 2>/dev/null; then
     sed -i 's/\r$//' "$SCRIPT_PATH"
@@ -46,9 +46,9 @@ if [ -f "$SCRIPT_PATH" ] && grep -q $'\r' "$SCRIPT_PATH" 2>/dev/null; then
 fi
 
 # ============================================================
-# ANYTLS_LIB_ONLY=1：仅加载函数库，不执行任何副作用（供测试 source）
+# VLESS_LIB_ONLY=1：仅加载函数库，不执行任何副作用（供测试 source）
 # ============================================================
-[ "${ANYTLS_LIB_ONLY:-0}" = "1" ] && _ANYTLS_LIB_ONLY=1 || _ANYTLS_LIB_ONLY=0
+[ "${VLESS_LIB_ONLY:-0}" = "1" ] && _VLESS_LIB_ONLY=1 || _VLESS_LIB_ONLY=0
 
 # --- 颜色 ---
 RED='\033[0;31m'
@@ -74,19 +74,16 @@ disk_tmp_dir() {
 }
 
 # --- 路径 ---
-ANYTLS_BIN="${ANYTLS_BIN:-/usr/local/bin/anytls-server}"
+VLESS_BIN="${VLESS_BIN:-/usr/local/bin/vless-server}"
 SING_BOX_BIN="${SING_BOX_BIN:-/usr/local/bin/sing-box}"
-ANYTLS_DIR="${ANYTLS_DIR:-/etc/sing-box}"
-ANYTLS_CONFIG="${ANYTLS_CONFIG:-${ANYTLS_DIR}/anytls.json}"
-ANYTLS_META="${ANYTLS_META:-${ANYTLS_DIR}/anytls-meta}"
-SING_BOX_MANAGED_MARKER="${SING_BOX_MANAGED_MARKER:-${ANYTLS_DIR}/.singbox-tools-managed}"
-ANYTLS_CERT_DIR="${ANYTLS_CERT_DIR:-${ANYTLS_DIR}/anytls-cert}"
-ANYTLS_CERT="${ANYTLS_CERT:-${ANYTLS_CERT_DIR}/cert.pem}"
-ANYTLS_KEY="${ANYTLS_KEY:-${ANYTLS_CERT_DIR}/private.key}"
-SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/anytls-server.service}"
-OPENRC_SERVICE="/etc/init.d/anytls-server"
-AUTO_UPDATE_SCRIPT="/usr/local/bin/anytls-autoupdate.sh"
-AUTO_UPDATE_LOG="/var/log/anytls-autoupdate.log"
+VLESS_DIR="${VLESS_DIR:-/etc/sing-box}"
+VLESS_CONFIG="${VLESS_CONFIG:-${VLESS_DIR}/vless.json}"
+VLESS_META="${VLESS_META:-${VLESS_DIR}/vless-meta}"
+SING_BOX_MANAGED_MARKER="${SING_BOX_MANAGED_MARKER:-${VLESS_DIR}/.singbox-tools-managed}"
+SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/vless-server.service}"
+OPENRC_SERVICE="/etc/init.d/vless-server"
+AUTO_UPDATE_SCRIPT="/usr/local/bin/vless-autoupdate.sh"
+AUTO_UPDATE_LOG="/var/log/vless-autoupdate.log"
 
 # --- 运行时变量 ---
 RELEASE="unknown"
@@ -102,13 +99,13 @@ BIND_FAMILY="v4"
 LISTEN_HOST="::"
 LISTEN_PORT=""
 EXT_PORT=""
-PASSWORD=""
+UUID=""
+REALITY_PRIVATE_KEY=""
+REALITY_PUBLIC_KEY=""
+SHORT_ID=""
 NODE_NAME=""
 SERVER_NAME="www.example.com"
-CERT_MODE="self_signed"
-CERT_PATH="$ANYTLS_CERT"
-KEY_PATH="$ANYTLS_KEY"
-ACME_EMAIL=""
+HANDSHAKE_PORT="443"
 MANAGED_SING_BOX=0
 LAST_VERSION_TAG=""
 SING_BOX_STABLE_FALLBACK_TAG="${SING_BOX_STABLE_FALLBACK_TAG:-v1.13.14}"
@@ -240,22 +237,20 @@ validate_port() {
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
 
-validate_password() {
-    local pw="$1"
-    local len="${#pw}"
-    [ "$len" -lt 8 ]   && return 1
-    [ "$len" -gt 128 ] && return 1
-    case "$pw" in
-        *'"'*)  return 1 ;;
-        *'\'*)  return 1 ;;
-        *'$'*)  return 1 ;;
-        *'`'*)  return 1 ;;
-        *' '*)  return 1 ;;
-    esac
-    local _has_ctrl
-    _has_ctrl=$(printf '%s' "$pw" | od -An -tx1 | tr ' \n' '\n' | { grep -cE '^[01][0-9a-f]$|^7f$' 2>/dev/null || true; })
-    [ "${_has_ctrl:-0}" -gt 0 ] 2>/dev/null && return 1
-    return 0
+validate_uuid() {
+    printf '%s\n' "$1" | grep -qE '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+}
+
+validate_reality_key() {
+    printf '%s\n' "$1" | grep -qE '^[A-Za-z0-9_-]{43}$'
+}
+
+validate_short_id() {
+    local _short_id="$1" _length
+    _length="${#_short_id}"
+    [ "$_length" -ge 2 ] && [ "$_length" -le 16 ] || return 1
+    [ $((_length % 2)) -eq 0 ] || return 1
+    printf '%s\n' "$_short_id" | grep -qE '^[0-9A-Fa-f]+$'
 }
 
 validate_server_name() {
@@ -295,6 +290,50 @@ random_sni() {
         6) echo "www.mozilla.org" ;;
         *) echo "www.github.com" ;;
     esac
+}
+
+generate_uuid() {
+    local _uuid="" _hex
+    if [ -x "$SING_BOX_BIN" ]; then
+        _uuid=$("$SING_BOX_BIN" generate uuid 2>/dev/null | awk '/^[0-9A-Fa-f-]{36}$/ { print; exit }')
+    fi
+    if ! validate_uuid "$_uuid" && [ -r /proc/sys/kernel/random/uuid ]; then
+        _uuid=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
+    fi
+    if ! validate_uuid "$_uuid"; then
+        _hex=$(openssl rand -hex 16 2>/dev/null | tr -d '[:space:]')
+        [ "${#_hex}" = "32" ] || return 1
+        _uuid=$(printf '%s-%s-%s-%s-%s' \
+            "$(printf '%s' "$_hex" | cut -c1-8)" \
+            "$(printf '%s' "$_hex" | cut -c9-12)" \
+            "$(printf '%s' "$_hex" | cut -c13-16)" \
+            "$(printf '%s' "$_hex" | cut -c17-20)" \
+            "$(printf '%s' "$_hex" | cut -c21-32)")
+    fi
+    validate_uuid "$_uuid" || return 1
+    printf '%s' "$_uuid"
+}
+
+generate_reality_keypair() {
+    local _output _private _public
+    [ -x "$SING_BOX_BIN" ] || return 1
+    _output=$("$SING_BOX_BIN" generate reality-keypair 2>/dev/null) || return 1
+    _private=$(printf '%s\n' "$_output" | awk -F':[[:space:]]*' 'tolower($1) ~ /private/ { print $2; exit }')
+    _public=$(printf '%s\n' "$_output" | awk -F':[[:space:]]*' 'tolower($1) ~ /public/ { print $2; exit }')
+    validate_reality_key "$_private" || return 1
+    validate_reality_key "$_public" || return 1
+    REALITY_PRIVATE_KEY="$_private"
+    REALITY_PUBLIC_KEY="$_public"
+}
+
+generate_short_id() {
+    local _short_id
+    _short_id=$(openssl rand -hex 8 2>/dev/null | tr -d '[:space:]')
+    if ! validate_short_id "$_short_id"; then
+        _short_id=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+    fi
+    validate_short_id "$_short_id" || return 1
+    printf '%s' "$_short_id"
 }
 
 # ============================================================
@@ -514,7 +553,7 @@ detect_network() {
 
 open_ports() {
     local _port=$1
-    local _fw_meta="$ANYTLS_META/firewall"
+    local _fw_meta="$VLESS_META/firewall"
     mkdir -p "$_fw_meta" 2>/dev/null || true
     echo -e "${YELLOW}正在自动放行 TCP 端口 ${_port}...${PLAIN}"
 
@@ -558,7 +597,7 @@ open_ports() {
 
 close_ports() {
     local _port="$1"
-    local _fw_meta="$ANYTLS_META/firewall"
+    local _fw_meta="$VLESS_META/firewall"
     validate_port "$_port" || return 0
 
     if [ -f "$_fw_meta/firewalld-${_port}-tcp" ] && command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
@@ -585,18 +624,6 @@ close_ports() {
     fi
 }
 
-open_acme_challenge_ports() {
-    [ "$CERT_MODE" = "acme" ] || return 0
-    echo -e "${YELLOW}ACME 需要公网 TCP 80/443；请确认域名解析及 NAT/安全组转发正确。${PLAIN}"
-    open_ports 80
-    open_ports 443
-}
-
-close_acme_challenge_ports() {
-    close_ports 80
-    close_ports 443
-}
-
 # ============================================================
 # 二进制下载 / 校验
 # ============================================================
@@ -614,7 +641,7 @@ validate_elf() {
 validate_shared_configs_with_bin() {
     local _bin="$1" _config
     [ -x "$_bin" ] || return 1
-    for _config in "$ANYTLS_DIR"/*.json; do
+    for _config in "$VLESS_DIR"/*.json; do
         [ -f "$_config" ] || continue
         if ! "$_bin" check -c "$_config" >/dev/null 2>&1; then
             echo -e "${RED}新核心无法加载共享配置: ${_config}${PLAIN}"
@@ -688,7 +715,7 @@ download_file() {
     return 1
 }
 
-download_anytls() {
+download_vless() {
     check_download_space || return 1
     local _arch
     _arch=$(detect_arch) || return 1
@@ -771,28 +798,28 @@ download_anytls() {
     echo -e "${GREEN}sing-box 安装完成: $("$SING_BOX_BIN" version 2>/dev/null | head -1)${PLAIN}"
 }
 
-ensure_anytls_bin() {
+ensure_vless_bin() {
     local _preexisting=0
     if [ -x "$SING_BOX_BIN" ]; then
         _preexisting=1
         local _installed_version
         _installed_version=$(get_installed_version)
         if version_at_least "${_installed_version:-0.0.0}" "1.12.0"; then
-            if [ -f "$ANYTLS_META/config.env" ]; then
-                MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$ANYTLS_META/config.env")
+            if [ -f "$VLESS_META/config.env" ]; then
+                MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$VLESS_META/config.env")
                 [ "$MANAGED_SING_BOX" = "1" ] || MANAGED_SING_BOX=0
             fi
             return 0
         fi
-        echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 不支持原生 AnyTLS，将安装最新版${PLAIN}"
+        echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 低于脚本最低版本 1.12.0，将安装最新版${PLAIN}"
     fi
     get_latest_version || return 1
-    download_anytls || return 1
+    download_vless || return 1
     if [ "$_preexisting" = "1" ]; then
         MANAGED_SING_BOX=0
     else
         MANAGED_SING_BOX=1
-        mkdir -p "$ANYTLS_DIR" || { echo -e "${RED}无法创建 sing-box 配置目录${PLAIN}"; return 1; }
+        mkdir -p "$VLESS_DIR" || { echo -e "${RED}无法创建 sing-box 配置目录${PLAIN}"; return 1; }
         { : > "$SING_BOX_MANAGED_MARKER"; } || { echo -e "${RED}无法写入 sing-box 所有权标记${PLAIN}"; return 1; }
         chmod 600 "$SING_BOX_MANAGED_MARKER" || { echo -e "${RED}无法保护 sing-box 所有权标记${PLAIN}"; return 1; }
     fi
@@ -887,7 +914,7 @@ generate_node_name() {
     _flag=$(get_country_flag "$_country")
     _server=$(trim_string "${2:-}")
     [ -z "$_server" ] && _server=$(generate_server_name)
-    _protocol=$(trim_string "${3:-AnyTLS}")
+    _protocol=$(trim_string "${3:-VLESS}")
     _ip_type=$(trim_string "${4:-IPv4}")
     printf '%s %s | %s | %s | %s' "$_flag" "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
 }
@@ -931,198 +958,57 @@ generate_online_qrcode_url() {
 }
 
 render_uri() {
-    local _server="$1" _port="$2" _password="$3" _name="$4" _sni="${5:-$SERVER_NAME}"
+    local _server="$1" _port="$2" _uuid="$3" _name="$4" _sni="${5:-$SERVER_NAME}"
+    local _public_key="${6:-$REALITY_PUBLIC_KEY}" _short_id="${7:-$SHORT_ID}"
     local _host
     _host=$(format_ipv6_for_uri "$_server")
-    local _enc_name _enc_password _enc_sni
+    local _enc_name _enc_sni
     _enc_name=$(uri_encode "$_name")
-    _enc_password=$(uri_encode "$_password")
     _enc_sni=$(uri_encode "$_sni")
-    if [ "$CERT_MODE" = "self_signed" ]; then
-        printf 'anytls://%s@%s:%s?security=tls&sni=%s&fp=chrome&insecure=1#%s\n' \
-            "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
-    else
-        printf 'anytls://%s@%s:%s?security=tls&sni=%s&fp=chrome#%s\n' \
-            "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
-    fi
-}
-
-certificate_public_key_sha256() {
-    [ -n "$CERT_PATH" ] && [ -s "$CERT_PATH" ] || return 1
-    openssl x509 -in "$CERT_PATH" -pubkey -noout 2>/dev/null \
-        | openssl pkey -pubin -outform DER 2>/dev/null \
-        | openssl dgst -sha256 -binary 2>/dev/null \
-        | base64 | tr -d ' \n\r'
-}
-
-certificate_fingerprint_sha256() {
-    [ -n "$CERT_PATH" ] && [ -s "$CERT_PATH" ] || return 1
-    openssl x509 -in "$CERT_PATH" -noout -fingerprint -sha256 2>/dev/null \
-        | awk -F= 'NF == 2 { print $2 }'
-}
-
-has_control_chars() {
-    case "$1" in *$'\n'*|*$'\r'*) return 0 ;; esac
-    printf '%s' "$1" | LC_ALL=C grep -q '[[:cntrl:]]'
-}
-
-validate_certificate_path() {
-    case "$1" in
-        /*) ;;
-        *) return 1 ;;
-    esac
-    case "$1" in *'"'*|*"'"*|*'\\'*) return 1 ;; esac
-    has_control_chars "$1" && return 1
-    [ -f "$1" ] && [ -s "$1" ]
-}
-
-validate_private_key_permissions() {
-    local _key="$1" _stat _owner _mode _group_other
-    command -v stat >/dev/null 2>&1 || return 1
-    _stat=$(stat -Lc '%u %a' "$_key" 2>/dev/null) || return 1
-    _owner=${_stat%% *}
-    _mode=${_stat#* }
-    _group_other=$(printf '%s' "$_mode" | sed 's/.*\(..\)$/\1/')
-    [ "$_owner" = "0" ] && [ "$_group_other" = "00" ]
-}
-
-certificate_matches_server_name() {
-    local _cert="$1" _server _name _names _suffix _prefix
-    _server=$(printf '%s' "$SERVER_NAME" | tr '[:upper:]' '[:lower:]')
-    if openssl x509 -help 2>&1 | grep -q -- '-checkhost'; then
-        openssl x509 -in "$_cert" -noout -checkhost "$SERVER_NAME" >/dev/null 2>&1
-        return $?
-    fi
-    _names=$(openssl x509 -in "$_cert" -noout -text 2>/dev/null \
-        | awk '/Subject Alternative Name/ { getline; print; exit }' \
-        | tr ',' '\n' \
-        | sed -n 's/^[[:space:]]*DNS:[[:space:]]*//p') || return 1
-    for _name in $_names; do
-        _name=$(printf '%s' "$_name" | tr '[:upper:]' '[:lower:]')
-        [ "$_name" = "$_server" ] && return 0
-        case "$_name" in
-            \*.*)
-                _suffix=${_name#*.}
-                case "$_server" in
-                    *."$_suffix")
-                        _prefix=${_server%."$_suffix"}
-                        [ -n "$_prefix" ] && case "$_prefix" in *.*) ;; *) return 0 ;; esac
-                        ;;
-                esac
-                ;;
-        esac
-    done
-    return 1
-}
-
-validate_certificate_pair() {
-    local _cert="$1" _key="$2" _cert_pub _key_pub
-    validate_certificate_path "$_cert" && validate_certificate_path "$_key" || return 1
-    validate_private_key_permissions "$_key" || return 1
-    openssl x509 -in "$_cert" -noout -checkend 86400 >/dev/null 2>&1 || return 1
-    openssl pkey -in "$_key" -noout >/dev/null 2>&1 || return 1
-    _cert_pub=$(openssl x509 -in "$_cert" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null) || return 1
-    _key_pub=$(openssl pkey -in "$_key" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null) || return 1
-    [ -n "$_cert_pub" ] && [ "$_cert_pub" = "$_key_pub" ] || return 1
-    certificate_matches_server_name "$_cert" || return 1
-}
-
-validate_acme_email() {
-    case "$1" in
-        ?*@?*.?*) ;;
-        *) return 1 ;;
-    esac
-    case "$1" in *[!A-Za-z0-9._%+@-]*) return 1 ;; esac
-}
-
-configure_certificate_mode() {
-    local _choice _installed_version
-    echo -e "${YELLOW}证书模式:${PLAIN}"
-    echo "  1. 自签证书（默认，无需自有域名）"
-    echo "  2. 使用已有域名证书"
-    echo "  3. sing-box ACME 自动申请与续期（需要 sing-box >= 1.14.0）"
-    read -r -p "请选择 [1-3，默认 1]: " _choice
-    case "${_choice:-1}" in
-        1)
-            CERT_MODE="self_signed"
-            CERT_PATH="$ANYTLS_CERT"
-            KEY_PATH="$ANYTLS_KEY"
-            ACME_EMAIL=""
-            ;;
-        2)
-            CERT_MODE="existing"
-            read -r -p "证书链绝对路径（fullchain.pem）: " CERT_PATH
-            read -r -p "私钥绝对路径（privkey.pem）: " KEY_PATH
-            validate_certificate_pair "$CERT_PATH" "$KEY_PATH" || {
-                echo -e "${RED}证书无效、即将过期、域名不匹配，或私钥与证书不匹配${PLAIN}"
-                return 1
-            }
-            ACME_EMAIL=""
-            ;;
-        3)
-            _installed_version=$(get_installed_version)
-            version_at_least "$_installed_version" 1.14.0 || {
-                echo -e "${RED}ACME Certificate Provider 需要 sing-box >= 1.14.0，当前版本 ${_installed_version:-未知}${PLAIN}"
-                return 1
-            }
-            CERT_MODE="acme"
-            CERT_PATH=""
-            KEY_PATH=""
-            read -r -p "ACME 账户邮箱: " ACME_EMAIL
-            validate_acme_email "$ACME_EMAIL" || { echo -e "${RED}邮箱格式无效${PLAIN}"; return 1; }
-            ;;
-        *) echo -e "${RED}无效证书模式${PLAIN}"; return 1 ;;
-    esac
+    printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s\n' \
+        "$_uuid" "$_host" "$_port" "$_enc_sni" "$_public_key" "$_short_id" "$_enc_name"
 }
 
 # ============================================================
 # 配置写入 / 读取
 # ============================================================
 write_config() {
-    mkdir -p "$ANYTLS_DIR" "$ANYTLS_META" "$ANYTLS_CERT_DIR"
-    chmod 700 "$ANYTLS_META" "$ANYTLS_CERT_DIR"
+    mkdir -p "$VLESS_DIR" "$VLESS_META"
+    chmod 700 "$VLESS_META"
     local _tmp_config _tmp_meta
-    _tmp_config=$(mktemp "${ANYTLS_DIR}/anytls.json.new.XXXXXX" 2>/dev/null) || return 1
-    _tmp_meta=$(mktemp "${ANYTLS_META}/config.env.new.XXXXXX" 2>/dev/null) || {
+    _tmp_config=$(mktemp "${VLESS_DIR}/vless.json.new.XXXXXX" 2>/dev/null) || return 1
+    _tmp_meta=$(mktemp "${VLESS_META}/config.env.new.XXXXXX" 2>/dev/null) || {
         rm -f "$_tmp_config"
         return 1
     }
-    local _tls_fields
-    case "$CERT_MODE" in
-        self_signed|existing)
-            _tls_fields=$(cat <<CFG
-        "certificate_path": "${CERT_PATH}",
-        "key_path": "${KEY_PATH}"
-CFG
-)
-            ;;
-        acme)
-            _tls_fields=$(cat <<CFG
-        "certificate_provider": {
-          "type": "acme",
-          "domain": ["${SERVER_NAME}"],
-          "email": "${ACME_EMAIL}"
-        }
-CFG
-)
-            ;;
-        *) rm -f "$_tmp_config" "$_tmp_meta"; return 1 ;;
-    esac
     if ! cat > "$_tmp_config" <<CFG
 {
   "log": { "level": "info", "timestamp": true },
   "inbounds": [
     {
-      "type": "anytls",
-      "tag": "anytls-in",
+      "type": "vless",
+      "tag": "vless-in",
       "listen": "${LISTEN_HOST}",
       "listen_port": ${LISTEN_PORT},
-      "users": [{ "password": "${PASSWORD}" }],
-      "padding_scheme": [],
+      "users": [
+        {
+          "name": "default",
+          "uuid": "${UUID}",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
       "tls": {
         "enabled": true,
         "server_name": "${SERVER_NAME}",
-${_tls_fields}
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "${SERVER_NAME}",
+            "server_port": ${HANDSHAKE_PORT}
+          },
+          "private_key": "${REALITY_PRIVATE_KEY}",
+          "short_id": ["${SHORT_ID}"]
+        }
       }
     }
   ],
@@ -1136,15 +1022,15 @@ CFG
     if ! cat > "$_tmp_meta" <<CFG
 LISTEN_PORT=${LISTEN_PORT}
 EXT_PORT=${EXT_PORT}
-PASSWORD=${PASSWORD}
+UUID=${UUID}
+REALITY_PRIVATE_KEY=${REALITY_PRIVATE_KEY}
+REALITY_PUBLIC_KEY=${REALITY_PUBLIC_KEY}
+SHORT_ID=${SHORT_ID}
 NAT_MODE=${NAT_MODE}
 BIND_FAMILY=${BIND_FAMILY}
 LISTEN_HOST=${LISTEN_HOST}
 SERVER_NAME=${SERVER_NAME}
-CERT_MODE=${CERT_MODE}
-CERT_PATH=${CERT_PATH}
-KEY_PATH=${KEY_PATH}
-ACME_EMAIL=${ACME_EMAIL}
+HANDSHAKE_PORT=${HANDSHAKE_PORT}
 MANAGED_SING_BOX=${MANAGED_SING_BOX}
 CFG
     then
@@ -1155,16 +1041,16 @@ CFG
         rm -f "$_tmp_config" "$_tmp_meta"
         return 1
     }
-    mv -f "$_tmp_meta" "$ANYTLS_META/config.env" || {
+    mv -f "$_tmp_meta" "$VLESS_META/config.env" || {
         rm -f "$_tmp_config" "$_tmp_meta"
         return 1
     }
-    mv -f "$_tmp_config" "$ANYTLS_CONFIG" || {
+    mv -f "$_tmp_config" "$VLESS_CONFIG" || {
         rm -f "$_tmp_config"
         return 1
     }
-    atomic_write_meta "$ANYTLS_META/public_ip" "$PUBLIC_IP" || return 1
-    atomic_write_meta "$ANYTLS_META/public_ipv6" "$PUBLIC_IPV6" || return 1
+    atomic_write_meta "$VLESS_META/public_ip" "$PUBLIC_IP" || return 1
+    atomic_write_meta "$VLESS_META/public_ipv6" "$PUBLIC_IPV6" || return 1
 }
 
 atomic_write_meta() {
@@ -1177,112 +1063,69 @@ atomic_write_meta() {
 }
 
 read_config() {
-    [ -f "$ANYTLS_CONFIG" ] && [ -f "$ANYTLS_META/config.env" ] || return 1
+    [ -f "$VLESS_CONFIG" ] && [ -f "$VLESS_META/config.env" ] || return 1
     while IFS='=' read -r _key _value; do
         case "$_key" in
             LISTEN_PORT) LISTEN_PORT="$_value" ;;
             EXT_PORT) EXT_PORT="$_value" ;;
-            PASSWORD) PASSWORD="$_value" ;;
+            UUID) UUID="$_value" ;;
+            REALITY_PRIVATE_KEY) REALITY_PRIVATE_KEY="$_value" ;;
+            REALITY_PUBLIC_KEY) REALITY_PUBLIC_KEY="$_value" ;;
+            SHORT_ID) SHORT_ID="$_value" ;;
             NAT_MODE) NAT_MODE="$_value" ;;
             BIND_FAMILY) BIND_FAMILY="$_value" ;;
             LISTEN_HOST) LISTEN_HOST="$_value" ;;
             SERVER_NAME) SERVER_NAME="$_value" ;;
-            CERT_MODE) CERT_MODE="$_value" ;;
-            CERT_PATH) CERT_PATH="$_value" ;;
-            KEY_PATH) KEY_PATH="$_value" ;;
-            ACME_EMAIL) ACME_EMAIL="$_value" ;;
+            HANDSHAKE_PORT) HANDSHAKE_PORT="$_value" ;;
             MANAGED_SING_BOX) MANAGED_SING_BOX="$_value" ;;
         esac
-    done < "$ANYTLS_META/config.env"
+    done < "$VLESS_META/config.env"
     validate_port "$LISTEN_PORT" || return 1
     validate_port "$EXT_PORT" || return 1
-    validate_password "$PASSWORD" || return 1
+    validate_uuid "$UUID" || return 1
+    validate_reality_key "$REALITY_PRIVATE_KEY" || return 1
+    validate_reality_key "$REALITY_PUBLIC_KEY" || return 1
+    validate_short_id "$SHORT_ID" || return 1
     validate_server_name "$SERVER_NAME" || return 1
-    case "$CERT_MODE" in
-        self_signed)
-            [ -n "$CERT_PATH" ] || CERT_PATH="$ANYTLS_CERT"
-            [ -n "$KEY_PATH" ] || KEY_PATH="$ANYTLS_KEY"
-            ;;
-        existing) validate_certificate_pair "$CERT_PATH" "$KEY_PATH" || return 1 ;;
-        acme) validate_acme_email "$ACME_EMAIL" || return 1 ;;
-        "") CERT_MODE="self_signed"; CERT_PATH="$ANYTLS_CERT"; KEY_PATH="$ANYTLS_KEY" ;;
-        *) return 1 ;;
-    esac
+    validate_port "$HANDSHAKE_PORT" || return 1
     case "$NAT_MODE" in 0|1) ;; *) return 1 ;; esac
     case "$BIND_FAMILY" in v4|v6) ;; *) return 1 ;; esac
     case "$LISTEN_HOST" in 0.0.0.0|::) ;; *) LISTEN_HOST="::" ;; esac
     case "$MANAGED_SING_BOX" in 0|1) ;; *) MANAGED_SING_BOX=0 ;; esac
-    [ -z "${PUBLIC_IP:-}"   ] && PUBLIC_IP=$(cat "$ANYTLS_META/public_ip"   2>/dev/null || true)
-    [ -z "${PUBLIC_IPV6:-}" ] && PUBLIC_IPV6=$(cat "$ANYTLS_META/public_ipv6" 2>/dev/null || true)
+    [ -z "${PUBLIC_IP:-}"   ] && PUBLIC_IP=$(cat "$VLESS_META/public_ip"   2>/dev/null || true)
+    [ -z "${PUBLIC_IPV6:-}" ] && PUBLIC_IPV6=$(cat "$VLESS_META/public_ipv6" 2>/dev/null || true)
     return 0
-}
-
-generate_certificate() {
-    local _force="${1:-}" _tmp_dir _tmp_cert _tmp_key
-    mkdir -p "$ANYTLS_CERT_DIR"
-    chmod 700 "$ANYTLS_CERT_DIR"
-    if [ "$_force" != "force" ] && [ -s "$ANYTLS_CERT" ] && [ -s "$ANYTLS_KEY" ]; then
-        return 0
-    fi
-    _tmp_dir=$(mktemp -d "$(disk_tmp_dir)/anytls-cert-XXXXXX") || return 1
-    _tmp_cert="$_tmp_dir/cert.pem"
-    _tmp_key="$_tmp_dir/private.key"
-    if openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
-        -subj "/CN=${SERVER_NAME}" \
-        -addext "subjectAltName=DNS:${SERVER_NAME}" \
-        -keyout "$_tmp_key" -out "$_tmp_cert" >/dev/null 2>&1; then
-        :
-    else
-        rm -f "$_tmp_cert" "$_tmp_key"
-        openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
-            -subj "/CN=${SERVER_NAME}" \
-            -keyout "$_tmp_key" -out "$_tmp_cert" >/dev/null 2>&1 || {
-                rm -rf "$_tmp_dir"
-                return 1
-            }
-    fi
-    if [ ! -s "$_tmp_cert" ] || [ ! -s "$_tmp_key" ]; then
-        rm -rf "$_tmp_dir"
-        return 1
-    fi
-    mv -f "$_tmp_cert" "$ANYTLS_CERT"
-    mv -f "$_tmp_key" "$ANYTLS_KEY"
-    rm -rf "$_tmp_dir"
-    chmod 600 "$ANYTLS_KEY" "$ANYTLS_CERT"
 }
 
 show_install_diagnostics() {
     echo -e "${YELLOW}诊断信息:${PLAIN}"
     echo "  sing-box: $SING_BOX_BIN"
     "$SING_BOX_BIN" version 2>&1 | head -1 | sed 's/^/  version : /'
-    echo "  config  : $ANYTLS_CONFIG"
-    echo "  cert mode: $CERT_MODE"
-    echo "  cert    : ${CERT_PATH:-由 Certificate Provider 管理}"
-    echo "  key     : ${KEY_PATH:-由 Certificate Provider 管理}"
-    [ -s "$ANYTLS_CONFIG" ] || echo -e "  ${RED}配置文件缺失或为空${PLAIN}"
-    [ "$CERT_MODE" = "acme" ] || [ -s "$CERT_PATH" ] || echo -e "  ${RED}证书文件缺失或为空${PLAIN}"
-    [ "$CERT_MODE" = "acme" ] || [ -s "$KEY_PATH" ] || echo -e "  ${RED}私钥文件缺失或为空${PLAIN}"
+    echo "  config  : $VLESS_CONFIG"
+    echo "  meta    : $VLESS_META/config.env"
+    [ -s "$VLESS_CONFIG" ] || echo -e "  ${RED}配置文件缺失或为空${PLAIN}"
+    validate_reality_key "$REALITY_PRIVATE_KEY" || echo -e "  ${RED}REALITY 私钥缺失或无效${PLAIN}"
+    validate_reality_key "$REALITY_PUBLIC_KEY" || echo -e "  ${RED}REALITY 公钥缺失或无效${PLAIN}"
 }
 
 write_wrapper() {
-    cat > "$ANYTLS_BIN" <<WRAPPER
+    cat > "$VLESS_BIN" <<WRAPPER || return 1
 #!/bin/sh
-exec "${SING_BOX_BIN}" run -c "${ANYTLS_CONFIG}" "\$@"
+exec "${SING_BOX_BIN}" run -c "${VLESS_CONFIG}" "\$@"
 WRAPPER
-    chmod 755 "$ANYTLS_BIN"
+    chmod 755 "$VLESS_BIN"
 }
 
 check_config() {
-    "$SING_BOX_BIN" check -c "$ANYTLS_CONFIG"
+    "$SING_BOX_BIN" check -c "$VLESS_CONFIG"
 }
 
 backup_current_install() {
-    INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/anytls-backup-XXXXXX") || return 1
-    [ ! -f "$ANYTLS_CONFIG" ] || cp -a "$ANYTLS_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
-    [ ! -d "$ANYTLS_META" ] || cp -a "$ANYTLS_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
+    INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/vless-backup-XXXXXX") || return 1
+    [ ! -f "$VLESS_CONFIG" ] || cp -a "$VLESS_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
+    [ ! -d "$VLESS_META" ] || cp -a "$VLESS_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_MANAGED_MARKER" ] || cp -a "$SING_BOX_MANAGED_MARKER" "$INSTALL_BACKUP_DIR/managed-marker" || { discard_install_backup; return 1; }
-    [ ! -d "$ANYTLS_CERT_DIR" ] || cp -a "$ANYTLS_CERT_DIR" "$INSTALL_BACKUP_DIR/cert" || { discard_install_backup; return 1; }
-    [ ! -f "$ANYTLS_BIN" ] || cp -a "$ANYTLS_BIN" "$INSTALL_BACKUP_DIR/wrapper" || { discard_install_backup; return 1; }
+    [ ! -f "$VLESS_BIN" ] || cp -a "$VLESS_BIN" "$INSTALL_BACKUP_DIR/wrapper" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_BIN" ] || cp -a "$SING_BOX_BIN" "$INSTALL_BACKUP_DIR/sing-box" || { discard_install_backup; return 1; }
     [ ! -f "$SYSTEMD_SERVICE" ] || cp -a "$SYSTEMD_SERVICE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
     [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
@@ -1330,16 +1173,14 @@ restore_current_install() {
     service_stop
     service_disable
     close_ports "${LISTEN_PORT:-}"
-    close_acme_challenge_ports
-    rm -f "$ANYTLS_CONFIG" "$ANYTLS_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
+    rm -f "$VLESS_CONFIG" "$VLESS_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
     rm -f "$SING_BOX_MANAGED_MARKER"
-    rm -rf "$ANYTLS_META" "$ANYTLS_CERT_DIR"
+    rm -rf "$VLESS_META"
 
-    [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$ANYTLS_CONFIG"
-    [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$ANYTLS_META"
+    [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$VLESS_CONFIG"
+    [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$VLESS_META"
     [ -f "$INSTALL_BACKUP_DIR/managed-marker" ] && cp -a "$INSTALL_BACKUP_DIR/managed-marker" "$SING_BOX_MANAGED_MARKER"
-    [ -d "$INSTALL_BACKUP_DIR/cert" ] && cp -a "$INSTALL_BACKUP_DIR/cert" "$ANYTLS_CERT_DIR"
-    [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$ANYTLS_BIN"
+    [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$VLESS_BIN"
     if [ -f "$INSTALL_BACKUP_DIR/sing-box" ]; then
         cp -a "$INSTALL_BACKUP_DIR/sing-box" "$SING_BOX_BIN"
     elif [ "$MANAGED_SING_BOX" = "1" ]; then
@@ -1347,9 +1188,6 @@ restore_current_install() {
     fi
     [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SYSTEMD_SERVICE"
     [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
-    if [ -f "$ANYTLS_META/config.env" ]; then
-        read_config >/dev/null 2>&1 && open_acme_challenge_ports >/dev/null 2>&1 || true
-    fi
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
     [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
     [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
@@ -1366,10 +1204,10 @@ read_config_live() {
         _default_ipv4=$(get_default_public_ipv4 2>/dev/null || true)
         if is_valid_ipv4 "$_native_ipv4"; then
             PUBLIC_IP="$_native_ipv4"
-            printf '%s' "$PUBLIC_IP" > "$ANYTLS_META/public_ip"
+            printf '%s' "$PUBLIC_IP" > "$VLESS_META/public_ip"
         elif is_valid_ipv4 "$_default_ipv4" && [ "$PUBLIC_IP" = "$_default_ipv4" ]; then
             PUBLIC_IP=""
-            : > "$ANYTLS_META/public_ip"
+            : > "$VLESS_META/public_ip"
         fi
     fi
     if [ -z "${PUBLIC_IP:-}" ] && [ -z "${PUBLIC_IPV6:-}" ]; then
@@ -1382,16 +1220,16 @@ read_config_live() {
 # 服务管理
 # ============================================================
 write_systemd_service() {
-    cat > "$SYSTEMD_SERVICE" <<SVC
+    cat > "$SYSTEMD_SERVICE" <<SVC || return 1
 [Unit]
-Description=AnyTLS Server
+Description=VLESS Server
 After=network.target nss-lookup.target
 Wants=network.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=${ANYTLS_BIN}
+ExecStart=${VLESS_BIN}
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=1048576
@@ -1403,19 +1241,19 @@ SVC
 }
 
 write_openrc_service() {
-    cat > "$OPENRC_SERVICE" <<'SVCHEAD'
+    cat > "$OPENRC_SERVICE" <<'SVCHEAD' || return 1
 #!/sbin/openrc-run
 
-name="anytls-server"
-description="AnyTLS Server"
+name="vless-server"
+description="VLESS Server"
 SVCHEAD
-    cat >> "$OPENRC_SERVICE" <<SVC
-command="${ANYTLS_BIN}"
+    cat >> "$OPENRC_SERVICE" <<SVC || return 1
+command="${VLESS_BIN}"
 command_args=""
 command_background="yes"
-pidfile="/var/run/anytls-server.pid"
-output_log="/var/log/anytls-server.log"
-error_log="/var/log/anytls-server.log"
+pidfile="/var/run/vless-server.pid"
+output_log="/var/log/vless-server.log"
+error_log="/var/log/vless-server.log"
 
 depend() {
     need net
@@ -1426,39 +1264,39 @@ SVC
 }
 
 service_start() {
-    [ -x "$ANYTLS_BIN" ] && [ -f "$ANYTLS_CONFIG" ] || {
-        echo -e "${RED}AnyTLS 尚未安装或配置不完整${PLAIN}"
+    [ -x "$VLESS_BIN" ] && [ -f "$VLESS_CONFIG" ] || {
+        echo -e "${RED}VLESS 尚未安装或配置不完整${PLAIN}"
         return 1
     }
     service_is_active && return 0
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl start anytls-server
+        systemctl start vless-server
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service anytls-server start
+        rc-service vless-server start
     else
-        nohup "$ANYTLS_BIN" >/var/log/anytls-server.log 2>&1 &
-        echo $! > /var/run/anytls-server.pid
+        nohup "$VLESS_BIN" >/var/log/vless-server.log 2>&1 &
+        echo $! > /var/run/vless-server.pid
     fi
 }
 
 service_stop() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl stop anytls-server 2>/dev/null
+        systemctl stop vless-server 2>/dev/null
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service anytls-server stop 2>/dev/null
+        rc-service vless-server stop 2>/dev/null
     else
-        if [ -f /var/run/anytls-server.pid ]; then
-            kill "$(cat /var/run/anytls-server.pid)" 2>/dev/null || true
-            rm -f /var/run/anytls-server.pid
+        if [ -f /var/run/vless-server.pid ]; then
+            kill "$(cat /var/run/vless-server.pid)" 2>/dev/null || true
+            rm -f /var/run/vless-server.pid
         fi
     fi
 }
 
 service_restart() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart anytls-server
+        systemctl restart vless-server
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service anytls-server restart
+        rc-service vless-server restart
     else
         service_stop; sleep 1; service_start
     fi
@@ -1467,34 +1305,24 @@ service_restart() {
 service_enable() {
     if [ "$INIT_SYS" = "systemd" ]; then
         systemctl daemon-reload
-        systemctl enable anytls-server >/dev/null 2>&1
+        systemctl enable vless-server >/dev/null 2>&1
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-update add anytls-server default >/dev/null 2>&1
+        rc-update add vless-server default >/dev/null 2>&1
     fi
 }
 
 service_disable() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl disable anytls-server 2>/dev/null
+        systemctl disable vless-server 2>/dev/null
         systemctl daemon-reload
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-update del anytls-server default 2>/dev/null
+        rc-update del vless-server default 2>/dev/null
     fi
 }
 
 service_is_active() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet anytls-server
-    elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service anytls-server status 2>/dev/null | grep -q "started"
-    else
-        [ -f /var/run/anytls-server.pid ] && kill -0 "$(cat /var/run/anytls-server.pid)" 2>/dev/null
-    fi
-}
-
-shared_vless_service_is_active() {
-    if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet vless-server 2>/dev/null
+        systemctl is-active --quiet vless-server
     elif [ "$INIT_SYS" = "openrc" ]; then
         rc-service vless-server status 2>/dev/null | grep -q "started"
     else
@@ -1502,19 +1330,29 @@ shared_vless_service_is_active() {
     fi
 }
 
-shared_vless_service_restart() {
+shared_anytls_service_is_active() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart vless-server
+        systemctl is-active --quiet anytls-server 2>/dev/null
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service vless-server restart
+        rc-service anytls-server status 2>/dev/null | grep -q "started"
     else
-        [ -x /usr/local/bin/vless-server ] || return 1
-        if [ -f /var/run/vless-server.pid ]; then
-            kill "$(cat /var/run/vless-server.pid)" 2>/dev/null || true
-            rm -f /var/run/vless-server.pid
+        [ -f /var/run/anytls-server.pid ] && kill -0 "$(cat /var/run/anytls-server.pid)" 2>/dev/null
+    fi
+}
+
+shared_anytls_service_restart() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl restart anytls-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service anytls-server restart
+    else
+        [ -x /usr/local/bin/anytls-server ] || return 1
+        if [ -f /var/run/anytls-server.pid ]; then
+            kill "$(cat /var/run/anytls-server.pid)" 2>/dev/null || true
+            rm -f /var/run/anytls-server.pid
         fi
-        nohup /usr/local/bin/vless-server >/var/log/vless-server.log 2>&1 &
-        echo $! > /var/run/vless-server.pid
+        nohup /usr/local/bin/anytls-server >/var/log/anytls-server.log 2>&1 &
+        echo $! > /var/run/anytls-server.pid
     fi
 }
 
@@ -1545,9 +1383,9 @@ check_download_space() {
 
 service_is_enabled() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-enabled --quiet anytls-server 2>/dev/null
+        systemctl is-enabled --quiet vless-server 2>/dev/null
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-update show default 2>/dev/null | grep -qE '(^|[[:space:]])anytls-server([[:space:]]|$)'
+        rc-update show default 2>/dev/null | grep -qE '(^|[[:space:]])vless-server([[:space:]]|$)'
     else
         return 1
     fi
@@ -1555,81 +1393,80 @@ service_is_enabled() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u anytls-server -n 80 --no-pager
+        journalctl -u vless-server -n 80 --no-pager
     else
-        tail -n 80 /var/log/anytls-server.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
+        tail -n 80 /var/log/vless-server.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
 }
 
 # ============================================================
 # 安装 / 修改
 # ============================================================
-configure_anytls() {
-    echo -e "\n${SKYBLUE}--- 配置 AnyTLS 协议 ---${PLAIN}"
+configure_vless() {
+    echo -e "\n${SKYBLUE}--- 配置 VLESS + REALITY + Vision 协议 ---${PLAIN}"
 
     if [ "$NAT_MODE" = "1" ]; then
-        read -r -p "请输入本机监听端口 [默认 38888]: " LISTEN_PORT
-        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="38888"
+        read -r -p "请输入本机监听端口 [默认 48888]: " LISTEN_PORT
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="48888"
         validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         read -r -p "请输入对外转发端口 [留空=与监听端口相同]: " EXT_PORT
         [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
         validate_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         echo -e "${YELLOW}提示：请确保宿主机已将 TCP ${EXT_PORT} 转发到本机 TCP ${LISTEN_PORT}${PLAIN}"
     else
-        read -r -p "请输入端口 [默认 38888]: " LISTEN_PORT
-        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="38888"
+        read -r -p "请输入端口 [默认 48888]: " LISTEN_PORT
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="48888"
         validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数（输入值: '${LISTEN_PORT}'）${PLAIN}"; return 1; }
         EXT_PORT="$LISTEN_PORT"
         echo -e "${GREEN}端口: ${LISTEN_PORT}${PLAIN}"
     fi
 
-    read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
-    if [ -z "$PASSWORD" ]; then
-        PASSWORD=$(openssl rand -base64 24 2>/dev/null | tr -d ' \n\r/+=' | cut -c1-32)
-        [ -z "$PASSWORD" ] && PASSWORD=$(dd if=/dev/urandom bs=1 count=32 2>/dev/null | tr -dc 'A-Za-z0-9' | cut -c1-24)
-        [ -z "$PASSWORD" ] && PASSWORD="AnyTLS$(date +%s | tail -c 8)"
-        echo -e "${GREEN}自动生成密码: ${YELLOW}${PASSWORD}${PLAIN}"
+    read -r -p "请输入 VLESS UUID [留空自动生成]: " UUID
+    if [ -z "$UUID" ]; then
+        UUID=$(generate_uuid) || { echo -e "${RED}生成 UUID 失败${PLAIN}"; return 1; }
+        echo -e "${GREEN}自动生成 UUID: ${YELLOW}${UUID}${PLAIN}"
     fi
-    validate_password "$PASSWORD" || { echo -e "${RED}密码包含非法字符（实际值: ${PASSWORD}）${PLAIN}"; return 1; }
+    validate_uuid "$UUID" || { echo -e "${RED}UUID 格式无效${PLAIN}"; return 1; }
 
     local _default_sni
     _default_sni=$(random_sni)
-    read -r -p "请输入 TLS 域名/SNI [随机默认 ${_default_sni}]: " SERVER_NAME
+    read -r -p "请输入 REALITY 目标域名/SNI [随机默认 ${_default_sni}]: " SERVER_NAME
     [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
-    validate_server_name "$SERVER_NAME" || { echo -e "${RED}SNI 域名格式无效${PLAIN}"; return 1; }
-    configure_certificate_mode || return 1
+    validate_server_name "$SERVER_NAME" || { echo -e "${RED}REALITY 目标域名格式无效${PLAIN}"; return 1; }
 
-    NODE_NAME="AnyTLS-$(hostname 2>/dev/null | tr -d '\n\r')"
-    [ "$NODE_NAME" = "AnyTLS-" ] && NODE_NAME="AnyTLS-Node"
+    read -r -p "请输入 REALITY 目标端口 [默认 443]: " HANDSHAKE_PORT
+    [ -z "$HANDSHAKE_PORT" ] && HANDSHAKE_PORT="443"
+    validate_port "$HANDSHAKE_PORT" || { echo -e "${RED}REALITY 目标端口无效${PLAIN}"; return 1; }
+
+    echo -e "${YELLOW}正在生成 REALITY 密钥对...${PLAIN}"
+    generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return 1; }
+    SHORT_ID=$(generate_short_id) || { echo -e "${RED}生成 REALITY short ID 失败${PLAIN}"; return 1; }
+    echo -e "${GREEN}✓ REALITY 密钥与 short ID 已生成${PLAIN}"
+    echo -e "${DIM}私钥仅写入服务器配置，不会出现在节点输出中。${PLAIN}"
+
+    NODE_NAME="VLESS-$(hostname 2>/dev/null | tr -d '\n\r')"
+    [ "$NODE_NAME" = "VLESS-" ] && NODE_NAME="VLESS-Node"
     return 0
 }
 
-install_anytls() {
+install_vless() {
     install_dependencies || { read -r -p "按回车键返回主菜单..." _; return; }
     detect_network
     backup_current_install || { echo -e "${RED}无法创建安装备份，已取消操作${PLAIN}"; read -r -p "按回车键返回主菜单..." _; return; }
-    ensure_anytls_bin || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
-    configure_anytls || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
-    if [ "$CERT_MODE" = "self_signed" ]; then
-        echo -e "${YELLOW}正在生成 TLS 证书...${PLAIN}"
-        generate_certificate force || {
-            echo -e "${RED}生成 TLS 证书失败${PLAIN}"
-            show_install_diagnostics
-            restore_current_install
-            read -r -p "按回车键返回主菜单..." _
-            return
-        }
-        CERT_PATH="$ANYTLS_CERT"
-        KEY_PATH="$ANYTLS_KEY"
-        echo -e "${GREEN}✓ TLS 证书生成完成${PLAIN}"
-    fi
+    ensure_vless_bin || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
+    configure_vless || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
     write_config || {
-        echo -e "${RED}AnyTLS 配置写入失败${PLAIN}"
+        echo -e "${RED}VLESS 配置写入失败${PLAIN}"
         restore_current_install
         read -r -p "按回车键返回主菜单..." _
         return
     }
-    write_wrapper
+    write_wrapper || {
+        echo -e "${RED}VLESS 启动 wrapper 写入失败${PLAIN}"
+        restore_current_install
+        read -r -p "按回车键返回主菜单..." _
+        return
+    }
     echo -e "${YELLOW}正在校验 sing-box 配置...${PLAIN}"
     if ! check_config; then
         echo -e "${RED}sing-box 配置校验失败${PLAIN}"
@@ -1641,22 +1478,21 @@ install_anytls() {
     echo -e "${GREEN}✓ sing-box 配置校验通过${PLAIN}"
 
     if [ "$INIT_SYS" = "systemd" ]; then
-        write_systemd_service
+        write_systemd_service || { restore_current_install; return; }
     elif [ "$INIT_SYS" = "openrc" ]; then
-        write_openrc_service
+        write_openrc_service || { restore_current_install; return; }
     fi
 
     service_enable
     open_ports "$LISTEN_PORT"
-    open_acme_challenge_ports
-    echo -e "${YELLOW}正在启动 AnyTLS 服务...${PLAIN}"
+    echo -e "${YELLOW}正在启动 VLESS 服务...${PLAIN}"
     if service_is_active; then service_restart; else service_start; fi
 
     sleep 2
     if service_is_healthy; then
-        echo -e "${GREEN}✓ AnyTLS 服务端启动成功${PLAIN}"
+        echo -e "${GREEN}✓ VLESS 服务端启动成功${PLAIN}"
     else
-        echo -e "${RED}✗ AnyTLS 启动失败，请查看日志：${PLAIN}"
+        echo -e "${RED}✗ VLESS 启动失败，请查看日志：${PLAIN}"
         service_logs
         restore_current_install
         echo -e "${YELLOW}已恢复安装前的配置和服务${PLAIN}"
@@ -1669,15 +1505,15 @@ install_anytls() {
 }
 
 change_config() {
-    if [ ! -f "$ANYTLS_CONFIG" ]; then
-        echo -e "${RED}未安装 AnyTLS${PLAIN}"; sleep 2; return
+    if [ ! -f "$VLESS_CONFIG" ]; then
+        echo -e "${RED}未安装 VLESS${PLAIN}"; sleep 2; return
     fi
-    read_config || { echo -e "${RED}AnyTLS 配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
-    local _old_sni="$SERVER_NAME" _old_port="$LISTEN_PORT" _was_active=0
+    read_config || { echo -e "${RED}VLESS 配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
+    local _old_port="$LISTEN_PORT" _was_active=0 _port _ext _uuid _sni _handshake_port _regen
     service_is_active && _was_active=1 || true
     detect_network
 
-    echo -e "\n${YELLOW}修改 AnyTLS 配置，留空则保留原值。${PLAIN}"
+    echo -e "\n${YELLOW}修改 VLESS 配置，留空则保留原值。${PLAIN}"
     read -r -p "监听端口 [当前 ${LISTEN_PORT}]: " _port
     if [ -n "$_port" ]; then
         validate_port "$_port" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }
@@ -1691,62 +1527,47 @@ change_config() {
     fi
     [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
 
-    read -r -p "连接密码 [留空保留原密码]: " _pass
-    if [ -n "$_pass" ]; then
-        validate_password "$_pass" || { echo -e "${RED}密码包含非法字符${PLAIN}"; sleep 2; return; }
-        PASSWORD="$_pass"
+    read -r -p "VLESS UUID [留空保留原 UUID]: " _uuid
+    if [ -n "$_uuid" ]; then
+        validate_uuid "$_uuid" || { echo -e "${RED}UUID 格式无效${PLAIN}"; sleep 2; return; }
+        UUID="$_uuid"
     fi
 
-    read -r -p "TLS 域名/SNI [当前 ${SERVER_NAME}]: " _sni
+    read -r -p "REALITY 目标域名/SNI [当前 ${SERVER_NAME}]: " _sni
     if [ -n "$_sni" ]; then
-        validate_server_name "$_sni" || { echo -e "${RED}SNI 域名格式无效${PLAIN}"; sleep 2; return; }
+        validate_server_name "$_sni" || { echo -e "${RED}目标域名格式无效${PLAIN}"; sleep 2; return; }
         SERVER_NAME="$_sni"
     fi
 
-    cp -p "$ANYTLS_CONFIG" "${ANYTLS_CONFIG}.bak" 2>/dev/null && \
-    cp -p "$ANYTLS_META/config.env" "$ANYTLS_META/config.env.bak" 2>/dev/null && \
-    cp -p "$ANYTLS_META/public_ip" "$ANYTLS_META/public_ip.bak" 2>/dev/null && \
-    cp -p "$ANYTLS_META/public_ipv6" "$ANYTLS_META/public_ipv6.bak" 2>/dev/null || {
-        rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" \
-            "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ipv6.bak" \
-            "${ANYTLS_CERT}.bak" "${ANYTLS_KEY}.bak"
+    read -r -p "REALITY 目标端口 [当前 ${HANDSHAKE_PORT}]: " _handshake_port
+    if [ -n "$_handshake_port" ]; then
+        validate_port "$_handshake_port" || { echo -e "${RED}目标端口无效${PLAIN}"; sleep 2; return; }
+        HANDSHAKE_PORT="$_handshake_port"
+    fi
+
+    read -r -p "重新生成 REALITY 密钥和 short ID？[y/N]: " _regen
+    case "$_regen" in
+        [yY])
+            generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return; }
+            SHORT_ID=$(generate_short_id) || { echo -e "${RED}生成 short ID 失败${PLAIN}"; return; }
+            ;;
+    esac
+
+    cp -p "$VLESS_CONFIG" "${VLESS_CONFIG}.bak" 2>/dev/null && \
+    cp -p "$VLESS_META/config.env" "$VLESS_META/config.env.bak" 2>/dev/null && \
+    cp -p "$VLESS_META/public_ip" "$VLESS_META/public_ip.bak" 2>/dev/null && \
+    cp -p "$VLESS_META/public_ipv6" "$VLESS_META/public_ipv6.bak" 2>/dev/null || {
+        rm -f "${VLESS_CONFIG}.bak" "$VLESS_META/config.env.bak" \
+            "$VLESS_META/public_ip.bak" "$VLESS_META/public_ipv6.bak"
         echo -e "${RED}无法创建完整配置备份，已取消修改${PLAIN}"
         return
     }
 
-    if [ "$CERT_MODE" = "self_signed" ]; then
-        cp -p "$ANYTLS_CERT" "${ANYTLS_CERT}.bak" 2>/dev/null && \
-        cp -p "$ANYTLS_KEY" "${ANYTLS_KEY}.bak" 2>/dev/null || {
-            rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" \
-                "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ipv6.bak"
-            echo -e "${RED}无法备份自签证书，已取消修改${PLAIN}"
-            return
-        }
-    fi
-
-    if [ "$CERT_MODE" = "existing" ]; then
-        validate_certificate_pair "$CERT_PATH" "$KEY_PATH" || {
-            echo -e "${RED}当前证书与新 SNI 不匹配、即将过期或已失效${PLAIN}"
-            return
-        }
-    elif [ "$CERT_MODE" = "self_signed" ] && [ "$SERVER_NAME" != "$_old_sni" ]; then
-        if ! generate_certificate force; then
-            mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
-            mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
-            rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" \
-                "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ipv6.bak"
-            echo -e "${RED}生成 TLS 证书失败${PLAIN}"
-            return
-        fi
-    fi
-
     if ! write_config || ! check_config; then
-        mv -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG" 2>/dev/null || true
-        mv -f "$ANYTLS_META/config.env.bak" "$ANYTLS_META/config.env" 2>/dev/null || true
-        mv -f "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ip" 2>/dev/null || true
-        mv -f "$ANYTLS_META/public_ipv6.bak" "$ANYTLS_META/public_ipv6" 2>/dev/null || true
-        mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
-        mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
+        mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
+        mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
+        mv -f "$VLESS_META/public_ip.bak" "$VLESS_META/public_ip" 2>/dev/null || true
+        mv -f "$VLESS_META/public_ipv6.bak" "$VLESS_META/public_ipv6" 2>/dev/null || true
         echo -e "${RED}配置无效，已回滚${PLAIN}"
         sleep 2
         return
@@ -1762,12 +1583,10 @@ change_config() {
     sleep 1
     if [ "$_was_active" = "1" ] && ! service_is_healthy; then
         [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
-        mv -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG" 2>/dev/null || true
-        mv -f "$ANYTLS_META/config.env.bak" "$ANYTLS_META/config.env" 2>/dev/null || true
-        mv -f "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ip" 2>/dev/null || true
-        mv -f "$ANYTLS_META/public_ipv6.bak" "$ANYTLS_META/public_ipv6" 2>/dev/null || true
-        mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
-        mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
+        mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
+        mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
+        mv -f "$VLESS_META/public_ip.bak" "$VLESS_META/public_ip" 2>/dev/null || true
+        mv -f "$VLESS_META/public_ipv6.bak" "$VLESS_META/public_ipv6" 2>/dev/null || true
         read_config || true
         service_restart || true
         echo -e "${RED}服务重启失败，配置已回滚，请查看日志${PLAIN}"
@@ -1775,9 +1594,8 @@ change_config() {
         return
     fi
     [ "$_old_port" != "$LISTEN_PORT" ] && close_ports "$_old_port"
-    rm -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_META/config.env.bak" \
-        "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ipv6.bak" \
-        "${ANYTLS_CERT}.bak" "${ANYTLS_KEY}.bak"
+    rm -f "${VLESS_CONFIG}.bak" "$VLESS_META/config.env.bak" \
+        "$VLESS_META/public_ip.bak" "$VLESS_META/public_ipv6.bak"
     show_config
 }
 
@@ -1785,64 +1603,47 @@ change_config() {
 # 展示单个节点（IPv4 或 IPv6）
 # $1=IP  $2=Port  $3=标签(v4/v6)
 # ============================================================
-export_uri_anytls() {
-    render_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME"
+export_uri_vless() {
+    render_uri "$1" "$2" "$UUID" "$3" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID"
 }
 
-export_mihomo_anytls() {
-    local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _yaml_server _password _sni _safe_node
+export_mihomo_vless() {
+    local _server="$1" _port="$2" _node="$3" _yaml_server _safe_node _sni
     _yaml_server=$(format_server_for_yaml "$_server")
-    _password=$(yaml_single_quote_escape "$PASSWORD")
-    _sni=$(yaml_single_quote_escape "$SERVER_NAME")
     _safe_node=$(yaml_single_quote_escape "$_node")
-    if [ "$CERT_MODE" != "self_signed" ]; then
-        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: false}"
-    elif [ -n "$_fingerprint" ]; then
-        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: false, fingerprint: '${_fingerprint}'}"
-    else
-        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: true}"
-    fi
+    _sni=$(yaml_single_quote_escape "$SERVER_NAME")
+    printf '%s' "- {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: ${UUID}, network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: ${REALITY_PUBLIC_KEY}, short-id: ${SHORT_ID}}}"
 }
 
-export_loon_anytls() {
+export_loon_vless() {
     local _server="$1" _port="$2" _node="$3"
-    local _skip="false"
-    [ "$CERT_MODE" = "self_signed" ] && _skip="true"
-    printf "%s = AnyTLS, %s, %s, '%s', skip-cert-verify=%s, sni=%s" "$_node" "$_server" "$_port" "$PASSWORD" "$_skip" "$SERVER_NAME"
+    printf '%s = VLESS, %s, %s, "%s", transport=tcp, flow=xtls-rprx-vision, public-key="%s", short-id=%s, udp=true, over-tls=true, sni=%s, skip-cert-verify=true' \
+        "$_node" "$_server" "$_port" "$UUID" "$REALITY_PUBLIC_KEY" "$SHORT_ID" "$SERVER_NAME"
 }
 
-export_surfboard_anytls() {
-    local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _skip="false"
-    [ "$CERT_MODE" = "self_signed" ] && [ -z "$_fingerprint" ] && _skip="true"
-    printf '%s = anytls, %s, %s, %s, %s, %s, %s, true' "$_node" "$_server" "$_port" "$PASSWORD" "$_skip" "$SERVER_NAME" "$_fingerprint"
+export_surfboard_vless() {
+    printf 'Surfboard 暂无经官方文档确认的 VLESS + REALITY 配置格式，请使用 URI 或 Mihomo 配置。'
 }
 
-export_shadowrocket_anytls() {
-    render_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME"
+export_shadowrocket_vless() {
+    render_uri "$1" "$2" "$UUID" "$3" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID"
 }
 
-export_quantumultx_anytls() {
-    printf 'Quantumult X 暂不支持 AnyTLS 配置格式。'
+export_quantumultx_vless() {
+    local _server="$1" _port="$2" _node="$3" _host
+    _host=$(format_ipv6_for_uri "$_server")
+    printf 'vless=%s:%s, method=none, password=%s, obfs=over-tls, obfs-host=%s, reality-base64-pubkey=%s, reality-hex-shortid=%s, vless-flow=xtls-rprx-vision, udp-relay=true, tag=%s' \
+        "$_host" "$_port" "$UUID" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID" "$_node"
 }
 
-print_certificate_verification_status() {
-    local _pin="${1:-}" _fingerprint="${2:-}"
-    echo -e "${GREEN}证书校验:${PLAIN}"
-    if [ "$CERT_MODE" != "self_signed" ]; then
-        echo -e "${GREEN}[OK] 域名证书模式，客户端使用系统信任链严格校验。${PLAIN}"
-        [ "$CERT_MODE" = "acme" ] && echo "证书来源: sing-box ACME Certificate Provider"
-        [ "$CERT_MODE" = "existing" ] && echo "证书来源: 已有证书文件"
-        return 0
-    fi
-    if [ -n "$_pin" ] || [ -n "$_fingerprint" ]; then
-        echo -e "${GREEN}[OK] 已读取证书信息。${PLAIN}"
-        [ -n "$_pin" ] && echo "公钥 SHA256 Pin: ${_pin}"
-        [ -n "$_fingerprint" ] && echo "证书 SHA256 指纹: ${_fingerprint}"
-        echo "严格模式: Mihomo / Surfboard 可使用证书指纹"
-        echo "兼容模式: URI / Shadowrocket / Loon 使用 skip-cert-verify=true"
-    else
-        echo -e "${YELLOW}[WARN] 未读取到证书 pin/指纹，客户端输出将使用 skip-cert-verify=true 兼容模式。${PLAIN}"
-    fi
+print_reality_status() {
+    echo -e "${GREEN}REALITY 参数:${PLAIN}"
+    echo "公钥 Public Key: ${REALITY_PUBLIC_KEY}"
+    echo "Short ID: ${SHORT_ID}"
+    echo "目标 SNI: ${SERVER_NAME}"
+    echo "目标端口: ${HANDSHAKE_PORT}"
+    echo "Flow: xtls-rprx-vision"
+    echo -e "${DIM}服务器私钥已隐藏，仅保存在 root 可读配置中。${PLAIN}"
 }
 
 should_show_output() {
@@ -1858,18 +1659,16 @@ show_node() {
         return 1
     }
 
-    local _ip_type _country _server_name _node _uri _qr_url _cert_pin _cert_fingerprint _png
+    local _ip_type _country _server_name _node _uri _qr_url _png
     case "$_tag" in
         v6|IPv6|ipv6) _ip_type="IPv6" ;;
         *)            _ip_type="IPv4" ;;
     esac
     _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
     _server_name=$(generate_server_name)
-    _node=$(generate_node_name "$_country" "$_server_name" "AnyTLS" "$_ip_type")
+    _node=$(generate_node_name "$_country" "$_server_name" "VLESS-Reality" "$_ip_type")
 
-    _cert_pin=$(certificate_public_key_sha256 2>/dev/null || true)
-    _cert_fingerprint=$(certificate_fingerprint_sha256 2>/dev/null || true)
-    _uri=$(export_uri_anytls "$_server" "$_port" "$_node")
+    _uri=$(export_uri_vless "$_server" "$_port" "$_node")
     _qr_url=$(generate_online_qrcode_url "$_uri")
 
     echo -e "${YELLOW}节点名称:${PLAIN}"
@@ -1884,36 +1683,36 @@ show_node() {
 
     if should_show_output "$_mode" "mihomo"; then
         echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
-        print_copy_block "$(export_mihomo_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
+        print_copy_block "$(export_mihomo_vless "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
     if should_show_output "$_mode" "surfboard"; then
         echo -e "${GREEN}Surfboard 配置:${PLAIN}"
-        print_copy_block "$(export_surfboard_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
+        print_copy_block "$(export_surfboard_vless)"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
     if should_show_output "$_mode" "shadowrocket"; then
         echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
-        print_copy_block "$(export_shadowrocket_anytls "$_server" "$_port" "$_node" "$_cert_pin")"
+        print_copy_block "$(export_shadowrocket_vless "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
     if should_show_output "$_mode" "loon"; then
         echo -e "${GREEN}Loon 配置:${PLAIN}"
-        print_copy_block "$(export_loon_anytls "$_server" "$_port" "$_node")"
+        print_copy_block "$(export_loon_vless "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
     if should_show_output "$_mode" "quantumult"; then
         echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
-        print_copy_block "$(export_quantumultx_anytls)"
+        print_copy_block "$(export_quantumultx_vless "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
     if [ "$_mode" = "all" ]; then
-        print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
+        print_reality_status
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -1921,7 +1720,7 @@ show_node() {
         echo -e "${GREEN}二维码:${PLAIN}"
         if generate_terminal_qrcode "$_uri"; then
             echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
-            _png=$(generate_local_qrcode_png "$_uri" "anytls" "$_ip_type" 2>/dev/null || true)
+            _png=$(generate_local_qrcode_png "$_uri" "vless-reality" "$_ip_type" 2>/dev/null || true)
             [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
         else
             echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
@@ -1930,20 +1729,17 @@ show_node() {
         print_copy_block "$_qr_url"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
-
 }
 
 show_config() {
     local _mode="${1:-all}"
-    read_config_live || { echo -e "${RED}未找到 AnyTLS 配置${PLAIN}"; sleep 2; return; }
+    read_config_live || { echo -e "${RED}未找到 VLESS 配置${PLAIN}"; sleep 2; return; }
 
-    local _country _server_name _cert_pin _cert_fingerprint
+    local _country _server_name
     _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
     _server_name=$(generate_server_name)
-    _cert_pin=$(certificate_public_key_sha256 2>/dev/null || true)
-    _cert_fingerprint=$(certificate_fingerprint_sha256 2>/dev/null || true)
 
-    echo -e "\n${GREEN}AnyTLS 配置详情${PLAIN}"
+    echo -e "\n${GREEN}VLESS + REALITY + Vision 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "服务器名称: ${YELLOW}${_server_name}${PLAIN}"
     echo -e "国家/地区: ${YELLOW}${_country} / $(get_country_name "$_country")${PLAIN}"
@@ -1955,20 +1751,16 @@ show_config() {
     else
         echo -e "端口 Port : ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
-    echo -e "密码 Pass : ${YELLOW}${PASSWORD}${PLAIN}"
-    echo -e "伪装 SNI : ${YELLOW}${SERVER_NAME}${PLAIN}"
+    echo -e "用户 UUID : ${YELLOW}${UUID}${PLAIN}"
+    echo -e "伪装 SNI : ${YELLOW}${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
+    echo -e "REALITY 公钥: ${YELLOW}${REALITY_PUBLIC_KEY}${PLAIN}"
+    echo -e "Short ID  : ${YELLOW}${SHORT_ID}${PLAIN}"
+    echo -e "Flow      : ${YELLOW}xtls-rprx-vision${PLAIN}"
     echo -e "TLS 指纹 : ${YELLOW}chrome${PLAIN}"
-    if [ "$CERT_MODE" = "self_signed" ]; then
-        echo -e "证书模式 : ${YELLOW}自签证书${PLAIN}"
-        echo -e "通用 URI : ${YELLOW}insecure=1 / skip-cert-verify=true${PLAIN}"
-    else
-        echo -e "证书模式 : ${YELLOW}${CERT_MODE}${PLAIN}"
-        echo -e "证书校验 : ${YELLOW}系统信任链严格校验${PLAIN}"
-    fi
     [ "$NAT_MODE" = "1" ] && echo -e "机器类型 : ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     if [ "$_mode" = "all" ]; then
-        print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
+        print_reality_status
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -2028,7 +1820,7 @@ release_upgrade_lock() {
 }
 
 upgrade_core() {
-    acquire_upgrade_lock || { echo -e "${YELLOW}另一个 AnyTLS 升级任务正在运行，请稍后重试${PLAIN}"; return 1; }
+    acquire_upgrade_lock || { echo -e "${YELLOW}另一个 VLESS 升级任务正在运行，请稍后重试${PLAIN}"; return 1; }
     local _status=0
     _upgrade_core_locked || _status=$?
     release_upgrade_lock
@@ -2036,11 +1828,11 @@ upgrade_core() {
 }
 
 _upgrade_core_locked() {
-    [ -f "$ANYTLS_CONFIG" ] && [ -x "$SING_BOX_BIN" ] || {
-        echo -e "${RED}AnyTLS 尚未安装，请先执行安装${PLAIN}"
+    [ -f "$VLESS_CONFIG" ] && [ -x "$SING_BOX_BIN" ] || {
+        echo -e "${RED}VLESS 尚未安装，请先执行安装${PLAIN}"
         return 1
     }
-    read_config || { echo -e "${RED}AnyTLS 元数据不完整，无法安全升级${PLAIN}"; return 1; }
+    read_config || { echo -e "${RED}VLESS 元数据不完整，无法安全升级${PLAIN}"; return 1; }
     get_latest_version || return 1
 
     local _current_version _latest_version _was_active=0 _shared_was_active=0
@@ -2057,8 +1849,8 @@ _upgrade_core_locked() {
         return 1
     }
     service_is_active && _was_active=1 || true
-    shared_vless_service_is_active && _shared_was_active=1 || true
-    if ! download_anytls; then
+    shared_anytls_service_is_active && _shared_was_active=1 || true
+    if ! download_vless; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         MANAGED_SING_BOX="$_was_managed"
         return 1
@@ -2073,17 +1865,17 @@ _upgrade_core_locked() {
         service_restart || _restart_failed=1
     fi
     if [ "$_shared_was_active" = "1" ]; then
-        shared_vless_service_restart || _restart_failed=1
+        shared_anytls_service_restart || _restart_failed=1
     fi
     if [ "$_was_active" = "1" ] || [ "$_shared_was_active" = "1" ]; then
         sleep 2
     fi
     [ "$_was_active" = "0" ] || service_is_healthy || _restart_failed=1
-    [ "$_shared_was_active" = "0" ] || shared_vless_service_is_active || _restart_failed=1
+    [ "$_shared_was_active" = "0" ] || shared_anytls_service_is_active || _restart_failed=1
     if [ "$_restart_failed" = "1" ]; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         [ "$_was_active" = "0" ] || service_restart || true
-        [ "$_shared_was_active" = "0" ] || shared_vless_service_restart || true
+        [ "$_shared_was_active" = "0" ] || shared_anytls_service_restart || true
         echo -e "${RED}升级后共享服务启动失败，已回滚${PLAIN}"
         return 1
     fi
@@ -2092,7 +1884,7 @@ _upgrade_core_locked() {
     return 0
 }
 
-upgrade_anytls() {
+upgrade_vless() {
     if ! install_dependencies; then
         read -r -p "按回车键返回主菜单..." _
         return 1
@@ -2103,9 +1895,9 @@ upgrade_anytls() {
     return "$_status"
 }
 
-uninstall_anytls() {
-    echo -e "${RED}警告：这将删除 AnyTLS 服务、配置和定时更新。${PLAIN}"
-    read -r -p "确认卸载 AnyTLS？[y/N]: " _confirm
+uninstall_vless() {
+    echo -e "${RED}警告：这将删除 VLESS 服务、配置和定时更新。${PLAIN}"
+    read -r -p "确认卸载 VLESS？[y/N]: " _confirm
     case "$_confirm" in
         [yY]) ;;
         *) echo "已取消。"; sleep 1; return ;;
@@ -2117,45 +1909,44 @@ uninstall_anytls() {
         _managed_core=1
     fi
     if [ "$MANAGED_SING_BOX" = "1" ]; then
-        mkdir -p "$ANYTLS_DIR" 2>/dev/null || true
+        mkdir -p "$VLESS_DIR" 2>/dev/null || true
         : > "$SING_BOX_MANAGED_MARKER" 2>/dev/null || true
     fi
     service_stop
     service_disable
     close_ports "${LISTEN_PORT:-}"
-    close_acme_challenge_ports
     if command -v crontab >/dev/null 2>&1; then
         crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
     fi
-    rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$ANYTLS_BIN"
-    rm -f "$ANYTLS_CONFIG" "$AUTO_UPDATE_LOG"
-    rm -rf "$ANYTLS_META" "$ANYTLS_CERT_DIR"
-    if [ -d "$ANYTLS_DIR" ]; then
-        _other_file=$(find "$ANYTLS_DIR" -mindepth 1 -maxdepth 1 ! -name '.singbox-tools-managed' -print -quit 2>/dev/null)
+    rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$VLESS_BIN"
+    rm -f "$VLESS_CONFIG" "$AUTO_UPDATE_LOG"
+    rm -rf "$VLESS_META"
+    if [ -d "$VLESS_DIR" ]; then
+        _other_file=$(find "$VLESS_DIR" -mindepth 1 -maxdepth 1 ! -name '.singbox-tools-managed' -print -quit 2>/dev/null)
     fi
     if [ -z "$_other_file" ]; then
         rm -f "$SING_BOX_MANAGED_MARKER"
-        rmdir "$ANYTLS_DIR" 2>/dev/null || true
+        rmdir "$VLESS_DIR" 2>/dev/null || true
         [ "$_managed_core" = "1" ] && rm -f "$SING_BOX_BIN"
     elif [ "$_managed_core" = "1" ]; then
         echo -e "${YELLOW}检测到 /etc/sing-box 中还有其他文件，已保留共享 sing-box 二进制${PLAIN}"
     fi
-    rm -f /var/run/anytls-server.pid
+    rm -f /var/run/vless-server.pid
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
-    echo -e "${GREEN}✓ AnyTLS 已卸载${PLAIN}"
+    echo -e "${GREEN}✓ VLESS 已卸载${PLAIN}"
     sleep 2
 }
 
 setup_auto_update() {
     cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
 #!/bin/bash
-LOG_FILE=/var/log/anytls-autoupdate.log
-TMP_SCRIPT=$(mktemp /tmp/anytls-update-XXXXXX.sh) || exit 1
+LOG_FILE=/var/log/vless-autoupdate.log
+TMP_SCRIPT=$(mktemp /tmp/vless-update-XXXXXX.sh) || exit 1
 trap 'rm -f "$TMP_SCRIPT"' EXIT INT TERM
 {
   echo "[$(date '+%F %T')] 开始检查 sing-box 更新"
   curl -fsSL --connect-timeout 15 --max-time 60 \
-    https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh -o "$TMP_SCRIPT" || exit 1
+    https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh -o "$TMP_SCRIPT" || exit 1
   bash -n "$TMP_SCRIPT" || exit 1
   bash "$TMP_SCRIPT" --upgrade-noninteractive
   echo "[$(date '+%F %T')] 更新检查完成"
@@ -2164,8 +1955,8 @@ AUTOUPDATE_EOF
     chmod +x "$AUTO_UPDATE_SCRIPT"
 
     if command -v crontab >/dev/null 2>&1; then
-        (crontab -l 2>/dev/null | grep -v "$AUTO_UPDATE_SCRIPT"; echo "17 4 * * 1 $AUTO_UPDATE_SCRIPT") | crontab -
-        echo -e "${GREEN}✓ 已设置每周一 04:17 自动检查 sing-box 更新${PLAIN}"
+        (crontab -l 2>/dev/null | grep -v "$AUTO_UPDATE_SCRIPT"; echo "27 4 * * 1 $AUTO_UPDATE_SCRIPT") | crontab -
+        echo -e "${GREEN}✓ 已设置每周一 04:27 自动检查 sing-box 更新${PLAIN}"
     else
         echo -e "${YELLOW}系统未安装 crontab，请手动安装 cron 后再设置自动升级${PLAIN}"
     fi
@@ -2177,12 +1968,12 @@ remove_auto_update() {
         crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
     fi
     rm -f "$AUTO_UPDATE_SCRIPT"
-    echo -e "${GREEN}✓ 已移除 AnyTLS 自动更新任务${PLAIN}"
+    echo -e "${GREEN}✓ 已移除 VLESS 自动更新任务${PLAIN}"
     sleep 2
 }
 
-diagnose_anytls() {
-    echo -e "\n${GREEN}AnyTLS 运行诊断${PLAIN}"
+diagnose_vless() {
+    echo -e "\n${GREEN}VLESS 运行诊断${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     if ! read_config; then
         echo -e "  ${RED}✗ 配置或元数据缺失${PLAIN}"
@@ -2195,15 +1986,16 @@ diagnose_anytls() {
         echo -e "  ${RED}✗ sing-box 配置无效${PLAIN}"
         check_config 2>&1 | sed 's/^/    /'
     fi
-    if [ -s "$ANYTLS_CERT" ] && openssl x509 -in "$ANYTLS_CERT" -noout -checkend 86400 >/dev/null 2>&1; then
-        echo -e "  ${GREEN}✓ TLS 证书有效${PLAIN}"
+    if validate_uuid "$UUID" && validate_reality_key "$REALITY_PRIVATE_KEY" && \
+        validate_reality_key "$REALITY_PUBLIC_KEY" && validate_short_id "$SHORT_ID"; then
+        echo -e "  ${GREEN}✓ UUID 与 REALITY 密钥元数据有效${PLAIN}"
     else
-        echo -e "  ${RED}✗ TLS 证书缺失、损坏或即将过期${PLAIN}"
+        echo -e "  ${RED}✗ UUID 或 REALITY 密钥元数据无效${PLAIN}"
     fi
     if service_is_active; then
-        echo -e "  ${GREEN}✓ AnyTLS 服务运行中${PLAIN}"
+        echo -e "  ${GREEN}✓ VLESS 服务运行中${PLAIN}"
     else
-        echo -e "  ${RED}✗ AnyTLS 服务未运行${PLAIN}"
+        echo -e "  ${RED}✗ VLESS 服务未运行${PLAIN}"
     fi
     if command -v ss >/dev/null 2>&1 && ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE "(^|:|\])${LISTEN_PORT}$"; then
         echo -e "  ${GREEN}✓ TCP ${LISTEN_PORT} 正在监听${PLAIN}"
@@ -2235,12 +2027,12 @@ server_tools_menu() {
             _auto_status="${GREEN}已启用${PLAIN}"
         fi
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  AnyTLS 工具箱${PLAIN}"
+        echo -e "${GREEN}  VLESS 工具箱${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 自动更新: ${_auto_status}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 查看系统信息"
-        echo -e " 2. 查看 AnyTLS 日志"
+        echo -e " 2. 查看 VLESS 日志"
         echo -e " 3. 运行状态诊断"
         echo -e " 4. 设置每周自动更新"
         echo -e " 5. 移除自动更新"
@@ -2249,7 +2041,7 @@ server_tools_menu() {
         case "$choice" in
             1) show_system_info ;;
             2) service_logs; read -r -p "按回车返回..." _tmp ;;
-            3) diagnose_anytls; read -r -p "按回车返回..." _tmp ;;
+            3) diagnose_vless; read -r -p "按回车返回..." _tmp ;;
             4) setup_auto_update ;;
             5) remove_auto_update ;;
             0|q|quit|exit) return ;;
@@ -2258,9 +2050,9 @@ server_tools_menu() {
     done
 }
 
-manage_anytls() {
-    if [ ! -f "$ANYTLS_CONFIG" ] || [ ! -x "$ANYTLS_BIN" ]; then
-        echo -e "${RED}AnyTLS 尚未安装，请先执行安装${PLAIN}"
+manage_vless() {
+    if [ ! -f "$VLESS_CONFIG" ] || [ ! -x "$VLESS_BIN" ]; then
+        echo -e "${RED}VLESS 尚未安装，请先执行安装${PLAIN}"
         sleep 2
         return
     fi
@@ -2270,7 +2062,7 @@ manage_anytls() {
         service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  AnyTLS 服务管理${PLAIN}"
+        echo -e "${GREEN}  VLESS 服务管理${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 当前状态: ${STATUS}"
         echo -e " 1. 启动"
@@ -2283,7 +2075,7 @@ manage_anytls() {
         case "$choice" in
             1)
                 if service_start && sleep 1 && service_is_active; then
-                    echo -e "${GREEN}✓ AnyTLS 已启动${PLAIN}"
+                    echo -e "${GREEN}✓ VLESS 已启动${PLAIN}"
                 else
                     echo -e "${RED}✗ 启动失败，请查看日志${PLAIN}"
                 fi
@@ -2292,12 +2084,12 @@ manage_anytls() {
             2)
                 service_stop
                 sleep 1
-                service_is_active && echo -e "${RED}✗ 服务仍在运行${PLAIN}" || echo -e "${GREEN}✓ AnyTLS 已停止${PLAIN}"
+                service_is_active && echo -e "${RED}✗ 服务仍在运行${PLAIN}" || echo -e "${GREEN}✓ VLESS 已停止${PLAIN}"
                 sleep 1
                 ;;
             3)
                 if service_restart && sleep 1 && service_is_active; then
-                    echo -e "${GREEN}✓ AnyTLS 已重启${PLAIN}"
+                    echo -e "${GREEN}✓ VLESS 已重启${PLAIN}"
                 else
                     echo -e "${RED}✗ 重启失败，请查看日志${PLAIN}"
                 fi
@@ -2318,9 +2110,9 @@ main_menu() {
     while true; do
         clear_screen
         local STATUS _ver_line
-        if [ -f "$ANYTLS_CONFIG" ] && [ -x "$ANYTLS_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
+        if [ -f "$VLESS_CONFIG" ] && [ -x "$VLESS_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
             service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
-        elif [ -e "$ANYTLS_CONFIG" ] || [ -e "$ANYTLS_BIN" ]; then
+        elif [ -e "$VLESS_CONFIG" ] || [ -e "$VLESS_BIN" ]; then
             STATUS="${YELLOW}安装不完整${PLAIN}"
         else
             STATUS="${RED}未安装${PLAIN}"
@@ -2331,12 +2123,12 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.18${PLAIN}"
-        echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.18${PLAIN}"
+        echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e "  作者    : ${YELLOW}everettlabs${PLAIN}"
-        echo -e "  实现    : ${YELLOW}sing-box 原生 AnyTLS 入站${PLAIN}"
+        echo -e "  实现    : ${YELLOW}sing-box 原生 VLESS 入站${PLAIN}"
         echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
         echo -e "  Seedloc博客 : https://seedloc.com"
         echo -e "  VPSknow网站 : https://vpsknow.com"
@@ -2344,22 +2136,22 @@ main_menu() {
         echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
         echo -e "  当前状态: $STATUS${_ver_line}"
         echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
-        echo -e " 1. 安装 / 重装 AnyTLS"
+        echo -e " 1. 安装 / 重装 VLESS"
         echo -e " 2. 查看节点信息 / 链接"
-        echo -e " 3. 管理 AnyTLS（启动 / 停止 / 重启 / 日志 / 修改）"
+        echo -e " 3. 管理 VLESS（启动 / 停止 / 重启 / 日志 / 修改）"
         echo -e " 4. 升级 sing-box"
-        echo -e " 5. 卸载 AnyTLS"
+        echo -e " 5. 卸载 VLESS"
         echo -e " 6. 服务器工具"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}================================================${PLAIN}"
 
         read -r -p "请输入选项 [0-6]: " choice
         case "$choice" in
-            1) install_anytls ;;
+            1) install_vless ;;
             2) show_config ;;
-            3) manage_anytls ;;
-            4) upgrade_anytls ;;
-            5) uninstall_anytls ;;
+            3) manage_vless ;;
+            4) upgrade_vless ;;
+            5) uninstall_vless ;;
             6) server_tools_menu ;;
             0|q|quit|exit) exit 0 ;;
             *) echo -e "${RED}无效选项，请输入 0-6${PLAIN}"; sleep 1 ;;
@@ -2378,15 +2170,15 @@ if [ "${1:-}" = "--upgrade-noninteractive" ]; then
 fi
 
 # ============================================================
-# 入口（ANYTLS_LIB_ONLY=1 时跳过）
+# 入口（VLESS_LIB_ONLY=1 时跳过）
 # ============================================================
-[ "$_ANYTLS_LIB_ONLY" = "1" ] && return 0
+[ "$_VLESS_LIB_ONLY" = "1" ] && return 0
 
 check_root
 check_sys
 detect_init
 case "${1:-menu}" in
-    install) install_anytls ;;
+    install) install_vless ;;
     info|node|export|all) show_config ;;
     uri|link) show_config uri ;;
     mihomo|clash) show_config mihomo ;;
@@ -2395,9 +2187,9 @@ case "${1:-menu}" in
     loon) show_config loon ;;
     quantumult|quantumultx) show_config quantumult ;;
     qrcode|qr) show_config qrcode ;;
-    manage|service|config) manage_anytls ;;
-    upgrade|update) upgrade_anytls ;;
-    uninstall|remove) uninstall_anytls ;;
+    manage|service|config) manage_vless ;;
+    upgrade|update) upgrade_vless ;;
+    uninstall|remove) uninstall_vless ;;
     menu|"") main_menu ;;
     *)
         echo -e "${RED}未知命令: ${1}${PLAIN}"

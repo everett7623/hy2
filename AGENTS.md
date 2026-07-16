@@ -10,13 +10,14 @@ Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant
 - `hy2.sh` — Hysteria 2 management (install/upgrade/uninstall, BBR, auto-update, firewall, QR, server tools).
 - `ss.sh` — Shadowsocks-Rust management (install/upgrade/uninstall, BBR, auto-update, QR, connection test, IPv4/IPv6 switch).
 - `anytls.sh` — AnyTLS management via **sing-box >= 1.12.0** native anytls inbound. Downloads and manages sing-box; does NOT use a standalone `anytls-go` binary.
+- `vless.sh` — VLESS management via **sing-box >= 1.12.0** native VLESS inbound, using TCP + REALITY + `xtls-rprx-vision`; generates UUID, REALITY keys and short ID.
 - `euservhy2.sh` — Standalone EUserv IPv6-only script. Does not share code with hy2.sh.
 
 ## Version management
 
 - Each script carries its own version in the header comment block; there is no shared version file. The current release policy keeps all script versions unified, so update every header, visible menu version, date, and `CHANGELOG.md` manually for a project release.
 - `install.sh` always points to `main` branch on GitHub. There's no staging/test branch mechanism.
-- `get_latest_version()` fetches `apernet/hysteria` or `shadowsocks` releases from GitHub API — no dependency file for version pins.
+- `get_latest_version()` fetches `apernet/hysteria`, `shadowsocks`, or `SagerNet/sing-box` releases from GitHub API — no dependency file for version pins.
 
 ## Validation and CI
 
@@ -53,22 +54,30 @@ Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant
 | AnyTLS config | `/etc/sing-box/anytls.json` |
 | AnyTLS meta | `/etc/sing-box/anytls-meta/` |
 | AnyTLS cert | `/etc/sing-box/anytls-cert/` |
-| Systemd service | `/etc/systemd/system/hysteria-server.service` |
-| OpenRC service | `/etc/init.d/hysteria-server` |
+| VLESS wrapper | `/usr/local/bin/vless-server` (shell wrapper invoking sing-box) |
+| VLESS config | `/etc/sing-box/vless.json` |
+| VLESS meta | `/etc/sing-box/vless-meta/` |
+| Shared sing-box ownership marker | `/etc/sing-box/.singbox-tools-managed` |
+| Hysteria 2 systemd service | `/etc/systemd/system/hysteria-server.service` |
+| AnyTLS systemd service | `/etc/systemd/system/anytls-server.service` |
+| VLESS systemd service | `/etc/systemd/system/vless-server.service` |
+| Hysteria 2 OpenRC service | `/etc/init.d/hysteria-server` |
+| AnyTLS OpenRC service | `/etc/init.d/anytls-server` |
+| VLESS OpenRC service | `/etc/init.d/vless-server` |
 
 ## Feature matrix
 
-| Feature | hy2.sh | ss.sh | anytls.sh | euservhy2.sh |
-|---------|--------|-------|-----------|-------------|
-| BBR/tcp tuning | ✅ | ✅ | ✅ | ✅ |
-| Auto-update (cron) | ✅ | ✅ | ✅ | — |
-| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ |
-| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ |
-| Terminal QR code | ✅ | ✅ | ✅ | ✅ |
-| Sing-box client export | ✅ | ✅ | ✅ | ✅ |
-| Upgrade sub-command | ✅ | ✅ | ✅ | ✅ |
-| IPv4/IPv6 switch | — | ✅ | — | — |
-| Connection test | — | ✅ | — | — |
+| Feature | hy2.sh | ss.sh | anytls.sh | vless.sh | euservhy2.sh |
+|---------|--------|-------|-----------|----------|-------------|
+| BBR/tcp tuning | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Auto-update (cron) | ✅ | ✅ | ✅ | ✅ | — |
+| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Terminal QR code | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Client export | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Upgrade sub-command | ✅ | ✅ | ✅ | ✅ | ✅ |
+| IPv4/IPv6 switch | — | ✅ | — | — | — |
+| Connection test | — | ✅ | — | — | — |
 
 ## SS-2022 caveat
 

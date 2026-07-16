@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Project overview
 
-Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
+Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for VLESS + REALITY + Vision, Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
 
 ## Script relationships
 
@@ -16,11 +16,12 @@ Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one
 - **`hy2.sh`** — Hysteria 2 management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, firewall auto-ports, modify bandwidth/config, terminal QR codes, server tools.
 - **`ss.sh`** — Shadowsocks-Rust management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, modify config, terminal QR codes, connection test, server tools. IPv6-first detection with WARP filtering.
 - **`anytls.sh`** — Standalone shell management around sing-box >= 1.12.0 native AnyTLS inbound. Generates JSON, TLS certificates, wrapper and service files without Python.
+- **`vless.sh`** — Standalone shell management around sing-box >= 1.12.0 native VLESS inbound with TCP, REALITY, and `xtls-rprx-vision`. Generates UUID, REALITY key pair, short ID, JSON, wrapper and service files without Python.
 - **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with hy2.sh.
 
 ## `install.sh` references
 
-`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, and `euservhy2.sh` on the GitHub `main` branch.
+`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, and `euservhy2.sh` on the GitHub `main` branch.
 
 `install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2.sh`) rather than going through `install.sh`.
 
@@ -44,21 +45,21 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 
 ## Feature matrix
 
-| Feature | hy2.sh | ss.sh | anytls.sh | euservhy2.sh |
-|---------|--------|-------|-----------|-------------|
-| Install / upgrade / uninstall | ✅ | ✅ | ✅ | ✅ |
-| Service management (start/stop/restart) | ✅ | ✅ | ✅ | ✅ |
-| View logs | ✅ | ✅ | ✅ | ✅ |
-| Node info / share links | ✅ | ✅ | ✅ | ✅ |
-| Sing-box client export | ✅ | ✅ | ✅ | ✅ |
-| BBR tuning | ✅ | ✅ | ✅ | ✅ |
-| Auto-update (cron @ 03:00) | ✅ | ✅ | ✅ | — |
-| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ |
-| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ |
-| Terminal QR code (qrencode) | ✅ | ✅ | ✅ | ✅ |
-| Server tools sub-menu | ✅ | ✅ | ✅ | ✅ |
-| IPv4/IPv6 switch | — | ✅ | — | — |
-| Connection test | — | ✅ | — | — |
+| Feature | hy2.sh | ss.sh | anytls.sh | vless.sh | euservhy2.sh |
+|---------|--------|-------|-----------|----------|-------------|
+| Install / upgrade / uninstall | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Service management (start/stop/restart) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| View logs | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Node info / share links | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Client export | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BBR tuning | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Auto-update | ✅ | ✅ | ✅ | ✅ | — |
+| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Terminal QR code (qrencode) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Server tools sub-menu | ✅ | ✅ | ✅ | ✅ | ✅ |
+| IPv4/IPv6 switch | — | ✅ | — | — | — |
+| Connection test | — | ✅ | — | — | — |
 
 ## Default ports
 
@@ -67,10 +68,11 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 | Hysteria 2 | `18888` | Custom external port supported |
 | Shadowsocks | `28888` | Custom external port supported |
 | AnyTLS | `38888` | Uses the configured public port |
+| VLESS REALITY | `48888` | Custom external port supported |
 
 ## Version management
 
-There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). The current release policy keeps all five script versions unified, so a project release requires manually updating every script header, visible menu version, date, tests, and `CHANGELOG.md`.
+There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). The current release policy keeps all six script versions unified, so a project release requires manually updating every script header, visible menu version, date, tests, and `CHANGELOG.md`.
 
 Do not confuse the project script version with the installed proxy version. `get_latest_version()` fetches Hysteria 2, Shadowsocks-Rust, or sing-box releases from their upstream GitHub APIs at runtime; there are no dependency pins or lockfiles.
 
@@ -109,8 +111,16 @@ Do not confuse the project script version with the installed proxy version. `get
 | AnyTLS config | `/etc/sing-box/anytls.json` |
 | AnyTLS metadata | `/etc/sing-box/anytls-meta/` |
 | AnyTLS cert/key | `/etc/sing-box/anytls-cert/` |
-| Systemd service | `/etc/systemd/system/hysteria-server.service` |
-| OpenRC service | `/etc/init.d/hysteria-server` |
+| VLESS wrapper | `/usr/local/bin/vless-server` |
+| VLESS config | `/etc/sing-box/vless.json` |
+| VLESS metadata | `/etc/sing-box/vless-meta/` |
+| Shared sing-box ownership marker | `/etc/sing-box/.singbox-tools-managed` |
+| Hysteria 2 systemd service | `/etc/systemd/system/hysteria-server.service` |
+| AnyTLS systemd service | `/etc/systemd/system/anytls-server.service` |
+| VLESS systemd service | `/etc/systemd/system/vless-server.service` |
+| Hysteria 2 OpenRC service | `/etc/init.d/hysteria-server` |
+| AnyTLS OpenRC service | `/etc/init.d/anytls-server` |
+| VLESS OpenRC service | `/etc/init.d/vless-server` |
 
 ## Supported distros
 

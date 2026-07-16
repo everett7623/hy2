@@ -4,6 +4,19 @@
 
 ---
 
+## Unreleased
+
+- Add AnyTLS certificate modes for self-signed certificates, validated existing domain certificate files, and the sing-box 1.14+ ACME Certificate Provider; trusted domain certificates now export strict client verification settings.
+- Add standalone VLESS management through sing-box native VLESS inbound with TCP, REALITY, and `xtls-rprx-vision`.
+- Generate and validate VLESS UUIDs, REALITY X25519 key pairs, short IDs, JSON metadata, wrappers, systemd/OpenRC services, firewall ownership, and automatic core updates.
+- Export VLESS REALITY nodes for URI/Shadowrocket, Mihomo, Loon, and Quantumult X, with an explicit Surfboard compatibility notice.
+- Integrate VLESS into the unified install, status, export, QR, service, upgrade, cache, and uninstall menus.
+- Validate every existing `/etc/sing-box/*.json` before replacing the shared sing-box core, and preserve project ownership across AnyTLS/VLESS uninstall order with a managed marker.
+- Serialize AnyTLS/VLESS core replacement with one shared lock and restart every active managed consumer, rolling back the core if either service fails to recover.
+- Add `tests/validate_vless.sh` and extend static validation, architecture, testing, maintenance, contribution, and user documentation.
+
+---
+
 ## v2.0.18 (2026-07-14)
 
 - Make HY2, Shadowsocks, and AnyTLS configuration changes atomic and roll back configs, metadata, ports, and service state when validation or restart fails.

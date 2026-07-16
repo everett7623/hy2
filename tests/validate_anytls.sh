@@ -119,6 +119,10 @@ unset -f ip curl
 LISTEN_PORT=8443; BIND_FAMILY=v6
 [ "$(listen_address)" = "[::]:8443" ]
 [ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
+CERT_MODE=existing
+[ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome#AnyTLS%20Test" ]
+echo "$(export_mihomo_anytls 192.0.2.1 8443 'AnyTLS Test')" | grep -q 'skip-cert-verify: false'
+CERT_MODE=self_signed
 
 PASSWORD=Abcdef12; SERVER_NAME=www.example.com
 shadowrocket_uri=$(export_shadowrocket_anytls 192.0.2.1 8443 'AnyTLS Test' 'TestPin+/=')
@@ -177,7 +181,9 @@ df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
 unset -f ss df service_is_active
 ANYTLS_DIR="$tmp/etc"; ANYTLS_CONFIG="$ANYTLS_DIR/anytls.json"
 ANYTLS_META="$ANYTLS_DIR/anytls-meta"; ANYTLS_CERT_DIR="$ANYTLS_DIR/anytls-cert"
+SING_BOX_MANAGED_MARKER="$ANYTLS_DIR/.singbox-tools-managed"
 ANYTLS_CERT="$ANYTLS_CERT_DIR/cert.pem"; ANYTLS_KEY="$ANYTLS_CERT_DIR/private.key"
+CERT_MODE=self_signed; CERT_PATH="$ANYTLS_CERT"; KEY_PATH="$ANYTLS_KEY"; ACME_EMAIL=""
 LISTEN_PORT=8443; EXT_PORT=9443; PASSWORD=Abcdef12; NAT_MODE=1; BIND_FAMILY=v6
 LISTEN_HOST=::; SERVER_NAME=www.example.com; MANAGED_SING_BOX=1; PUBLIC_IP=""; PUBLIC_IPV6=""
 
@@ -199,13 +205,38 @@ open_ports 9443 >/dev/null
 [ ! -e "$ANYTLS_META/firewall/iptables4-9443-tcp" ]
 close_ports 9443
 [ ! -s "$firewall_log" ]
+firewall_existing=0; CERT_MODE=acme
+open_acme_challenge_ports >/dev/null
+[ -f "$ANYTLS_META/firewall/iptables4-80-tcp" ]
+[ -f "$ANYTLS_META/firewall/iptables4-443-tcp" ]
+close_acme_challenge_ports
+grep -q '^delete$' "$firewall_log"
+CERT_MODE=self_signed
 unset -f iptables
+has_control_chars $'/tmp/cert\nMANAGED_SING_BOX=1'
+has_control_chars $'/tmp/cert\tpath'
+! has_control_chars '/etc/letsencrypt/live/example.com/fullchain.pem'
+stat() { printf '%s\n' '0 600'; }
+validate_private_key_permissions /tmp/mock-private-key
+stat() { printf '%s\n' '0 640'; }
+! validate_private_key_permissions /tmp/mock-private-key
+stat() { printf '%s\n' '1000 600'; }
+! validate_private_key_permissions /tmp/mock-private-key
+unset -f stat
 case "$(uname -s)" in
     MINGW*|MSYS*) ;;
     *)
         generate_certificate force
         [ -s "$ANYTLS_CERT" ] && [ -s "$ANYTLS_KEY" ]
         openssl x509 -in "$ANYTLS_CERT" -noout -checkend 60 >/dev/null 2>&1
+        stat() { printf '%s\n' '0 600'; }
+        validate_certificate_pair "$ANYTLS_CERT" "$ANYTLS_KEY"
+        openssl() {
+            if [ "${1:-} ${2:-}" = 'x509 -help' ]; then return 0; fi
+            command openssl "$@"
+        }
+        certificate_matches_server_name "$ANYTLS_CERT"
+        unset -f openssl stat
         ;;
 esac
 write_config
@@ -213,7 +244,36 @@ grep -q '"type": "anytls"' "$ANYTLS_CONFIG"
 grep -q '"listen_port": 8443' "$ANYTLS_CONFIG"
 grep -q '"listen": "::"' "$ANYTLS_CONFIG"
 grep -q '"server_name": "www.example.com"' "$ANYTLS_CONFIG"
+grep -q '"certificate_path":' "$ANYTLS_CONFIG"
 [ -z "$(find "$ANYTLS_DIR" -type f -name '*.new.*' -print -quit)" ]
+
+# 已有证书走文件路径；ACME 只使用 1.14+ Certificate Provider 新格式。
+CERT_MODE=existing; CERT_PATH="$ANYTLS_CERT"; KEY_PATH="$ANYTLS_KEY"; ACME_EMAIL=""
+write_config
+grep -q '"certificate_path":' "$ANYTLS_CONFIG"
+! grep -q '"certificate_provider"' "$ANYTLS_CONFIG"
+CERT_MODE=acme; CERT_PATH=""; KEY_PATH=""; ACME_EMAIL=admin@example.com
+write_config
+grep -q '"certificate_provider": {' "$ANYTLS_CONFIG"
+grep -q '"type": "acme"' "$ANYTLS_CONFIG"
+grep -q '"domain": \["www.example.com"\]' "$ANYTLS_CONFIG"
+! grep -q '"acme": {' "$ANYTLS_CONFIG"
+CERT_MODE=self_signed; CERT_PATH="$ANYTLS_CERT"; KEY_PATH="$ANYTLS_KEY"; ACME_EMAIL=""
+write_config
+
+# 候选核心必须能加载共享目录内的全部 JSON，任一失败都要拒绝替换。
+cat > "$tmp/shared-check-bin" <<'EOF'
+#!/bin/sh
+case "$1" in
+  check) ! grep -q '"invalid": true' "$3" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmp/shared-check-bin"
+validate_shared_configs_with_bin "$tmp/shared-check-bin"
+printf '{"invalid": true}\n' > "$ANYTLS_DIR/vless.json"
+! validate_shared_configs_with_bin "$tmp/shared-check-bin" >/dev/null 2>&1
+rm -f "$ANYTLS_DIR/vless.json"
 
 # 临时文件创建失败时不得截断当前可用配置。
 config_before=$(cat "$ANYTLS_CONFIG")
@@ -221,9 +281,9 @@ mktemp() { return 1; }
 ! write_config
 unset -f mktemp
 [ "$(cat "$ANYTLS_CONFIG")" = "$config_before" ]
-LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4; LISTEN_HOST=""; SERVER_NAME=""; MANAGED_SING_BOX=0
+LISTEN_PORT=""; EXT_PORT=""; PASSWORD=""; NAT_MODE=0; BIND_FAMILY=v4; LISTEN_HOST=""; SERVER_NAME=""; CERT_MODE=""; CERT_PATH=""; KEY_PATH=""; ACME_EMAIL=""; MANAGED_SING_BOX=0
 read_config
-[ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6::::www.example.com:1" ]
+[ "$LISTEN_PORT:$EXT_PORT:$PASSWORD:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$CERT_MODE:$MANAGED_SING_BOX" = "8443:9443:Abcdef12:1:v6::::www.example.com:self_signed:1" ]
 PUBLIC_IP=192.0.2.1; PUBLIC_IPV6=2001:db8::1
 read_config
 
@@ -302,6 +362,19 @@ get_latest_version() { LAST_VERSION_TAG=v1.13.14; return 0; }
 upgrade_output=$(upgrade_core)
 echo "$upgrade_output" | grep -q '已是最新版本 1.13.14'
 
+# 替换共享核心后，原本运行中的 VLESS 也必须重启并加载同一新版本。
+get_latest_version() { LAST_VERSION_TAG=v1.13.15; return 0; }
+download_anytls() {
+    printf '#!/bin/sh\necho "sing-box version 1.13.15"\n' > "$SING_BOX_BIN"
+    chmod +x "$SING_BOX_BIN"
+    MANAGED_SING_BOX=1
+}
+shared_vless_service_is_active() { return 0; }
+shared_vless_service_restart() { : > "$tmp/shared-vless-restarted"; }
+upgrade_core >/dev/null
+[ -f "$tmp/shared-vless-restarted" ]
+grep -q 'sing-box version 1.13.15' "$SING_BOX_BIN"
+
 # 卸载只能删除 AnyTLS 产物，存在其他 sing-box 配置时必须保留目录与核心。
 printf '{}' > "$ANYTLS_DIR/other.json"
 SYSTEMD_SERVICE="$tmp/anytls.service"
@@ -316,9 +389,15 @@ close_ports() { :; }
 printf 'y\n' | uninstall_anytls >/dev/null
 [ -f "$ANYTLS_DIR/other.json" ]
 [ -f "$SING_BOX_BIN" ]
+[ -f "$SING_BOX_MANAGED_MARKER" ]
 [ ! -e "$ANYTLS_CONFIG" ]
 [ ! -e "$ANYTLS_META" ]
 [ ! -e "$ANYTLS_CERT_DIR" ]
+
+rm -f "$ANYTLS_DIR/other.json"
+printf 'y\n' | uninstall_anytls >/dev/null
+[ ! -e "$SING_BOX_BIN" ]
+[ ! -e "$SING_BOX_MANAGED_MARKER" ]
 
 printf '\177ELFtest' > "$tmp/server"
 validate_elf "$tmp/server"

@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-SCRIPTS="install.sh hy2.sh ss.sh anytls.sh euservhy2.sh"
+SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
 EXPECTED_VERSION="v2.0.18"
 REQUIRED_DOCS="
@@ -56,6 +56,15 @@ for script in $SCRIPTS; do
             grep -q '"type": "anytls"' "$script"
             grep -q 'ANYTLS_LIB_ONLY' "$script"
             ;;
+        vless.sh)
+            grep -q "# 版本：${EXPECTED_VERSION}" "$script"
+            grep -q "VLESS Management Script.*${EXPECTED_VERSION}" "$script"
+            grep -q 'github.com/SagerNet/sing-box/releases/download' "$script"
+            grep -q '"type": "vless"' "$script"
+            grep -q '"flow": "xtls-rprx-vision"' "$script"
+            grep -q '"reality": {' "$script"
+            grep -q 'VLESS_LIB_ONLY' "$script"
+            ;;
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
             ;;
@@ -67,7 +76,7 @@ for script in $SCRIPTS; do
     fi
 done
 
-for script in hy2.sh ss.sh anytls.sh; do
+for script in hy2.sh ss.sh anytls.sh vless.sh; do
     tmp=$(mktemp)
     awk '
         /cat > "\$AUTO_UPDATE_SCRIPT" <<'\''AUTOUPDATE_EOF'\''/ {
@@ -90,12 +99,17 @@ done
 
 grep -q 'SCRIPT_VERSION="2.0.18"' euservhy2.sh
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
-! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh euservhy2.sh
-! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh euservhy2.sh
-! grep -R -qE '"strategy": "ipv4_only"|"strict_route": true|"ip_version": 6|tls_certificate_public_key_sha256' hy2.sh ss.sh anytls.sh euservhy2.sh
-! grep -R -q 'Path to each client configuration file' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
-! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh euservhy2.sh README.md CHANGELOG.md
-! grep -R -qE 'Throne URI|export_throne|render_throne|export_singbox|render_singbox|print_singbox_template_note' hy2.sh ss.sh anytls.sh euservhy2.sh install.sh
+grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' anytls.sh
+grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' vless.sh
+! grep -q 'upgrade_core || true' anytls.sh vless.sh
+grep -q '^shared_vless_service_restart()' anytls.sh
+grep -q '^shared_anytls_service_restart()' vless.sh
+! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
+! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
+! grep -R -qE '"strategy": "ipv4_only"|"strict_route": true|"ip_version": 6|tls_certificate_public_key_sha256' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
+! grep -R -q 'Path to each client configuration file' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh README.md CHANGELOG.md
+! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh README.md CHANGELOG.md
+! grep -R -qE 'Throne URI|export_throne|render_throne|export_singbox|render_singbox|print_singbox_template_note' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh install.sh
 ! grep -R -qE 'Sing-box JSON 配置|完整 Sing-box/SFA TUN|Sing-box 输出说明|SFA / SFM / SFI' install.sh
 ! grep -qE 'sing-box core|进程替换运行|无法原地更新|更新 install\.sh 主入口' install.sh
 grep -q '刷新 install.sh 主入口缓存' install.sh
@@ -122,6 +136,7 @@ grep -q '^uninstall_all_protocols()' install.sh
 grep -q 'VPS 配置备份完成' install.sh
 grep -q '如需 VPS 配置备份，请先' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "$_action"' install.sh
+grep -q 'run_script "VLESS" "$VLESS_URL" "$_action"' install.sh
 grep -q 'select_protocol_and_run "选择协议以导出 URI 分享链接" "uri"' install.sh
 grep -q 'select_protocol_and_run "选择协议以导出 Mihomo / Clash 配置" "mihomo"' install.sh
 grep -q 'select_protocol_and_run "选择协议以导出 Shadowrocket 配置" "shadowrocket"' install.sh
@@ -145,9 +160,9 @@ grep -q '^install_shortcut_command()' install.sh
 grep -q '_tmp=$(make_temp_file)' install.sh
 grep -q 'install_shortcut_command || true' install.sh
 grep -q '快捷命令: .*sb' install.sh
-! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh euservhy2.sh
-! grep -R -qE '(^|[[:space:]])clea$|show_banne$|_numbe$|_manual_add$|_new_ve$|_url_mirro$|_uptime_st$|_tmp_di$|tcp_congestion_control = bb$' hy2.sh ss.sh anytls.sh euservhy2.sh
-for script in hy2.sh ss.sh anytls.sh euservhy2.sh; do
+! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls|vless)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
+! grep -R -qE '(^|[[:space:]])clea$|show_banne$|_numbe$|_manual_add$|_new_ve$|_url_mirro$|_uptime_st$|_tmp_di$|tcp_congestion_control = bb$' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
+for script in hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh; do
     grep -q "printf '%s %s | %s | %s | %s'" "$script"
     grep -q '^get_country_flag()' "$script"
     grep -q '^yaml_single_quote_escape()' "$script"
@@ -167,7 +182,7 @@ grep -q "name: '\${safe_node}'" euservhy2.sh
 grep -q "password: '\${safe_password}'" euservhy2.sh
 grep -q "Hysteria2, \${ipv6_raw}, \${port}, '\${password}'" euservhy2.sh
 
-for script in install.sh hy2.sh ss.sh anytls.sh euservhy2.sh; do
+for script in install.sh hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh; do
     _shadow_line=$(grep -n 'Shadowrocket 配置' "$script" | head -1 | cut -d: -f1)
     _loon_line=$(grep -n 'Loon 配置' "$script" | head -1 | cut -d: -f1)
     if [ -z "$_shadow_line" ] || [ -z "$_loon_line" ] || [ "$_shadow_line" -ge "$_loon_line" ]; then
@@ -186,6 +201,15 @@ grep -q 'select_protocol_and_run "查看节点信息" "info"' install.sh
 grep -q 'select_protocol_and_run "生成二维码" "qrcode"' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "upgrade"' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "uninstall"' install.sh
+grep -q 'run_script "VLESS" "$VLESS_URL" "upgrade"' install.sh
+grep -q 'run_script "VLESS" "$VLESS_URL" "uninstall"' install.sh
+grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
+grep -q 'vless-server:start) nohup /usr/local/bin/vless-server' install.sh
+grep -q 'vless-server:stop)' install.sh
+grep -q 'etc/systemd/system/vless-server.service' install.sh
+grep -q 'etc/init.d/vless-server' install.sh
+grep -q 'service_action vless-server restart /var/run/vless-server.pid' install.sh
+grep -q 'VLESS    : .*VLESS_STATUS' install.sh
 grep -q 'install) install_hy2' hy2.sh
 grep -q 'info|node|export|all) show_config' hy2.sh
 grep -q 'qrcode|qr) show_config qrcode' hy2.sh
@@ -199,6 +223,9 @@ grep -q '\[ "\$_was_active" = "0" \] || { service_restart; sleep 2; }' ss.sh
 grep -q 'install) install_anytls' anytls.sh
 grep -q 'info|node|export|all) show_config' anytls.sh
 grep -q 'qrcode|qr) show_config qrcode' anytls.sh
+grep -q 'install) install_vless' vless.sh
+grep -q 'info|node|export|all) show_config' vless.sh
+grep -q 'qrcode|qr) show_config qrcode' vless.sh
 grep -q 'install) do_install' euservhy2.sh
 grep -q 'info|node|export|all) show_banner; show_node_info' euservhy2.sh
 grep -q 'qrcode|qr) show_banner; show_node_info qrcode' euservhy2.sh
@@ -215,6 +242,7 @@ do
 done
 
 bash tests/validate_anytls.sh
+bash tests/validate_vless.sh
 bash tests/validate_hy2_network.sh
 bash tests/validate_ss_network.sh
 

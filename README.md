@@ -1,7 +1,7 @@
 # 🚀 Sing-box Multi-Protocol Tools
 
 > 多协议部署 · 节点导出 · 服务管理 · 系统检测 · 备份恢复
-> 面向 Linux VPS 的轻量一键脚本，适合快速搭建 Hysteria 2、Shadowsocks、AnyTLS 与 EUserv IPv6-only 节点。
+> 面向 Linux VPS 的轻量一键脚本，适合快速搭建 VLESS + REALITY + Vision、Hysteria 2、Shadowsocks、AnyTLS 与 EUserv IPv6-only 节点。
 
 ![GitHub release](https://img.shields.io/github/v/release/everett7623/hy2?color=blue&label=Latest%20Version)
 ![Shell Script](https://img.shields.io/badge/Language-Shell-green)
@@ -18,7 +18,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 统一入口 | 一个 `install.sh` 管理 AnyTLS、Hysteria 2、Shadowsocks、EUserv HY2 |
+| 统一入口 | 一个 `install.sh` 管理 VLESS、AnyTLS、Hysteria 2、Shadowsocks、EUserv HY2 |
 | 一键部署 | 自动识别系统、架构、IPv4 / IPv6、NAT 端口、防火墙环境 |
 | 节点导出 | 输出 URI、Mihomo / Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码 |
 | 服务管理 | 查看状态、启动、停止、重启、日志、监听端口、修改配置 |
@@ -66,7 +66,8 @@ bash <(curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.co
 | --- | --- | --- | --- |
 | Hysteria 2 | 主力节点，大多数 IPv4 / 双栈 VPS | `18888` | UDP，高速；自签证书 + SNI 伪装，无需域名 |
 | Shadowsocks | 备用节点，IPv6 / 双栈环境 | `28888` | 支持经典 AEAD 与 SS-2022；纯 IPv4 环境风险较高 |
-| AnyTLS | 需要 TCP / TLS 传输的轻量节点 | `38888` | 基于 sing-box 原生 AnyTLS inbound |
+| AnyTLS | 需要 TCP / TLS 传输的轻量节点 | `38888` | 原生 AnyTLS；支持自签、已有域名证书与 sing-box 1.14+ ACME |
+| VLESS | 需要 TCP、REALITY 与 XTLS Vision 的节点 | `48888` | sing-box 原生 VLESS inbound；自动生成 UUID、REALITY 密钥与 short ID |
 | EUserv HY2 | EUserv 免费 IPv6-only VPS | 自定义 | 专门处理 IPv6-only、NAT64、WARP 辅助出口 |
 
 对应独立脚本也可以单独运行：
@@ -80,6 +81,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 
 # AnyTLS
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh)
+
+# VLESS + REALITY + Vision
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh)
 
 # EUserv IPv6-only HY2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
@@ -107,17 +111,17 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 ## 📱 客户端兼容性
 
-| 客户端 / 平台 | Hysteria 2 | Shadowsocks | AnyTLS |
-| --- | :---: | :---: | :---: |
-| Shadowrocket | ✅ | ✅ | ✅ |
-| Loon | ✅ | ✅ | ✅ |
-| Surfboard | ✅ | ✅ | ✅ |
-| Mihomo / Clash Meta | ✅ | ✅ | ✅ |
-| Stash | ✅ | ✅ | 视客户端支持 |
-| Quantumult X | 暂不推荐 | ✅ | 暂不推荐 |
-| v2rayN / NekoBox | ✅ | ✅ | 视客户端支持 |
+| 客户端 / 平台 | Hysteria 2 | Shadowsocks | AnyTLS | VLESS REALITY |
+| --- | :---: | :---: | :---: | :---: |
+| Shadowrocket | ✅ | ✅ | ✅ | ✅ URI |
+| Loon | ✅ | ✅ | ✅ | ✅ |
+| Surfboard | ✅ | ✅ | ✅ | 暂无已确认格式 |
+| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ |
+| Stash | ✅ | ✅ | 视客户端支持 | 视客户端版本 |
+| Quantumult X | 暂不推荐 | ✅ | 暂不推荐 | ✅ |
+| v2rayN / NekoBox | ✅ | ✅ | 视客户端支持 | ✅ URI |
 
-当前版本保留更常用、导入更稳定的输出格式：URI、Mihomo / Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码。Throne 与 Sing-box / SFA 客户端 JSON 导出已暂时移除；AnyTLS 服务端仍使用 sing-box 原生 AnyTLS inbound。
+当前版本保留更常用、导入更稳定的输出格式：URI、Mihomo / Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码。具体格式取决于协议与客户端；VLESS REALITY 的 Surfboard 入口会明确提示改用 URI 或 Mihomo。Throne 与 Sing-box / SFA 客户端 JSON 导出已暂时移除；AnyTLS 与 VLESS 服务端仍使用 sing-box 原生入站。
 
 ---
 
@@ -164,6 +168,8 @@ date
 3. NAT VPS 的外网端口是否映射到脚本配置端口。
 4. Hysteria 2 是否放行 UDP 端口。
 5. SS-2022 客户端和服务端时间是否准确。
+6. VLESS 客户端是否完整填写 UUID、SNI、REALITY 公钥、short ID 与 `xtls-rprx-vision`。
+7. VLESS 配置的 REALITY 目标域名和端口是否能从 VPS 正常访问。
 
 ### 本地修改为什么没生效
 
@@ -172,6 +178,7 @@ date
 ```bash
 bash install.sh
 bash hy2.sh
+bash vless.sh
 ```
 
 ---
@@ -185,6 +192,8 @@ bash hy2.sh
 ![首页总览](docs/assets/screenshots/01-main-menu.png)
 
 ### AnyTLS 安装与节点导出
+
+AnyTLS 安装时可选择三种证书模式：默认自签证书、已有域名证书文件，或 sing-box 1.14+ ACME Certificate Provider。已有证书模式会校验证书有效期、域名 SAN、证书与私钥是否匹配，并要求私钥由 root 所有且禁止 group/other 权限；ACME 模式使用新的 `certificate_provider` 格式，不生成已弃用的 `tls.acme`。自签模式的客户端输出保留兼容性跳过验证，域名证书和 ACME 模式使用系统信任链严格校验。ACME 安装会按所有权记录放行 TCP 80/443，但云安全组、域名解析和 NAT 转发仍需管理员配置。
 
 ![AnyTLS 安装与节点导出](docs/assets/screenshots/02-anytls-install-export.png)
 
@@ -210,9 +219,11 @@ bash hy2.sh
 | `hy2.sh` | Hysteria 2 安装、管理、升级、卸载与导出 |
 | `ss.sh` | Shadowsocks-Rust 安装、管理、升级、卸载与导出 |
 | `anytls.sh` | AnyTLS / sing-box 原生入站安装与管理 |
+| `vless.sh` | VLESS + REALITY + XTLS Vision / sing-box 原生入站安装与管理 |
 | `euservhy2.sh` | EUserv IPv6-only 专用 Hysteria 2 脚本 |
 | `tests/validate_scripts.sh` | 静态验证、版本、换行、菜单和兼容性检查 |
 | `tests/validate_anytls.sh` | AnyTLS 行为验证 |
+| `tests/validate_vless.sh` | VLESS、REALITY 配置与共享核心行为验证 |
 | `docs/` | 架构、测试、发布和维护说明 |
 | `CHANGELOG.md` | 版本变更记录 |
 

@@ -1,8 +1,10 @@
 # 测试与验收指南
 
-## AnyTLS 自动化验证
+## sing-box 协议自动化验证
 
 `bash tests/validate_scripts.sh` 会执行 `tests/validate_anytls.sh`。该测试会 source `anytls.sh`，验证输入校验、sing-box 下载 URL、架构映射、IPv6 URI、JSON/元数据往返、wrapper、systemd 单元和 ELF 魔数。
+
+同一入口还会执行 `tests/validate_vless.sh`。该测试会 source `vless.sh`，验证 UUID、REALITY 密钥与 short ID 校验、IPv6 URI、Mihomo/Loon/Quantumult X 输出、JSON/元数据往返、wrapper、systemd/OpenRC 单元、共享核心配置预检和卸载所有权。
 
 静态验证会阻止 Throne 与 Sing-box/SFA 客户端导出回归。修改节点输出时，应优先保证 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码格式不受影响。
 
@@ -31,11 +33,15 @@ bash tests/validate_scripts.sh
 - 自动更新创建、手动执行、日志和移除
 - 防火墙规则写入及重复执行
 - 卸载后的文件、服务和 cron 清理
-- `/etc/sing-box` 存在其他配置时，卸载 AnyTLS 不得删除共享文件和核心
+- `/etc/sing-box` 存在其他配置时，卸载 AnyTLS 或 VLESS 不得删除共享文件和核心
+- AnyTLS/VLESS 任一入口升级 sing-box 前，必须用候选二进制校验所有 `/etc/sing-box/*.json`
+- AnyTLS 三种证书模式均需验证：自签输出兼容参数；已有证书校验 SAN、有效期、root 私钥权限和密钥配对；ACME 仅在 sing-box >= 1.14.0 使用 `certificate_provider`，并验证 TCP 80/443 防火墙所有权、回滚和卸载清理
+- 核心替换后必须重启替换前正在运行的 AnyTLS/VLESS；任一服务恢复失败时回滚核心和原服务状态
+- 最后一个项目管理的 sing-box 协议卸载时，只有存在 `.singbox-tools-managed` 或协议元数据确认所有权后才可删除核心
 
 ### 3. 用户侧连接验证
 
-服务器监听正常不等于客户端可连接。至少使用一个真实客户端验证分享链接、IPv4/IPv6 地址、端口、密码、SNI 和证书跳过选项。
+服务器监听正常不等于客户端可连接。至少使用一个真实客户端验证分享链接、IPv4/IPv6 地址、端口及认证参数。VLESS 还需核对 UUID、SNI、REALITY 公钥、short ID 与 `xtls-rprx-vision`，并确认 VPS 可访问 REALITY 握手目标。
 
 ## 推荐测试矩阵
 
@@ -75,6 +81,15 @@ bash tests/validate_scripts.sh
 - 双栈节点能正确选择 IPv4/IPv6。
 - TCP/UDP 监听和连接测试结果合理。
 - 配置与自动更新失败可回滚。
+
+### `vless.sh`
+
+- 全新安装生成有效 UUID、REALITY X25519 密钥对和 16 位十六进制 short ID，节点输出不得包含服务端私钥。
+- sing-box JSON 使用原生 `vless` 入站、TCP、REALITY 和 `xtls-rprx-vision`，并通过 `sing-box check`。
+- URI、Mihomo、Shadowrocket、Loon 与 Quantumult X 输出包含一致的公钥、short ID、SNI 和 flow；Surfboard 输出明确兼容性提示。
+- NAT、IPv4、IPv6 与双栈节点地址和端口正确；REALITY 目标域名及端口可达。
+- 配置修改、重装、升级或服务启动失败时恢复旧配置、核心和服务状态。
+- 与 AnyTLS 共存时，升级会预检双方 JSON；不同卸载顺序都不会误删共享配置或遗留项目独占核心。
 
 ### `euservhy2.sh`
 
