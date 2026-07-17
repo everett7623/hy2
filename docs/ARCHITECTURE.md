@@ -81,6 +81,8 @@ LISTEN_PORT=""
 | 防火墙范围 | 端口跳跃场景用 `open_firewall_range()` 而非单端口 |
 | mktemp -d | 下载解压用临时目录而非临时文件，避免空文件回退 |
 | IPv6 过滤 | EUserv 场景需 `_get_real_ipv6()` 排除 WARP/tunnel 网卡 |
+| 安装端口 | 常规协议生成 `10000-65535` 随机默认值，并尽量避开本机已监听端口；用户输入仍优先 |
+| REALITY 目标 | VLESS 默认候选不使用 `.cn`、GitHub 或 Bing，并从当前 VPS 验证 HTTPS/TLS 可达性 |
 
 ## 执行与发布模型
 
@@ -102,6 +104,7 @@ LISTEN_PORT=""
 - 六个脚本的项目版本目前保持一致，但版本文本分散在文件头、菜单和变量中，发布时必须人工同步。
 - `anytls.sh` 使用 sing-box >= 1.12.0 原生 AnyTLS 入站；证书支持自签、已有文件和 sing-box >= 1.14.0 ACME Certificate Provider。ACME 仅在满足核心版本时开放，已有证书保留原始路径且不复制私钥。
 - `vless.sh` 使用 sing-box >= 1.12.0 原生 VLESS 入站，默认组合为 TCP + REALITY + `xtls-rprx-vision`；Shell 生成 UUID、REALITY 密钥、short ID、JSON 及 `vless-server` wrapper。
+- VLESS 安装会在当前 VPS 上筛选可达的 REALITY 握手目标；诊断中的 Cloudflare 小文件下载只反映 VPS 直连出口，不等价于客户端经 VLESS 的端到端测速。
 - VLESS 与 AnyTLS 共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
 
 ## 本地验证清单

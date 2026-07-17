@@ -240,6 +240,38 @@ validate_port() {
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
 
+port_is_listening() {
+    local _port="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -lntu 2>/dev/null | awk -v port="$_port" '
+            NR > 1 { for (i=4; i<=NF; i++) if ($i ~ (":" port "$")) found=1 }
+            END { exit(found ? 0 : 1) }
+        '
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -lntu 2>/dev/null | awk -v port="$_port" '
+            NR > 1 { for (i=4; i<=NF; i++) if ($i ~ (":" port "$")) found=1 }
+            END { exit(found ? 0 : 1) }
+        '
+    else
+        return 1
+    fi
+}
+
+generate_random_port() {
+    local _attempt=0 _number _port
+    while [ "$_attempt" -lt 32 ]; do
+        _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
+        [ -n "$_number" ] || _number=$(($(date +%s) + $$ + _attempt))
+        _port=$((10000 + (_number % 55536)))
+        if ! port_is_listening "$_port"; then
+            printf '%s' "$_port"
+            return 0
+        fi
+        _attempt=$((_attempt + 1))
+    done
+    return 1
+}
+
 validate_password() {
     local pw="$1"
     local len="${#pw}"
@@ -286,14 +318,14 @@ random_sni() {
     _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
     [ -z "$_number" ] && _number=$(date +%s)
     case $((_number % 8)) in
-        0) echo "www.cloudflare.com" ;;
-        1) echo "www.microsoft.com" ;;
-        2) echo "www.apple.com" ;;
-        3) echo "www.amazon.com" ;;
-        4) echo "www.amd.com" ;;
-        5) echo "www.bing.com" ;;
-        6) echo "www.mozilla.org" ;;
-        *) echo "www.github.com" ;;
+        0) echo "www.microsoft.com" ;;
+        1) echo "www.apple.com" ;;
+        2) echo "www.amazon.com" ;;
+        3) echo "www.amd.com" ;;
+        4) echo "www.mozilla.org" ;;
+        5) echo "www.nvidia.com" ;;
+        6) echo "www.samsung.com" ;;
+        *) echo "www.cloudflare.com" ;;
     esac
 }
 
@@ -1573,19 +1605,21 @@ service_logs() {
 # 安装 / 修改
 # ============================================================
 configure_anytls() {
+    local _default_port
+    _default_port=$(generate_random_port) || { echo -e "${RED}无法生成可用随机端口${PLAIN}"; return 1; }
     echo -e "\n${SKYBLUE}--- 配置 AnyTLS 协议 ---${PLAIN}"
 
     if [ "$NAT_MODE" = "1" ]; then
-        read -r -p "请输入本机监听端口 [默认 38888]: " LISTEN_PORT
-        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="38888"
+        read -r -p "请输入本机监听端口 [随机默认 ${_default_port}]: " LISTEN_PORT
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="$_default_port"
         validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         read -r -p "请输入对外转发端口 [留空=与监听端口相同]: " EXT_PORT
         [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
         validate_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         echo -e "${YELLOW}提示：请确保宿主机已将 TCP ${EXT_PORT} 转发到本机 TCP ${LISTEN_PORT}${PLAIN}"
     else
-        read -r -p "请输入端口 [默认 38888]: " LISTEN_PORT
-        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="38888"
+        read -r -p "请输入端口 [随机默认 ${_default_port}]: " LISTEN_PORT
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="$_default_port"
         validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数（输入值: '${LISTEN_PORT}'）${PLAIN}"; return 1; }
         EXT_PORT="$LISTEN_PORT"
         echo -e "${GREEN}端口: ${LISTEN_PORT}${PLAIN}"

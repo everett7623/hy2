@@ -22,6 +22,8 @@ bash tests/validate_scripts.sh
 
 该脚本检查 Bash 语法、项目版本、LF 换行、兼容性禁用语法、自动更新脚本生成内容，以及客户端输出格式边界。
 
+安装默认端口测试应确认随机值位于 `10000-65535`、不占用当前监听端口，且用户显式输入仍会覆盖随机值。
+
 ### 2. 一次性 VPS 验证
 
 以下行为会修改系统服务、防火墙、cron、sysctl 和 `/etc`，必须在可销毁 VPS 上测试：
@@ -88,6 +90,9 @@ bash tests/validate_scripts.sh
 - sing-box JSON 使用原生 `vless` 入站、TCP、REALITY 和 `xtls-rprx-vision`，并通过 `sing-box check`。
 - URI、Mihomo、Shadowrocket、Loon 与 Quantumult X 输出包含一致的公钥、short ID、SNI 和 flow；Surfboard 输出明确兼容性提示。
 - NAT、IPv4、IPv6 与双栈节点地址和端口正确；REALITY 目标域名及端口可达。
+- 默认 REALITY 候选不使用 `.cn`、GitHub 或 Bing；安装探测和运行诊断应从 VPS 实际执行，目标不可达时明确告警。
+- 运行诊断分别报告 REALITY 目标可达性与 VPS 直连下载结果，不把 Speedtest 单站失败直接判定为 VLESS 故障。
+- `vless.sh diagnose` 与服务管理菜单中的诊断入口应产生相同检查结果，且不修改配置、服务或防火墙。
 - 配置修改、重装、升级或服务启动失败时恢复旧配置、核心和服务状态。
 - 与 AnyTLS 共存时，升级会预检双方 JSON；不同卸载顺序都不会误删共享配置或遗留项目独占核心。
 

@@ -62,17 +62,20 @@ bash <(curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.co
 
 ## 🧭 协议怎么选
 
-| 协议 | 推荐场景 | 默认端口 | 备注 |
+| 协议 | 推荐场景 | 安装默认端口 | 备注 |
 | --- | --- | --- | --- |
-| Hysteria 2 | 主力节点，大多数 IPv4 / 双栈 VPS | `18888` | UDP，高速；自签证书 + SNI 伪装，无需域名 |
-| Shadowsocks | 备用节点，IPv6 / 双栈环境 | `28888` | 支持经典 AEAD 与 SS-2022；纯 IPv4 环境风险较高 |
-| AnyTLS | 需要 TCP / TLS 传输的轻量节点 | `38888` | 原生 AnyTLS；支持自签、已有域名证书与 sing-box 1.14+ ACME |
-| VLESS | 需要 TCP、REALITY 与 XTLS Vision 的节点 | `48888` | sing-box 原生 VLESS inbound；自动生成 UUID、REALITY 密钥与 short ID |
+| VLESS | 需要 TCP、REALITY 与 XTLS Vision 的节点 | 随机 `10000-65535/TCP` | 自动筛选 VPS 可达的 REALITY 目标，生成 UUID、密钥与 short ID |
+| AnyTLS | 需要 TCP / TLS 传输的轻量节点 | 随机 `10000-65535/TCP` | 原生 AnyTLS；支持自签、已有域名证书与 sing-box 1.14+ ACME |
+| Hysteria 2 | 主力节点，大多数 IPv4 / 双栈 VPS | 随机 `10000-65535/UDP` | UDP，高速；自签证书 + SNI 伪装，无需域名 |
+| Shadowsocks | 备用节点，IPv6 / 双栈环境 | 随机 `10000-65535/TCP+UDP` | 支持经典 AEAD 与 SS-2022；纯 IPv4 环境风险较高 |
 | EUserv HY2 | EUserv 免费 IPv6-only VPS | 自定义 | 专门处理 IPv6-only、NAT64、WARP 辅助出口 |
 
 对应独立脚本也可以单独运行：
 
 ```bash
+# VLESS + REALITY + Vision
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh)
+
 # Hysteria 2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
 
@@ -81,9 +84,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 
 # AnyTLS
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh)
-
-# VLESS + REALITY + Vision
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh)
 
 # EUserv IPv6-only HY2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
@@ -170,6 +170,21 @@ date
 5. SS-2022 客户端和服务端时间是否准确。
 6. VLESS 客户端是否完整填写 UUID、SNI、REALITY 公钥、short ID 与 `xtls-rprx-vision`。
 7. VLESS 配置的 REALITY 目标域名和端口是否能从 VPS 正常访问。
+
+### VLESS 能连接但很慢，或 Speedtest 无法打开
+
+VLESS 的 REALITY 目标由 VPS 主动连接，只参与握手伪装，不承载后续测速流量。安装时脚本会从非中国大陆候选域名中选择当前 VPS 实际可达的目标；VLESS 工具箱中的运行诊断还会检查目标 HTTPS/TLS、VPS 直连下载速率和 TCP 拥塞控制。
+
+可直接运行诊断，也可以从 VLESS 服务管理菜单选择“运行状态与速度诊断”：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh) diagnose
+```
+
+- REALITY 目标失败：进入 VLESS 配置修改，换用诊断可达的目标。
+- VPS 直连下载也慢：优先排查 VPS 出口带宽、负载、线路质量和服务商限速。
+- VPS 直连正常但客户端慢：继续检查客户端分流、MTU、运营商路由和云安全组。
+- 只有 Speedtest 失败：测速站可能限制数据中心 IP 或代理流量，应同时用普通 HTTPS 下载和其他测速站交叉验证。
 
 ### 本地修改为什么没生效
 

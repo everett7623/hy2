@@ -6,6 +6,10 @@
 
 ## Unreleased
 
+- Generate random unused high-port defaults for VLESS, AnyTLS, Hysteria 2, and Shadowsocks while preserving explicit user and NAT mapping choices.
+- Put VLESS first in protocol selection, service management, core upgrade, and uninstall menus.
+- Select VLESS REALITY targets from globally reachable non-China candidates after probing HTTPS/TLS from the VPS, and remove GitHub/Bing from random SNI defaults.
+- Extend VLESS diagnostics with direct CLI/service-menu access, REALITY target reachability, a bounded VPS direct-download probe, and TCP congestion-control context for slow or blocked Speedtest reports.
 - Add AnyTLS certificate modes for self-signed certificates, validated existing domain certificate files, and the sing-box 1.14+ ACME Certificate Provider; trusted domain certificates now export strict client verification settings.
 - Add standalone VLESS management through sing-box native VLESS inbound with TCP, REALITY, and `xtls-rprx-vision`.
 - Generate and validate VLESS UUIDs, REALITY X25519 key pairs, short IDs, JSON metadata, wrappers, systemd/OpenRC services, firewall ownership, and automatic core updates.

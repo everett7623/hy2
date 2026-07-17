@@ -538,6 +538,38 @@ valid_port() {
     [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 
+port_is_listening() {
+    local _port="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -lntu 2>/dev/null | awk -v port="$_port" '
+            NR > 1 { for (i=4; i<=NF; i++) if ($i ~ (":" port "$")) found=1 }
+            END { exit(found ? 0 : 1) }
+        '
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -lntu 2>/dev/null | awk -v port="$_port" '
+            NR > 1 { for (i=4; i<=NF; i++) if ($i ~ (":" port "$")) found=1 }
+            END { exit(found ? 0 : 1) }
+        '
+    else
+        return 1
+    fi
+}
+
+generate_random_port() {
+    local _attempt=0 _number _port
+    while [ "$_attempt" -lt 32 ]; do
+        _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
+        [ -n "$_number" ] || _number=$(($(date +%s) + $$ + _attempt))
+        _port=$((10000 + (_number % 55536)))
+        if ! port_is_listening "$_port"; then
+            printf '%s' "$_port"
+            return 0
+        fi
+        _attempt=$((_attempt + 1))
+    done
+    return 1
+}
+
 valid_positive_number() {
     echo "$1" | grep -qE '^[0-9]+([.][0-9]+)?$' && [ "$1" != "0" ] && [ "$1" != "0.0" ]
 }
@@ -632,6 +664,8 @@ download_hy2() {
 # ============================================================
 
 configure_nat_port() {
+    local _default_port
+    _default_port=$(generate_random_port) || { echo -e "${RED}无法生成可用随机端口${PLAIN}"; return 1; }
     echo ""
     echo -e "${YELLOW}检测到 NAT 机器，请配置端口信息：${PLAIN}"
     echo -e "${SKYBLUE}说明：${PLAIN}"
@@ -639,8 +673,8 @@ configure_nat_port() {
     echo -e "  • 对外端口：宿主机转发后，客户端实际连接的端口"
     echo -e "  • 若内外端口一致，两者填相同即可"
     echo ""
-    read -r -p "请输入本机监听端口 [默认 18888]: " LISTEN_PORT
-    [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+    read -r -p "请输入本机监听端口 [随机默认 ${_default_port}]: " LISTEN_PORT
+    [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="$_default_port"
     valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
     read -r -p "请输入对外端口（客户端连接端口）[留空=与监听端口相同]: " EXT_PORT
     [[ -z "$EXT_PORT" ]] && EXT_PORT="$LISTEN_PORT"
@@ -649,6 +683,8 @@ configure_nat_port() {
 }
 
 configure_std_port() {
+    local _default_port
+    _default_port=$(generate_random_port) || { echo -e "${RED}无法生成可用随机端口${PLAIN}"; return 1; }
     # 端口跳跃：服务器同时监听一段端口范围，客户端随机选端口连接
     # Hysteria 2 原生支持，可有效绕过端口封锁
     echo ""
@@ -668,14 +704,14 @@ configure_std_port() {
         else
             echo -e "  ${RED}格式错误，将使用默认单端口${PLAIN}"
             PORT_HOP=""
-            read -r -p "请输入监听端口 [默认 18888]: " LISTEN_PORT
-            [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+            read -r -p "请输入监听端口 [随机默认 ${_default_port}]: " LISTEN_PORT
+            [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="$_default_port"
             valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
             EXT_PORT="$LISTEN_PORT"
         fi
     else
-        read -r -p "请输入监听端口 [默认 18888]: " LISTEN_PORT
-        [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="18888"
+        read -r -p "请输入监听端口 [随机默认 ${_default_port}]: " LISTEN_PORT
+        [[ -z "$LISTEN_PORT" ]] && LISTEN_PORT="$_default_port"
         valid_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         EXT_PORT="$LISTEN_PORT"
     fi

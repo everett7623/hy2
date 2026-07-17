@@ -17,6 +17,9 @@ validate_port 65535
 ! validate_port 0
 ! validate_port 65536
 ! validate_port abc
+random_port=$(generate_random_port)
+validate_port "$random_port"
+[ "$random_port" -ge 10000 ]
 validate_uuid "$TEST_UUID"
 ! validate_uuid bad-uuid
 validate_reality_key "$TEST_PRIVATE_KEY"
@@ -33,6 +36,24 @@ validate_server_name www.example.com
 validate_server_address 192.0.2.1
 validate_server_address 2001:db8::1
 ! validate_server_address 'bad"address'
+! reality_target_candidates | grep -qE '(^|\.)(cn)$|github|bing'
+ss() { printf '%s\n' 'Netid State Recv-Q Send-Q Local Address:Port' 'tcp LISTEN 0 128 0.0.0.0:45678'; }
+port_is_listening 45678
+! port_is_listening 45679
+unset -f ss
+curl() {
+    case "$*" in
+        '--help all') printf '%s\n' '--tls-max' ;;
+        *'www.apple.com'*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+reality_target_usable www.apple.com 443
+! reality_target_usable www.microsoft.com 443
+unset -f curl
+reality_target_usable() { [ "$1" = 'www.apple.com' ]; }
+[ "$(select_reality_target 443)" = 'www.apple.com' ]
+unset -f reality_target_usable
 
 [ "$(detect_arch x86_64)" = amd64 ]
 [ "$(detect_arch aarch64)" = arm64 ]
@@ -87,6 +108,8 @@ generate_reality_keypair() {
     REALITY_PUBLIC_KEY="$TEST_PUBLIC_KEY"
 }
 generate_short_id() { printf '%s' "$TEST_SHORT_ID"; }
+generate_random_port() { printf '45678'; }
+select_reality_target() { printf 'www.apple.com'; }
 NAT_MODE=0
 configure_vless >/dev/null <<'EOF'
 
@@ -94,7 +117,12 @@ configure_vless >/dev/null <<'EOF'
 
 
 EOF
-[ "$LISTEN_PORT:$EXT_PORT:$UUID:$SERVER_NAME:$HANDSHAKE_PORT:$SHORT_ID" = "48888:48888:$TEST_UUID:$SERVER_NAME:443:$TEST_SHORT_ID" ]
+[ "$LISTEN_PORT:$EXT_PORT:$UUID:$SERVER_NAME:$HANDSHAKE_PORT:$SHORT_ID" = "45678:45678:$TEST_UUID:www.apple.com:443:$TEST_SHORT_ID" ]
+unset -f generate_random_port select_reality_target
+
+curl() { printf '1250000'; }
+[ "$(probe_vps_download_mbps)" = '10.0' ]
+unset -f curl
 
 LISTEN_PORT=8443
 BIND_FAMILY=v6
@@ -174,6 +202,30 @@ HANDSHAKE_PORT=""
 MANAGED_SING_BOX=0
 read_config
 [ "$LISTEN_PORT:$EXT_PORT:$UUID:$SHORT_ID:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$HANDSHAKE_PORT:$MANAGED_SING_BOX" = "8443:9443:$TEST_UUID:$TEST_SHORT_ID:1:v6::::www.example.com:443:1" ]
+
+# 诊断必须分别报告服务、REALITY 目标和 VPS 直连下载结果。
+(
+read_config() { return 0; }
+check_config() { return 0; }
+service_is_active() { return 0; }
+ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.0.0:8443'; }
+reality_target_usable() { return 0; }
+probe_vps_download_mbps() { printf '123.4'; }
+sysctl() { printf 'bbr'; }
+diagnose_output=$(diagnose_vless)
+grep -q 'sing-box 配置有效' <<EOF
+$diagnose_output
+EOF
+grep -q 'REALITY 目标 www.example.com:443 HTTPS/TLS 可达' <<EOF
+$diagnose_output
+EOF
+grep -q 'VPS 直连下载探测: 123.4 Mbps' <<EOF
+$diagnose_output
+EOF
+grep -q 'TCP 拥塞控制: bbr' <<EOF
+$diagnose_output
+EOF
+)
 
 # 最新版不重复替换；候选核心导致配置校验失败时必须恢复旧二进制。
 get_latest_version() { LAST_VERSION_TAG=v1.13.14; }

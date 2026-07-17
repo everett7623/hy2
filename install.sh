@@ -411,20 +411,20 @@ select_protocol_and_run() {
         show_header
         echo -e "${WHITE}${BOLD}${_title}${PLAIN}"
         echo ""
-        echo -e "  [1] AnyTLS"
-        echo -e "  [2] Hysteria2"
-        echo -e "  [3] Shadowsocks"
-        echo -e "  [4] EUserv IPv6-only HY2"
-        echo -e "  [5] VLESS + REALITY + Vision"
+        echo -e "  [1] VLESS + REALITY + Vision"
+        echo -e "  [2] AnyTLS"
+        echo -e "  [3] Hysteria2"
+        echo -e "  [4] Shadowsocks"
+        echo -e "  [5] EUserv IPv6-only HY2"
         echo -e "  [0] 返回"
         echo ""
         read -r -p "  请选择协议 [0-5]: " p
         case "$p" in
-            1) run_script "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
-            2) run_script "Hysteria2" "$HY2_URL" "$_action"; return ;;
-            3) run_script "Shadowsocks" "$SS_URL" "$_action"; return ;;
-            4) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
-            5) run_script "VLESS" "$VLESS_URL" "$_action"; return ;;
+            1) run_script "VLESS" "$VLESS_URL" "$_action"; return ;;
+            2) run_script "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
+            3) run_script "Hysteria2" "$HY2_URL" "$_action"; return ;;
+            4) run_script "Shadowsocks" "$SS_URL" "$_action"; return ;;
+            5) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -541,11 +541,11 @@ service_management_menu() {
         show_header
         echo -e "${WHITE}${BOLD}服务管理${PLAIN}"
         echo ""
-        echo -e "  [1] AnyTLS 服务管理"
-        echo -e "  [2] Hysteria2 服务管理"
-        echo -e "  [3] Shadowsocks 服务管理"
-        echo -e "  [4] EUserv HY2 服务管理"
-        echo -e "  [5] VLESS 服务管理"
+        echo -e "  [1] VLESS 服务管理"
+        echo -e "  [2] AnyTLS 服务管理"
+        echo -e "  [3] Hysteria2 服务管理"
+        echo -e "  [4] Shadowsocks 服务管理"
+        echo -e "  [5] EUserv HY2 服务管理"
         echo -e "  [6] 查看所有服务状态"
         echo -e "  [7] 查看监听端口"
         echo -e "  [8] 查看最近日志"
@@ -553,11 +553,11 @@ service_management_menu() {
         echo ""
         read -r -p "  请选择 [0-8]: " opt
         case "$opt" in
-            1) protocol_service_menu "AnyTLS" "anytls-server" "/var/run/anytls-server.pid" "/var/log/anytls-server.log" "AnyTLS" "$ANYTLS_URL" ;;
-            2) protocol_service_menu "Hysteria2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "Hysteria2" "$HY2_URL" ;;
-            3) protocol_service_menu "Shadowsocks" "shadowsocks-server" "/var/run/ssserver.pid" "/var/log/ssserver.log" "Shadowsocks" "$SS_URL" ;;
-            4) protocol_service_menu "EUserv HY2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "EUserv IPv6 HY2" "$EUSERV_URL" ;;
-            5) protocol_service_menu "VLESS" "vless-server" "/var/run/vless-server.pid" "/var/log/vless-server.log" "VLESS" "$VLESS_URL" ;;
+            1) protocol_service_menu "VLESS" "vless-server" "/var/run/vless-server.pid" "/var/log/vless-server.log" "VLESS" "$VLESS_URL" ;;
+            2) protocol_service_menu "AnyTLS" "anytls-server" "/var/run/anytls-server.pid" "/var/log/anytls-server.log" "AnyTLS" "$ANYTLS_URL" ;;
+            3) protocol_service_menu "Hysteria2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "Hysteria2" "$HY2_URL" ;;
+            4) protocol_service_menu "Shadowsocks" "shadowsocks-server" "/var/run/ssserver.pid" "/var/log/ssserver.log" "Shadowsocks" "$SS_URL" ;;
+            5) protocol_service_menu "EUserv HY2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "EUserv IPv6 HY2" "$EUSERV_URL" ;;
             6) show_all_services; pause_return ;;
             7) list_listening_ports; pause_return ;;
             8)
@@ -896,10 +896,10 @@ update_menu() {
         echo -e "${DIM}脚本缓存 = 刷新菜单脚本；核心升级 = 更新已安装服务二进制。${PLAIN}"
         echo ""
         echo -e "  [1] 刷新 install.sh 主入口缓存"
-        echo -e "  [2] 升级 AnyTLS 核心"
-        echo -e "  [3] 升级 Hysteria2 核心"
-        echo -e "  [4] 升级 Shadowsocks-Rust 核心"
-        echo -e "  [5] 升级 VLESS 核心"
+        echo -e "  [2] 升级 VLESS 核心"
+        echo -e "  [3] 升级 AnyTLS 核心"
+        echo -e "  [4] 升级 Hysteria2 核心"
+        echo -e "  [5] 升级 Shadowsocks-Rust 核心"
         echo -e "  [6] 刷新全部脚本缓存"
         echo -e "  [7] 升级全部核心（VLESS/AnyTLS/HY2/SS）"
         echo -e "  [0] 返回"
@@ -915,10 +915,10 @@ update_menu() {
                 fi
                 pause_return
                 ;;
-            2) run_upgrade_action "AnyTLS" "$ANYTLS_URL" ;;
-            3) run_upgrade_action "Hysteria2" "$HY2_URL" ;;
-            4) run_upgrade_action "Shadowsocks" "$SS_URL" ;;
-            5) run_upgrade_action "VLESS" "$VLESS_URL" ;;
+            2) run_upgrade_action "VLESS" "$VLESS_URL" ;;
+            3) run_upgrade_action "AnyTLS" "$ANYTLS_URL" ;;
+            4) run_upgrade_action "Hysteria2" "$HY2_URL" ;;
+            5) run_upgrade_action "Shadowsocks" "$SS_URL" ;;
             6)
                 local _ok=1
                 download_script_to_cache install.sh "$INSTALL_URL" || { echo -e "${RED}[ERROR] install.sh 缓存刷新失败${PLAIN}"; _ok=0; }
@@ -943,11 +943,11 @@ uninstall_menu() {
         echo -e "${WHITE}${BOLD}卸载 / 清理中心${PLAIN}"
         echo -e "${DIM}单协议卸载会先确认；如需 VPS 配置备份，请先到“备份 / 恢复”手动创建。${PLAIN}"
         echo ""
-        echo -e "  [1] 卸载 AnyTLS"
-        echo -e "  [2] 卸载 Hysteria2"
-        echo -e "  [3] 卸载 Shadowsocks"
-        echo -e "  [4] 卸载 EUserv HY2"
-        echo -e "  [5] 卸载 VLESS"
+        echo -e "  [1] 卸载 VLESS"
+        echo -e "  [2] 卸载 AnyTLS"
+        echo -e "  [3] 卸载 Hysteria2"
+        echo -e "  [4] 卸载 Shadowsocks"
+        echo -e "  [5] 卸载 EUserv HY2"
         echo -e "  [6] 卸载全部协议"
         echo -e "  [7] 删除所有配置"
         echo -e "  [8] 删除所有备份"
@@ -955,11 +955,11 @@ uninstall_menu() {
         echo ""
         read -r -p "  请选择 [0-8]: " opt
         case "$opt" in
-            1) run_uninstall_action "AnyTLS" "$ANYTLS_URL" ;;
-            2) run_uninstall_action "Hysteria2" "$HY2_URL" ;;
-            3) run_uninstall_action "Shadowsocks" "$SS_URL" ;;
-            4) run_uninstall_action "EUserv IPv6 HY2" "$EUSERV_URL" ;;
-            5) run_uninstall_action "VLESS" "$VLESS_URL" ;;
+            1) run_uninstall_action "VLESS" "$VLESS_URL" ;;
+            2) run_uninstall_action "AnyTLS" "$ANYTLS_URL" ;;
+            3) run_uninstall_action "Hysteria2" "$HY2_URL" ;;
+            4) run_uninstall_action "Shadowsocks" "$SS_URL" ;;
+            5) run_uninstall_action "EUserv IPv6 HY2" "$EUSERV_URL" ;;
             6) uninstall_all_protocols ;;
             7)
                 echo -e "${RED}这会删除 /etc/sing-box、/etc/hysteria、/etc/shadowsocks-rust 和相关服务文件。${PLAIN}"

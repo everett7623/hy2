@@ -237,6 +237,38 @@ validate_port() {
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
 
+port_is_listening() {
+    local _port="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -lntu 2>/dev/null | awk -v port="$_port" '
+            NR > 1 { for (i=4; i<=NF; i++) if ($i ~ (":" port "$")) found=1 }
+            END { exit(found ? 0 : 1) }
+        '
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -lntu 2>/dev/null | awk -v port="$_port" '
+            NR > 1 { for (i=4; i<=NF; i++) if ($i ~ (":" port "$")) found=1 }
+            END { exit(found ? 0 : 1) }
+        '
+    else
+        return 1
+    fi
+}
+
+generate_random_port() {
+    local _attempt=0 _number _port
+    while [ "$_attempt" -lt 32 ]; do
+        _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
+        [ -n "$_number" ] || _number=$(($(date +%s) + $$ + _attempt))
+        _port=$((10000 + (_number % 55536)))
+        if ! port_is_listening "$_port"; then
+            printf '%s' "$_port"
+            return 0
+        fi
+        _attempt=$((_attempt + 1))
+    done
+    return 1
+}
+
 validate_uuid() {
     printf '%s\n' "$1" | grep -qE '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
 }
@@ -276,20 +308,87 @@ validate_server_address() {
     return 0
 }
 
+reality_target_candidates() {
+    printf '%s\n' \
+        "www.microsoft.com" \
+        "www.apple.com" \
+        "www.amazon.com" \
+        "www.amd.com" \
+        "www.mozilla.org" \
+        "www.nvidia.com" \
+        "www.samsung.com" \
+        "www.cloudflare.com"
+}
+
 random_sni() {
     local _number
     _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
     [ -z "$_number" ] && _number=$(date +%s)
     case $((_number % 8)) in
-        0) echo "www.cloudflare.com" ;;
-        1) echo "www.microsoft.com" ;;
-        2) echo "www.apple.com" ;;
-        3) echo "www.amazon.com" ;;
-        4) echo "www.amd.com" ;;
-        5) echo "www.bing.com" ;;
-        6) echo "www.mozilla.org" ;;
-        *) echo "www.github.com" ;;
+        0) echo "www.microsoft.com" ;;
+        1) echo "www.apple.com" ;;
+        2) echo "www.amazon.com" ;;
+        3) echo "www.amd.com" ;;
+        4) echo "www.mozilla.org" ;;
+        5) echo "www.nvidia.com" ;;
+        6) echo "www.samsung.com" ;;
+        *) echo "www.cloudflare.com" ;;
     esac
+}
+
+reality_target_usable() {
+    local _host="$1" _port="${2:-443}" _url
+    validate_server_name "$_host" && validate_port "$_port" || return 1
+    command -v curl >/dev/null 2>&1 || return 1
+    _url="https://${_host}:${_port}/"
+    if curl --help all 2>/dev/null | grep -q -- '--tls-max'; then
+        curl --noproxy '*' -sSI --connect-timeout 4 --max-time 7 \
+            --tlsv1.3 --tls-max 1.3 "$_url" >/dev/null 2>&1
+    else
+        curl --noproxy '*' -sSI --connect-timeout 4 --max-time 7 \
+            "$_url" >/dev/null 2>&1
+    fi
+}
+
+select_reality_target() {
+    local _port="${1:-443}" _preferred _candidate _selected _tmp
+    local _index=0 _checked=0
+    _preferred=$(random_sni)
+    _tmp=$(mktemp -d 2>/dev/null) || return 1
+    for _candidate in "$_preferred" $(reality_target_candidates); do
+        [ "$_index" -gt 0 ] && [ "$_candidate" = "$_preferred" ] && continue
+        (
+            reality_target_usable "$_candidate" "$_port" \
+                && printf '%s' "$_candidate" > "$_tmp/result-${_index}"
+        ) &
+        _index=$((_index + 1))
+    done
+    wait || true
+    while [ "$_checked" -lt "$_index" ]; do
+        if [ -s "$_tmp/result-${_checked}" ]; then
+            IFS= read -r _selected < "$_tmp/result-${_checked}"
+            rm -f "$_tmp"/result-* 2>/dev/null
+            rmdir "$_tmp" 2>/dev/null || true
+            printf '%s' "$_selected"
+            return 0
+        fi
+        _checked=$((_checked + 1))
+    done
+    rm -f "$_tmp"/result-* 2>/dev/null
+    rmdir "$_tmp" 2>/dev/null || true
+    return 1
+}
+
+probe_vps_download_mbps() {
+    local _speed
+    command -v curl >/dev/null 2>&1 || return 1
+    _speed=$(curl --noproxy '*' -fsSL --connect-timeout 5 --max-time 15 \
+        -o /dev/null -w '%{speed_download}' \
+        'https://speed.cloudflare.com/__down?bytes=5000000') || return 1
+    case "$_speed" in
+        ''|*[!0-9.]*|*.*.*) return 1 ;;
+    esac
+    awk -v speed="$_speed" 'BEGIN { printf "%.1f", speed * 8 / 1000000 }'
 }
 
 generate_uuid() {
@@ -1403,19 +1502,21 @@ service_logs() {
 # 安装 / 修改
 # ============================================================
 configure_vless() {
+    local _default_port _default_sni _target_verified=0
+    _default_port=$(generate_random_port) || { echo -e "${RED}无法生成可用随机端口${PLAIN}"; return 1; }
     echo -e "\n${SKYBLUE}--- 配置 VLESS + REALITY + Vision 协议 ---${PLAIN}"
 
     if [ "$NAT_MODE" = "1" ]; then
-        read -r -p "请输入本机监听端口 [默认 48888]: " LISTEN_PORT
-        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="48888"
+        read -r -p "请输入本机监听端口 [随机默认 ${_default_port}]: " LISTEN_PORT
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="$_default_port"
         validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         read -r -p "请输入对外转发端口 [留空=与监听端口相同]: " EXT_PORT
         [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
         validate_port "$EXT_PORT" || { echo -e "${RED}对外端口必须为 1-65535 的整数${PLAIN}"; return 1; }
         echo -e "${YELLOW}提示：请确保宿主机已将 TCP ${EXT_PORT} 转发到本机 TCP ${LISTEN_PORT}${PLAIN}"
     else
-        read -r -p "请输入端口 [默认 48888]: " LISTEN_PORT
-        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="48888"
+        read -r -p "请输入端口 [随机默认 ${_default_port}]: " LISTEN_PORT
+        [ -z "$LISTEN_PORT" ] && LISTEN_PORT="$_default_port"
         validate_port "$LISTEN_PORT" || { echo -e "${RED}端口必须为 1-65535 的整数（输入值: '${LISTEN_PORT}'）${PLAIN}"; return 1; }
         EXT_PORT="$LISTEN_PORT"
         echo -e "${GREEN}端口: ${LISTEN_PORT}${PLAIN}"
@@ -1428,15 +1529,28 @@ configure_vless() {
     fi
     validate_uuid "$UUID" || { echo -e "${RED}UUID 格式无效${PLAIN}"; return 1; }
 
-    local _default_sni
-    _default_sni=$(random_sni)
-    read -r -p "请输入 REALITY 目标域名/SNI [随机默认 ${_default_sni}]: " SERVER_NAME
-    [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
-    validate_server_name "$SERVER_NAME" || { echo -e "${RED}REALITY 目标域名格式无效${PLAIN}"; return 1; }
-
     read -r -p "请输入 REALITY 目标端口 [默认 443]: " HANDSHAKE_PORT
     [ -z "$HANDSHAKE_PORT" ] && HANDSHAKE_PORT="443"
     validate_port "$HANDSHAKE_PORT" || { echo -e "${RED}REALITY 目标端口无效${PLAIN}"; return 1; }
+
+    echo -e "${YELLOW}正在从当前 VPS 检测可用 REALITY 目标...${PLAIN}"
+    if _default_sni=$(select_reality_target "$HANDSHAKE_PORT"); then
+        _target_verified=1
+        echo -e "${GREEN}✓ 已找到可用目标: ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
+    else
+        _default_sni=$(random_sni)
+        echo -e "${YELLOW}! 未能自动验证候选目标，请确认 VPS 可访问 ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
+    fi
+    read -r -p "请输入 REALITY 目标域名/SNI [默认 ${_default_sni}]: " SERVER_NAME
+    [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
+    validate_server_name "$SERVER_NAME" || { echo -e "${RED}REALITY 目标域名格式无效${PLAIN}"; return 1; }
+    if [ "$SERVER_NAME" != "$_default_sni" ] || [ "$_target_verified" != "1" ]; then
+        if reality_target_usable "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+            echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}"
+        else
+            echo -e "${YELLOW}! 当前 VPS 无法验证该目标，节点可能握手不稳定或无法连接${PLAIN}"
+        fi
+    fi
 
     echo -e "${YELLOW}正在生成 REALITY 密钥对...${PLAIN}"
     generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return 1; }
@@ -1543,6 +1657,12 @@ change_config() {
     if [ -n "$_handshake_port" ]; then
         validate_port "$_handshake_port" || { echo -e "${RED}目标端口无效${PLAIN}"; sleep 2; return; }
         HANDSHAKE_PORT="$_handshake_port"
+    fi
+    if [ -n "${_sni}${_handshake_port}" ]; then
+        echo -e "${YELLOW}正在验证 REALITY 目标...${PLAIN}"
+        reality_target_usable "$SERVER_NAME" "$HANDSHAKE_PORT" \
+            && echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}" \
+            || echo -e "${YELLOW}! 当前 VPS 无法验证该目标，保存后可能影响连接稳定性${PLAIN}"
     fi
 
     read -r -p "重新生成 REALITY 密钥和 short ID？[y/N]: " _regen
@@ -1973,6 +2093,7 @@ remove_auto_update() {
 }
 
 diagnose_vless() {
+    local _speed _cc
     echo -e "\n${GREEN}VLESS 运行诊断${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     if ! read_config; then
@@ -2002,6 +2123,19 @@ diagnose_vless() {
     else
         echo -e "  ${YELLOW}! 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
     fi
+    if reality_target_usable "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+        echo -e "  ${GREEN}✓ REALITY 目标 ${SERVER_NAME}:${HANDSHAKE_PORT} HTTPS/TLS 可达${PLAIN}"
+    else
+        echo -e "  ${RED}✗ REALITY 目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 不可达或 TLS 握手失败${PLAIN}"
+    fi
+    if _speed=$(probe_vps_download_mbps); then
+        echo -e "  ${GREEN}✓ VPS 直连下载探测: ${_speed} Mbps${PLAIN}"
+    else
+        echo -e "  ${YELLOW}! VPS 直连下载探测失败，可能是出口网络或测速站限制${PLAIN}"
+    fi
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
+    [ -n "$_cc" ] && echo -e "  ${DIM}TCP 拥塞控制: ${_cc}${PLAIN}"
+    echo -e "  ${DIM}说明: 直连探测正常但客户端慢时，应继续检查客户端分流、MTU、运营商路由和测速站限制。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -2070,8 +2204,9 @@ manage_vless() {
         echo -e " 3. 重启"
         echo -e " 4. 查看日志"
         echo -e " 5. 修改配置"
+        echo -e " 6. 运行状态与速度诊断"
         echo -e " 0. 返回"
-        read -r -p "请输入选项 [0-5]: " choice
+        read -r -p "请输入选项 [0-6]: " choice
         case "$choice" in
             1)
                 if service_start && sleep 1 && service_is_active; then
@@ -2097,6 +2232,7 @@ manage_vless() {
                 ;;
             4) service_logs; read -r -p "按回车返回..." _tmp ;;
             5) change_config ;;
+            6) diagnose_vless; read -r -p "按回车返回..." _tmp ;;
             0|q|quit|exit) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -2188,12 +2324,13 @@ case "${1:-menu}" in
     quantumult|quantumultx) show_config quantumult ;;
     qrcode|qr) show_config qrcode ;;
     manage|service|config) manage_vless ;;
+    diagnose|check|health) diagnose_vless ;;
     upgrade|update) upgrade_vless ;;
     uninstall|remove) uninstall_vless ;;
     menu|"") main_menu ;;
     *)
         echo -e "${RED}未知命令: ${1}${PLAIN}"
-        echo "可用命令: install | info | manage | upgrade | uninstall"
+        echo "可用命令: install | info | manage | diagnose | upgrade | uninstall"
         exit 1
         ;;
 esac

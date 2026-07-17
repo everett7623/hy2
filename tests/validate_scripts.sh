@@ -203,6 +203,18 @@ grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "upgrade"' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "uninstall"' install.sh
 grep -q 'run_script "VLESS" "$VLESS_URL" "upgrade"' install.sh
 grep -q 'run_script "VLESS" "$VLESS_URL" "uninstall"' install.sh
+grep -q 'echo -e "  \[1\] VLESS + REALITY + Vision"' install.sh
+grep -q '1) run_script "VLESS" "$VLESS_URL" "\$_action"' install.sh
+grep -q 'echo -e "  \[1\] VLESS 服务管理"' install.sh
+grep -q '1) protocol_service_menu "VLESS"' install.sh
+grep -q 'echo -e "  \[2\] 升级 VLESS 核心"' install.sh
+grep -q '2) run_upgrade_action "VLESS" "$VLESS_URL"' install.sh
+grep -q 'echo -e "  \[1\] 卸载 VLESS"' install.sh
+grep -q '1) run_uninstall_action "VLESS" "$VLESS_URL"' install.sh
+for script in hy2.sh ss.sh anytls.sh vless.sh; do
+    grep -q '^generate_random_port()' "$script"
+done
+! grep -qE '默认 (18888|28888|38888|48888)' hy2.sh ss.sh anytls.sh vless.sh
 grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
 grep -q 'vless-server:start) nohup /usr/local/bin/vless-server' install.sh
 grep -q 'vless-server:stop)' install.sh
@@ -226,6 +238,8 @@ grep -q 'qrcode|qr) show_config qrcode' anytls.sh
 grep -q 'install) install_vless' vless.sh
 grep -q 'info|node|export|all) show_config' vless.sh
 grep -q 'qrcode|qr) show_config qrcode' vless.sh
+grep -q 'diagnose|check|health) diagnose_vless' vless.sh
+grep -q '6. 运行状态与速度诊断' vless.sh
 grep -q 'install) do_install' euservhy2.sh
 grep -q 'info|node|export|all) show_banner; show_node_info' euservhy2.sh
 grep -q 'qrcode|qr) show_banner; show_node_info qrcode' euservhy2.sh

@@ -12,6 +12,9 @@ validate_port 65535
 ! validate_port 0
 ! validate_port 65536
 ! validate_port abc
+random_port=$(generate_random_port)
+validate_port "$random_port"
+[ "$random_port" -ge 10000 ]
 
 validate_password Abcdef12._~-
 ! validate_password short
@@ -25,12 +28,19 @@ validate_server_address 2001:db8::1
 ! validate_server_address 'bad"address'
 
 case "$(random_sni)" in
-    www.cloudflare.com|www.microsoft.com|www.apple.com|www.amazon.com|www.amd.com|www.bing.com|www.mozilla.org|www.github.com) ;;
+    www.microsoft.com|www.apple.com|www.amazon.com|www.amd.com|www.mozilla.org|www.nvidia.com|www.samsung.com|www.cloudflare.com) ;;
     *) exit 1 ;;
 esac
 
 NAT_MODE=0
-printf '\n\n\n' | configure_anytls >/dev/null
+generate_random_port() { printf '45679'; }
+configure_anytls >/dev/null <<'EOF'
+
+
+
+EOF
+[ "$LISTEN_PORT:$EXT_PORT" = '45679:45679' ]
+unset -f generate_random_port
 
 [ "$(detect_arch x86_64)" = amd64 ]
 [ "$(detect_arch aarch64)" = arm64 ]

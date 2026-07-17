@@ -61,14 +61,16 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 | IPv4/IPv6 switch | — | ✅ | — | — | — |
 | Connection test | — | ✅ | — | — | — |
 
-## Default ports
+## Installation port defaults
 
-| Protocol | Default port | NAT support |
+| Protocol | Default | NAT support |
 |----------|-------------|-------------|
-| Hysteria 2 | `18888` | Custom external port supported |
-| Shadowsocks | `28888` | Custom external port supported |
-| AnyTLS | `38888` | Uses the configured public port |
-| VLESS REALITY | `48888` | Custom external port supported |
+| VLESS REALITY | Random unused `10000-65535/TCP` | Custom external port supported |
+| AnyTLS | Random unused `10000-65535/TCP` | Uses the configured public port |
+| Hysteria 2 | Random unused `10000-65535/UDP` | Custom external port supported |
+| Shadowsocks | Random unused `10000-65535/TCP+UDP` | Custom external port supported |
+
+The generated value is only the interactive default. Users can still enter an explicit port, and NAT VPS external mappings remain provider-controlled.
 
 ## Version management
 

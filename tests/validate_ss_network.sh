@@ -10,6 +10,9 @@ is_valid_ipv4 203.0.113.10
 is_valid_ipv6 2001:db8::10
 ! is_valid_ipv6 'upstream:error'
 ! is_valid_ipv6 '<html>:error'
+random_port=$(generate_random_port)
+valid_port "$random_port"
+[ "$random_port" -ge 10000 ]
 
 ip() {
     case "$*" in
