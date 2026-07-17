@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.18
+# 版本：v2.0.19
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-07-14
+# 更新日期: 2026-07-17
 #====================================================================================
 
 # ============================================================
@@ -381,7 +381,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.18${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.19${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -726,7 +726,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.18" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.19" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 

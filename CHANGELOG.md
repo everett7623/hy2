@@ -6,6 +6,10 @@
 
 ## Unreleased
 
+---
+
+## v2.0.19 (2026-07-17)
+
 - Generate random unused high-port defaults for VLESS, AnyTLS, Hysteria 2, and Shadowsocks while preserving explicit user and NAT mapping choices.
 - Put VLESS first in protocol selection, service management, core upgrade, and uninstall menus.
 - Select VLESS REALITY targets from globally reachable non-China candidates after probing HTTPS/TLS from the VPS, and remove GitHub/Bing from random SNI defaults.
