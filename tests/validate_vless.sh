@@ -289,6 +289,16 @@ sleep() { :; }
 ! wait_for_health 3
 )
 
+# wait_for_health：第二参数可传自定义判定函数（升级路径给共享 AnyTLS 用）。
+(
+_shared_attempt=0
+shared_anytls_service_is_active() { _shared_attempt=$((_shared_attempt + 1)); [ "$_shared_attempt" -ge 2 ]; }
+service_is_healthy() { return 1; }   # 确认走的是自定义判定而非默认
+sleep() { :; }
+wait_for_health 5 shared_anytls_service_is_active
+[ "$_shared_attempt" = "2" ]
+)
+
 # reality_target_usable_v4 和 _v6 分别透传 -4 / -6 旗标给 curl。
 (
 curl() {

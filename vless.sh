@@ -1511,11 +1511,12 @@ service_is_healthy() {
 }
 
 # 带有界轮询的健康检查：最多等 _attempts 秒，首次立即检查。
-# 避免慢 VPS 冷启动时 2s 硬编码超时触发误回滚（quirk #8）。
+# 避免慢 VPS 冷启动时硬编码 sleep 超时触发误回滚（quirk #8）。
+# 可选第二参数为自定义判定函数名，默认 service_is_healthy。
 wait_for_health() {
-    local _attempts="${1:-12}" _i=0
+    local _attempts="${1:-12}" _check="${2:-service_is_healthy}" _i=0
     while [ "$_i" -lt "$_attempts" ]; do
-        service_is_healthy && return 0
+        "$_check" && return 0
         _i=$((_i + 1))
         [ "$_i" -lt "$_attempts" ] && sleep 1
     done
@@ -1756,8 +1757,7 @@ change_config() {
 
     open_ports "$LISTEN_PORT"
     [ "$_was_active" = "1" ] && service_restart
-    sleep 1
-    if [ "$_was_active" = "1" ] && ! service_is_healthy; then
+    if [ "$_was_active" = "1" ] && ! wait_for_health; then
         [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
         mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
         mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
@@ -2043,11 +2043,8 @@ _upgrade_core_locked() {
     if [ "$_shared_was_active" = "1" ]; then
         shared_anytls_service_restart || _restart_failed=1
     fi
-    if [ "$_was_active" = "1" ] || [ "$_shared_was_active" = "1" ]; then
-        sleep 2
-    fi
-    [ "$_was_active" = "0" ] || service_is_healthy || _restart_failed=1
-    [ "$_shared_was_active" = "0" ] || shared_anytls_service_is_active || _restart_failed=1
+    [ "$_was_active" = "0" ] || wait_for_health || _restart_failed=1
+    [ "$_shared_was_active" = "0" ] || wait_for_health 12 shared_anytls_service_is_active || _restart_failed=1
     if [ "$_restart_failed" = "1" ]; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         [ "$_was_active" = "0" ] || service_restart || true
@@ -2322,7 +2319,7 @@ manage_vless() {
         read -r -p "请输入选项 [0-6]: " choice
         case "$choice" in
             1)
-                if service_start && sleep 1 && service_is_active; then
+                if service_start && wait_for_health 6; then
                     echo -e "${GREEN}✓ VLESS 已启动${PLAIN}"
                 else
                     echo -e "${RED}✗ 启动失败，请查看日志${PLAIN}"
@@ -2336,7 +2333,7 @@ manage_vless() {
                 sleep 1
                 ;;
             3)
-                if service_restart && sleep 1 && service_is_active; then
+                if service_restart && wait_for_health 6; then
                     echo -e "${GREEN}✓ VLESS 已重启${PLAIN}"
                 else
                     echo -e "${RED}✗ 重启失败，请查看日志${PLAIN}"
