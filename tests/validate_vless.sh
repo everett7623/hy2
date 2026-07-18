@@ -203,20 +203,24 @@ MANAGED_SING_BOX=0
 read_config
 [ "$LISTEN_PORT:$EXT_PORT:$UUID:$SHORT_ID:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$HANDSHAKE_PORT:$MANAGED_SING_BOX" = "8443:9443:$TEST_UUID:$TEST_SHORT_ID:1:v6::::www.example.com:443:1" ]
 
-# 诊断必须分别报告服务、REALITY 目标和 VPS 直连下载结果。
+# 诊断正常路径：分别报告服务状态、监听地址、per-family REALITY 可达性和 VPS 直连结果。
 (
 read_config() { return 0; }
 check_config() { return 0; }
 service_is_active() { return 0; }
 ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.0.0:8443'; }
-reality_target_usable() { return 0; }
+reality_target_usable_v4() { return 0; }
+reality_target_usable_v6() { return 0; }
 probe_vps_download_mbps() { printf '123.4'; }
 sysctl() { printf 'bbr'; }
 diagnose_output=$(diagnose_vless)
 grep -q 'sing-box 配置有效' <<EOF
 $diagnose_output
 EOF
-grep -q 'REALITY 目标 www.example.com:443 HTTPS/TLS 可达' <<EOF
+grep -q 'REALITY 握手目标' <<EOF
+$diagnose_output
+EOF
+grep -q '监听地址' <<EOF
 $diagnose_output
 EOF
 grep -q 'VPS 直连下载探测: 123.4 Mbps' <<EOF
@@ -225,6 +229,80 @@ EOF
 grep -q 'TCP 拥塞控制: bbr' <<EOF
 $diagnose_output
 EOF
+)
+
+# 诊断：config 和 meta 均缺失时报告"均缺失"。
+(
+VLESS_CONFIG="$tmp/no-config.json"
+VLESS_META="$tmp/no-meta-dir"
+out=$(diagnose_vless 2>&1 || true)
+grep -q '均缺失' <<EOF
+$out
+EOF
+)
+
+# 诊断：仅 config 缺失（meta 存在）时报告"配置文件缺失"。
+(
+VLESS_CONFIG="$tmp/no-config.json"
+out=$(diagnose_vless 2>&1 || true)
+grep -q '配置文件缺失' <<EOF
+$out
+EOF
+)
+
+# 诊断：仅 meta 缺失（config 存在）时报告"元数据缺失"。
+(
+VLESS_META="$tmp/no-meta-dir"
+out=$(diagnose_vless 2>&1 || true)
+grep -q '元数据缺失' <<EOF
+$out
+EOF
+)
+
+# 诊断：元数据字段校验失败时报告具体字段名（非密钥字段显示原值）。
+(
+_bad_meta="$tmp/bad-meta"
+mkdir -p "$_bad_meta"
+printf 'LISTEN_PORT=not_a_port\n' > "$_bad_meta/config.env"
+touch "$tmp/dummy-vless.json"
+VLESS_CONFIG="$tmp/dummy-vless.json"
+VLESS_META="$_bad_meta"
+out=$(diagnose_vless 2>&1 || true)
+grep -q 'LISTEN_PORT' <<EOF
+$out
+EOF
+)
+
+# wait_for_health：第三次才成功时应正常返回，且恰好尝试了三次。
+(
+_attempt=0
+service_is_healthy() { _attempt=$((_attempt + 1)); [ "$_attempt" -ge 3 ]; }
+sleep() { :; }
+wait_for_health 5
+[ "$_attempt" = "3" ]
+)
+
+# wait_for_health：达到轮询上限仍失败时返回非零。
+(
+service_is_healthy() { return 1; }
+sleep() { :; }
+! wait_for_health 3
+)
+
+# reality_target_usable_v4 和 _v6 分别透传 -4 / -6 旗标给 curl。
+(
+curl() {
+    case "$*" in
+        '--help all') printf '%s\n' '--tls-max' ;;
+        *'-4'*'www.apple.com'*) return 0 ;;
+        *'-6'*'www.apple.com'*) return 1 ;;
+        *) return 1 ;;
+    esac
+}
+reality_target_usable_v4 www.apple.com 443
+! reality_target_usable_v6 www.apple.com 443
+! reality_target_usable_v4 www.microsoft.com 443
+unset -f curl
 )
 
 # 最新版不重复替换；候选核心导致配置校验失败时必须恢复旧二进制。

@@ -350,6 +350,36 @@ reality_target_usable() {
     fi
 }
 
+# 强制指定协议族探测 REALITY 握手目标可达性（诊断用）。
+# -4/-6 旗标存在于所有主流 curl 发行版；即使失败也不影响安装流程。
+reality_target_usable_v4() {
+    local _host="$1" _port="${2:-443}" _url
+    validate_server_name "$_host" && validate_port "$_port" || return 1
+    command -v curl >/dev/null 2>&1 || return 1
+    _url="https://${_host}:${_port}/"
+    if curl --help all 2>/dev/null | grep -q -- '--tls-max'; then
+        curl -4 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
+            --tlsv1.3 --tls-max 1.3 "$_url" >/dev/null 2>&1
+    else
+        curl -4 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
+            "$_url" >/dev/null 2>&1
+    fi
+}
+
+reality_target_usable_v6() {
+    local _host="$1" _port="${2:-443}" _url
+    validate_server_name "$_host" && validate_port "$_port" || return 1
+    command -v curl >/dev/null 2>&1 || return 1
+    _url="https://${_host}:${_port}/"
+    if curl --help all 2>/dev/null | grep -q -- '--tls-max'; then
+        curl -6 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
+            --tlsv1.3 --tls-max 1.3 "$_url" >/dev/null 2>&1
+    else
+        curl -6 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
+            "$_url" >/dev/null 2>&1
+    fi
+}
+
 select_reality_target() {
     local _port="${1:-443}" _preferred _candidate _selected _tmp
     local _index=0 _checked=0
@@ -1465,6 +1495,18 @@ service_is_healthy() {
     '
 }
 
+# 带有界轮询的健康检查：最多等 _attempts 秒，首次立即检查。
+# 避免慢 VPS 冷启动时 2s 硬编码超时触发误回滚（quirk #8）。
+wait_for_health() {
+    local _attempts="${1:-12}" _i=0
+    while [ "$_i" -lt "$_attempts" ]; do
+        service_is_healthy && return 0
+        _i=$((_i + 1))
+        [ "$_i" -lt "$_attempts" ] && sleep 1
+    done
+    return 1
+}
+
 has_free_space_mb() {
     local _path="$1" _required="$2" _available
     command -v df >/dev/null 2>&1 || return 0
@@ -1602,8 +1644,7 @@ install_vless() {
     echo -e "${YELLOW}正在启动 VLESS 服务...${PLAIN}"
     if service_is_active; then service_restart; else service_start; fi
 
-    sleep 2
-    if service_is_healthy; then
+    if wait_for_health; then
         echo -e "${GREEN}✓ VLESS 服务端启动成功${PLAIN}"
     else
         echo -e "${RED}✗ VLESS 启动失败，请查看日志：${PLAIN}"
@@ -2092,15 +2133,58 @@ remove_auto_update() {
     sleep 2
 }
 
+# 在 read_config 失败后，逐字段定位无效原因（不输出密钥原值）。
+_diagnose_read_config_field_error() {
+    local _k _v _bad=""
+    [ -f "$VLESS_META/config.env" ] || return 0
+    while IFS='=' read -r _k _v; do
+        case "$_k" in
+            LISTEN_PORT)      validate_port "$_v"           || { _bad="LISTEN_PORT（值: '${_v}'）"; break; } ;;
+            EXT_PORT)         validate_port "$_v"           || { _bad="EXT_PORT（值: '${_v}'）"; break; } ;;
+            HANDSHAKE_PORT)   validate_port "$_v"           || { _bad="HANDSHAKE_PORT（值: '${_v}'）"; break; } ;;
+            SERVER_NAME)      validate_server_name "$_v"    || { _bad="SERVER_NAME（值: '${_v}'）"; break; } ;;
+            NAT_MODE)   case "$_v" in 0|1) ;; *) _bad="NAT_MODE（值: '${_v}'）"; break ;; esac ;;
+            BIND_FAMILY) case "$_v" in v4|v6) ;; *) _bad="BIND_FAMILY（值: '${_v}'）"; break ;; esac ;;
+            UUID)             validate_uuid "$_v"           || { _bad="UUID（值已隐藏）"; break; } ;;
+            REALITY_PRIVATE_KEY) validate_reality_key "$_v" || { _bad="REALITY_PRIVATE_KEY（值已隐藏）"; break; } ;;
+            REALITY_PUBLIC_KEY)  validate_reality_key "$_v" || { _bad="REALITY_PUBLIC_KEY（值已隐藏）"; break; } ;;
+            SHORT_ID)         validate_short_id "$_v"       || { _bad="SHORT_ID（值已隐藏）"; break; } ;;
+        esac
+    done < "$VLESS_META/config.env"
+    if [ -n "$_bad" ]; then
+        echo -e "  ${RED}✗ 元数据字段校验失败: ${_bad}${PLAIN}"
+    else
+        echo -e "  ${RED}✗ 配置或元数据校验失败（字段无法定位，建议重装）${PLAIN}"
+    fi
+}
+
 diagnose_vless() {
-    local _speed _cc
+    local _speed _cc _v4_ok _v6_ok
     echo -e "\n${GREEN}VLESS 运行诊断${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    if ! read_config; then
-        echo -e "  ${RED}✗ 配置或元数据缺失${PLAIN}"
+
+    # --- 配置 / 元数据读取 ---
+    if [ ! -f "$VLESS_CONFIG" ] && [ ! -f "$VLESS_META/config.env" ]; then
+        echo -e "  ${RED}✗ 配置文件与元数据均缺失（安装未完成或已回滚）${PLAIN}"
+        echo -e "  ${DIM}提示: 回滚多由服务启动超时触发，重装可恢复。${PLAIN}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+        return 1
+    elif [ ! -f "$VLESS_CONFIG" ]; then
+        echo -e "  ${RED}✗ 配置文件缺失: ${VLESS_CONFIG}${PLAIN}"
+        echo -e "  ${DIM}元数据存在，重装可恢复。${PLAIN}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+        return 1
+    elif [ ! -f "$VLESS_META/config.env" ]; then
+        echo -e "  ${RED}✗ 元数据缺失: ${VLESS_META}/config.env${PLAIN}"
+        echo -e "  ${DIM}配置文件存在，重装可恢复。${PLAIN}"
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+        return 1
+    elif ! read_config; then
+        _diagnose_read_config_field_error
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
         return 1
     fi
+
     if check_config >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓ sing-box 配置有效${PLAIN}"
     else
@@ -2113,6 +2197,8 @@ diagnose_vless() {
     else
         echo -e "  ${RED}✗ UUID 或 REALITY 密钥元数据无效${PLAIN}"
     fi
+
+    # --- 服务与监听 ---
     if service_is_active; then
         echo -e "  ${GREEN}✓ VLESS 服务运行中${PLAIN}"
     else
@@ -2123,11 +2209,23 @@ diagnose_vless() {
     else
         echo -e "  ${YELLOW}! 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
     fi
-    if reality_target_usable "$SERVER_NAME" "$HANDSHAKE_PORT"; then
-        echo -e "  ${GREEN}✓ REALITY 目标 ${SERVER_NAME}:${HANDSHAKE_PORT} HTTPS/TLS 可达${PLAIN}"
+    echo -e "  ${DIM}监听地址: ${LISTEN_HOST}:${LISTEN_PORT} | 绑定: ${BIND_FAMILY} | NAT: ${NAT_MODE:-0}${PLAIN}"
+
+    # --- REALITY 握手目标可达性（分 IPv4 / IPv6）---
+    if reality_target_usable_v4 "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+        _v4_ok="${GREEN}✓ 可达${PLAIN}"
     else
-        echo -e "  ${RED}✗ REALITY 目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 不可达或 TLS 握手失败${PLAIN}"
+        _v4_ok="${RED}✗ 不可达${PLAIN}"
     fi
+    if reality_target_usable_v6 "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+        _v6_ok="${GREEN}✓ 可达${PLAIN}"
+    else
+        _v6_ok="${YELLOW}! 不可达${PLAIN}"
+    fi
+    echo -e "  REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT}  IPv4: ${_v4_ok}  IPv6: ${_v6_ok}"
+    echo -e "  ${DIM}若 IPv4 可达、IPv6 不可达属正常；若两者均不可达，客户端将无法完成握手。${PLAIN}"
+
+    # --- 出口带宽 ---
     if _speed=$(probe_vps_download_mbps); then
         echo -e "  ${GREEN}✓ VPS 直连下载探测: ${_speed} Mbps${PLAIN}"
     else
