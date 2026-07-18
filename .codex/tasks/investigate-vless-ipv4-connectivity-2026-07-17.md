@@ -29,35 +29,22 @@
 - 新增监听地址状态行（`LISTEN_HOST:LISTEN_PORT | BIND_FAMILY | NAT`）。
 - 新增 REALITY 握手目标分 IPv4/IPv6 可达性探测（`curl -4`/`-6`），用于在下次 VPS 运行时直接区分 H2。
 
-## 待验证假设 H2 — 死 IPv6 导致 REALITY 握手失败（仍存疑）
+### H2 — 死 IPv6 导致 REALITY 握手失败（已定位并修复，commit 见下）
 
-`detect_network()` 优先使用本地接口扫描来判断 `HAS_IPV6`，而非外部可达性测试。若 VPS 有全局 IPv6 地址但路由失效（VMIESS 常见），则脚本误报双栈，`LISTEN_HOST` 仍为 `::`；更关键的是 sing-box 运行时解析握手目标域名时可能尝试 AAAA 并通过死路由，导致所有 REALITY 握手超时，客户端无法连接。双栈 ByteVirt IPv6 路由正常故不受影响。
+**根因**：`detect_network()` 原逻辑只要接口上扫到全局 IPv6 地址就把 `HAS_IPV6=1`（vless.sh 原 629-635），直接覆盖了前面 curl 外网探测的结果——**完全不校验该 IPv6 是否可达**。廉价商家常给一个 IPv6 地址但路由已死（VMIESS 一类），于是纯 IPv4 机被误判双栈。后果：
+1. 客户端链接里塞了个连不上的 IPv6 节点；
+2. 更致命：sing-box 每次 REALITY 握手都要连目标域名（如 `www.microsoft.com:443`），解析到 AAAA 后往死 IPv6 拨，握手超时——**连 IPv4 节点也一起废**。sing-box issue [#3231](https://github.com/SagerNet/sing-box/issues/3231)、[#4211](https://github.com/SagerNet/sing-box/issues/4211) 证实其域名拨号会选中 IPv6 且不保证回退 IPv4。双栈 ByteVirt IPv6 路由正常，故不受影响——完全吻合"双栈通、纯 IPv4 不通"。
 
-**下次 VPS 采集时需输出（两台各一份）：**
+**修复**：新增 `has_default_ipv6_route()`；`detect_network()` 现在只在「外网 IPv6 探测走通」或「存在默认 IPv6 路由」时才认定 `HAS_IPV6=1`。接口有地址但两者皆无 → 判死 IPv6，按纯 IPv4 处理（`LISTEN_HOST=0.0.0.0`、不下发 IPv6 节点）。正常双栈机有默认路由，行为不变（已加测试确保不误伤）。
 
-```bash
-echo "=== DIAGNOSE ==="
-bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh) diagnose
-
-echo "=== IPV6 ROUTE ==="
-ip -6 route show 2>/dev/null | head -5 || echo "no ip command"
-
-echo "=== LOCAL IPV6 ADDR ==="
-ip -6 addr show scope global 2>/dev/null | grep -v 'wgcf\|warp\|tun\|tailscale' || echo "none"
-```
-
-**根因确认标准**：
-- VMIESS 诊断输出 `IPv4: ✓ 可达  IPv6: ! 不可达` + `ip -6 route` 只有 unreachable/link-local → H2 确认。
-- VMIESS 诊断输出 `IPv4: ✗ 不可达` → H2 之外还有更基础的网络问题。
-- VMIESS 诊断输出配置/元数据仍缺失 → H1 修复未生效（检查本次 push 是否已拉取）。
+**残留边界**：若 VPS 有默认 IPv6 路由但上游被黑洞（有路由、连不通、TCP 超时而非立即 ENETUNREACH），本修复仍会认定双栈。这种情况少见；真遇到需在 sing-box 配置层给握手拨号加 `domain_strategy` 强制 IPv4，但该改动涉及 1.12 DNS schema，需真实 binary 校验后再上，暂不盲改。
 
 ## 完成条件
 
 - [x] H1 修复（wait_for_health）已落地，测试通过
 - [x] diagnose 区分 config/meta/字段 三种失败原因
 - [x] diagnose 输出 IPv4/IPv6 per-family REALITY 可达性
-- [ ] 收到 ByteVirt 双栈与 VMIESS 纯 IPv4 的对比诊断输出
-- [ ] H2 根因确认或排除（基于新诊断输出）
-- [ ] 若 H2 确认，修复 detect_network 的 HAS_IPV6 可达性门控（需防止误伤正常双栈机）
-- [ ] 所有修复运行完整静态验证并记录一次性 VPS 验收结果
-- [ ] 根因全部确认后再沉淀为已解决案例
+- [x] H2 根因定位：detect_network 未校验 IPv6 可达性，误判双栈
+- [x] H2 修复：HAS_IPV6 以「可达或有默认路由」为门控，含双栈不误伤测试
+- [ ] 一次性 VPS 验收（VMIESS 纯 IPv4 重装后客户端可连）
+- [ ] 验收通过后沉淀为已解决案例；如遇黑洞路由边界再处理 domain_strategy

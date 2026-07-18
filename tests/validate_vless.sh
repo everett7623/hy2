@@ -305,6 +305,61 @@ reality_target_usable_v4 www.apple.com 443
 unset -f curl
 )
 
+# has_default_ipv6_route：有默认 IPv6 路由为真，无输出为假。
+(
+ip() { case "$*" in '-6 route show default') printf 'default via fe80::1 dev eth0\n' ;; *) return 0 ;; esac; }
+has_default_ipv6_route
+unset -f ip
+ip() { return 0; }
+! has_default_ipv6_route
+unset -f ip
+)
+
+# detect_network：接口有全局 IPv6 但外网不可达且无默认路由 → 判纯 IPv4，
+# 避免向客户端下发死 IPv6 节点、避免 sing-box 握手拨向死 IPv6。
+(
+detect_warp() { return 1; }
+get_default_public_ipv4() { printf '203.0.113.5'; }
+get_native_public_ipv4() { printf '203.0.113.5'; }
+curl() { return 1; }
+has_default_ipv6_route() { return 1; }
+ip() {
+    case "$*" in
+        '-6 addr show scope global') printf '2: eth0\n    inet6 2001:db8::5/64 scope global\n' ;;
+        '-4 addr show scope global') printf '2: eth0\n    inet 203.0.113.5/24 scope global\n' ;;
+        'addr show') printf '    inet 203.0.113.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV6" = "0" ]
+[ "$HAS_IPV4" = "1" ]
+[ "$LISTEN_HOST" = "0.0.0.0" ]
+[ "$BIND_FAMILY" = "v4" ]
+[ -z "$PUBLIC_IPV6" ]
+)
+
+# detect_network：接口有全局 IPv6 且存在默认路由 → 仍判双栈（正常机不受影响）。
+(
+detect_warp() { return 1; }
+get_default_public_ipv4() { printf '203.0.113.5'; }
+get_native_public_ipv4() { printf '203.0.113.5'; }
+curl() { return 1; }
+has_default_ipv6_route() { return 0; }
+ip() {
+    case "$*" in
+        '-6 addr show scope global') printf '2: eth0\n    inet6 2001:db8::5/64 scope global\n' ;;
+        '-4 addr show scope global') printf '2: eth0\n    inet 203.0.113.5/24 scope global\n' ;;
+        'addr show') printf '    inet 203.0.113.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV6" = "1" ]
+[ "$PUBLIC_IPV6" = "2001:db8::5" ]
+[ "$BIND_FAMILY" = "v4" ]
+)
+
 # 最新版不重复替换；候选核心导致配置校验失败时必须恢复旧二进制。
 get_latest_version() { LAST_VERSION_TAG=v1.13.14; }
 upgrade_output=$(upgrade_core)

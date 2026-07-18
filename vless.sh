@@ -604,6 +604,14 @@ detect_warp() {
     return 1
 }
 
+# 是否存在默认 IPv6 路由。用于区分"分到 IPv6 地址但路由已死"的廉价 VPS：
+# 这类机器接口上有全局 IPv6，但既连不通外网又无默认路由，必须按纯 IPv4 处理，
+# 否则 sing-box 握手拨号会解析到 AAAA 并拨向死 IPv6，导致 REALITY 握手全部超时。
+has_default_ipv6_route() {
+    command -v ip >/dev/null 2>&1 || return 1
+    ip -6 route show default 2>/dev/null | grep -q .
+}
+
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
     NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; DEFAULT_EGRESS_IPV4=""; WARP_ACTIVE=0; BIND_FAMILY="v4"; LISTEN_HOST="::"
@@ -612,9 +620,10 @@ detect_network() {
     detect_warp && WARP_ACTIVE=1 || true
     DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
 
+    local _ipv6_probe="" _ipv6_reachable=0
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if is_valid_ipv6 "$_ip"; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
+        if is_valid_ipv6 "$_ip"; then _ipv6_probe="$_ip"; _ipv6_reachable=1; break; fi
     done
 
     if command -v ip >/dev/null 2>&1; then
@@ -626,13 +635,19 @@ detect_network() {
                 if (addr !~ /^fe80:/ && addr !~ /^f[cd][0-9a-f][0-9a-f]:/ && addr !~ /^2606:4700:/) { print addr; exit }
             }
         ')
-        if [ -n "$_real_ipv6" ]; then
+        # 接口有全局 IPv6 时，仅当"外网可达"或"存在默认 IPv6 路由"才认定可用；
+        # 否则是死 IPv6（有地址无路由），按纯 IPv4 处理，避免握手拨号走死路由超时。
+        if [ -n "$_real_ipv6" ] && { [ "$_ipv6_reachable" = "1" ] || has_default_ipv6_route; }; then
             HAS_IPV6=1
             PUBLIC_IPV6="$_real_ipv6"
         else
             HAS_IPV6=0
             PUBLIC_IPV6=""
         fi
+    else
+        # 无 ip 命令时只能依赖外网探测结果。
+        HAS_IPV6="$_ipv6_reachable"
+        PUBLIC_IPV6="$_ipv6_probe"
     fi
 
     _ip=$(get_native_public_ipv4 2>/dev/null || true)
