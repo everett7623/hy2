@@ -4,7 +4,7 @@
 
 `bash tests/validate_scripts.sh` 会执行 `tests/validate_anytls.sh`。该测试会 source `anytls.sh`，验证输入校验、sing-box 下载 URL、架构映射、IPv6 URI、JSON/元数据往返、wrapper、systemd 单元和 ELF 魔数。
 
-同一入口还会执行 `tests/validate_vless.sh`。该测试会 source `vless.sh`，验证 UUID、REALITY 密钥与 short ID 校验、IPv6 URI、Mihomo/Loon/Quantumult X 输出、JSON/元数据往返、wrapper、systemd/OpenRC 单元、共享核心配置预检和卸载所有权。
+同一入口还会执行 `tests/validate_vless.sh`。该测试会 source `vless.sh`，验证 UUID、REALITY 密钥与 short ID 校验、REALITY 握手地址族、IPv6 URI、Mihomo/Loon/Quantumult X 输出、JSON/元数据往返、本机网络诊断、BBR 回滚、wrapper、systemd/OpenRC 单元、共享核心配置预检和卸载所有权。
 
 静态验证会阻止 Throne 与 Sing-box/SFA 客户端导出回归。修改节点输出时，应优先保证 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码格式不受影响。
 
@@ -88,11 +88,13 @@ bash tests/validate_scripts.sh
 
 - 全新安装生成有效 UUID、REALITY X25519 密钥对和 16 位十六进制 short ID，节点输出不得包含服务端私钥。
 - sing-box JSON 使用原生 `vless` 入站、TCP、REALITY 和 `xtls-rprx-vision`，并通过 `sing-box check`。
+- REALITY `handshake.domain_resolver` 使用本地 resolver，并按 IPv4 节点写入 `ipv4_only`、按纯 IPv6 节点写入 `ipv6_only`；目标筛选必须使用相同地址族。
 - URI、Mihomo、Shadowrocket、Loon 与 Quantumult X 输出包含一致的公钥、short ID、SNI 和 flow；Surfboard 输出明确兼容性提示。
 - NAT、IPv4、IPv6 与双栈节点地址和端口正确；REALITY 目标域名及端口可达。
 - 默认 REALITY 候选不使用 `.cn`、GitHub 或 Bing；安装探测和运行诊断应从 VPS 实际执行，目标不可达时明确告警。
-- 运行诊断分别报告 REALITY 目标可达性与 VPS 直连下载结果，不把 Speedtest 单站失败直接判定为 VLESS 故障。
+- 运行诊断分别报告 REALITY 目标可达性、握手地址族、外部测速源到 VPS 的入站下载、本机 TCP/IP 累计计数、网卡及活动队列；不得把该探针描述为 VPS 到客户端方向，也不把 Speedtest 单站失败直接判定为 VLESS 故障。
 - `vless.sh diagnose` 与服务管理菜单中的诊断入口应产生相同检查结果，且不修改配置、服务或防火墙。
+- 独立 VLESS 工具箱手动启用标准 `bbr + fq` 时应原子写入共享 sysctl 文件；任一实时参数未生效时恢复旧文件与修改前参数。
 - 配置修改、重装、升级或服务启动失败时恢复旧配置、核心和服务状态。
 - 与 AnyTLS 共存时，升级会预检双方 JSON；不同卸载顺序都不会误删共享配置或遗留项目独占核心。
 

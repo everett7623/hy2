@@ -6,6 +6,10 @@
 
 ## Unreleased
 
+- Constrain VLESS REALITY handshake DNS resolution to the detected IPv4 or IPv6 family through sing-box 1.12+ `domain_resolver` fields, preventing dead alternate-family routes from stalling handshakes.
+- Correct the VLESS external download probe direction and add local TCP retransmit/timeout, IP discard, interface error/drop, active qdisc and established-session diagnostics without adding a throughput-test dependency.
+- Add opt-in standard `bbr + fq` status and enablement to the standalone VLESS toolbox, with atomic sysctl configuration and rollback when either setting fails to apply.
+
 ---
 
 ## v2.0.19 (2026-07-17)

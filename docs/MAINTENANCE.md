@@ -54,6 +54,7 @@
 - `/etc/sysctl.d/99-hysteria-bbr.conf`
 - `/etc/sysctl.d/99-ss-bbr.conf`
 - `/etc/sysctl.d/99-euserv-bbr.conf`
+- `/etc/sysctl.d/99-singbox-tools-bbr.conf`
 - root 用户的 crontab
 
 ## 安全规则
@@ -74,7 +75,7 @@
 - EUserv 专用脚本只支持 systemd，且主要面向 Debian/RHEL 类系统。
 - 上游最新版本在运行时获取，没有锁文件或固定版本。
 - VLESS REALITY 的目标域名与端口必须由 VPS 直连可达；静态配置检查无法证明握手目标长期可用。
-- REALITY 目标探测和 Cloudflare 下载探测均依赖外部站点，只能作为当次诊断信号；目标站策略、数据中心 IP 限制和用户线路仍可能改变结果。
+- REALITY 目标探测和 Cloudflare 入站下载探测均依赖外部站点，只能作为当次诊断信号；下载探针不覆盖 VPS 到客户端方向，目标站策略、数据中心 IP 限制和用户线路仍可能改变结果。
 - 静态 CI 无法证明真实 VPS 的服务、防火墙和网络行为。
 
 ## AI 接手协议

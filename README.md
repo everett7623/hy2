@@ -105,6 +105,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 - 安装、升级、卸载不会自动在 VPS 上生成回滚包。
 - 如需 VPS 配置备份，请先进入“备份 / 恢复”手动创建。
 - BBR 默认不启用，只展示当前状态；需要时手动开启标准 `bbr + fq`。
+- 直接运行 `vless.sh` 时，也可以在“VLESS 工具箱”中查看或手动开启标准 `bbr + fq`。
 - `sb` 会优先拉取 GitHub `main` 的最新主入口；远程失败时会尝试使用本地缓存继续运行。
 
 ---
@@ -173,7 +174,7 @@ date
 
 ### VLESS 能连接但很慢，或 Speedtest 无法打开
 
-VLESS 的 REALITY 目标由 VPS 主动连接，只参与握手伪装，不承载后续测速流量。安装时脚本会从非中国大陆候选域名中选择当前 VPS 实际可达的目标；VLESS 工具箱中的运行诊断还会检查目标 HTTPS/TLS、VPS 直连下载速率和 TCP 拥塞控制。
+VLESS 的 REALITY 目标由 VPS 主动连接，只参与握手伪装，不承载后续测速流量。安装时脚本会按节点使用的 IPv4/IPv6 地址族筛选当前 VPS 实际可达的非中国大陆候选域名，并把同一地址族写入 REALITY 握手 DNS 策略。VLESS 工具箱中的运行诊断还会检查目标 HTTPS/TLS、握手地址族、外部测速源到 VPS 的入站下载、TCP/队列设置、内核累计重传与丢弃、网卡错误及活动连接数。
 
 可直接运行诊断，也可以从 VLESS 服务管理菜单选择“运行状态与速度诊断”：
 
@@ -182,8 +183,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.s
 ```
 
 - REALITY 目标失败：进入 VLESS 配置修改，换用诊断可达的目标。
-- VPS 直连下载也慢：优先排查 VPS 出口带宽、负载、线路质量和服务商限速。
-- VPS 直连正常但客户端慢：继续检查客户端分流、MTU、运营商路由和云安全组。
+- 诊断提示握手地址族未限制：进入 VLESS 配置修改并保存，或使用当前脚本重装，以生成新的 `domain_resolver` 配置。
+- 外部测速源到 VPS 的入站下载也慢：优先排查 VPS 入站带宽、负载、线路质量和服务商限速。
+- 入站探针正常但客户端慢：该探针不覆盖 VPS 到客户端方向，继续检查累计计数变化、客户端分流、MTU、运营商路由和云安全组。
 - 只有 Speedtest 失败：测速站可能限制数据中心 IP 或代理流量，应同时用普通 HTTPS 下载和其他测速站交叉验证。
 
 ### 本地修改为什么没生效

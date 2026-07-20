@@ -84,6 +84,7 @@ SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/vless-server.service}"
 OPENRC_SERVICE="/etc/init.d/vless-server"
 AUTO_UPDATE_SCRIPT="/usr/local/bin/vless-autoupdate.sh"
 AUTO_UPDATE_LOG="/var/log/vless-autoupdate.log"
+BBR_SYSCTL_CONF="${BBR_SYSCTL_CONF:-/etc/sysctl.d/99-singbox-tools-bbr.conf}"
 
 # --- 运行时变量 ---
 RELEASE="unknown"
@@ -380,6 +381,20 @@ reality_target_usable_v6() {
     fi
 }
 
+reality_domain_strategy() {
+    case "${BIND_FAMILY:-v4}" in
+        v6) printf '%s' "ipv6_only" ;;
+        *)  printf '%s' "ipv4_only" ;;
+    esac
+}
+
+reality_target_usable_for_family() {
+    case "${BIND_FAMILY:-v4}" in
+        v6) reality_target_usable_v6 "$@" ;;
+        *)  reality_target_usable_v4 "$@" ;;
+    esac
+}
+
 select_reality_target() {
     local _port="${1:-443}" _preferred _candidate _selected _tmp
     local _index=0 _checked=0
@@ -388,7 +403,7 @@ select_reality_target() {
     for _candidate in "$_preferred" $(reality_target_candidates); do
         [ "$_index" -gt 0 ] && [ "$_candidate" = "$_preferred" ] && continue
         (
-            reality_target_usable "$_candidate" "$_port" \
+            reality_target_usable_for_family "$_candidate" "$_port" \
                 && printf '%s' "$_candidate" > "$_tmp/result-${_index}"
         ) &
         _index=$((_index + 1))
@@ -1119,7 +1134,8 @@ render_uri() {
 write_config() {
     mkdir -p "$VLESS_DIR" "$VLESS_META"
     chmod 700 "$VLESS_META"
-    local _tmp_config _tmp_meta
+    local _tmp_config _tmp_meta _domain_strategy
+    _domain_strategy=$(reality_domain_strategy)
     _tmp_config=$(mktemp "${VLESS_DIR}/vless.json.new.XXXXXX" 2>/dev/null) || return 1
     _tmp_meta=$(mktemp "${VLESS_META}/config.env.new.XXXXXX" 2>/dev/null) || {
         rm -f "$_tmp_config"
@@ -1127,6 +1143,11 @@ write_config() {
     }
     if ! cat > "$_tmp_config" <<CFG
 {
+  "dns": {
+    "servers": [
+      { "type": "local", "tag": "reality-local" }
+    ]
+  },
   "log": { "level": "info", "timestamp": true },
   "inbounds": [
     {
@@ -1148,7 +1169,11 @@ write_config() {
           "enabled": true,
           "handshake": {
             "server": "${SERVER_NAME}",
-            "server_port": ${HANDSHAKE_PORT}
+            "server_port": ${HANDSHAKE_PORT},
+            "domain_resolver": {
+              "server": "reality-local",
+              "strategy": "${_domain_strategy}"
+            }
           },
           "private_key": "${REALITY_PRIVATE_KEY}",
           "short_id": ["${SHORT_ID}"]
@@ -1591,7 +1616,7 @@ configure_vless() {
     [ -z "$HANDSHAKE_PORT" ] && HANDSHAKE_PORT="443"
     validate_port "$HANDSHAKE_PORT" || { echo -e "${RED}REALITY 目标端口无效${PLAIN}"; return 1; }
 
-    echo -e "${YELLOW}正在从当前 VPS 检测可用 REALITY 目标...${PLAIN}"
+    echo -e "${YELLOW}正在按 $(reality_domain_strategy) 策略检测可用 REALITY 目标...${PLAIN}"
     if _default_sni=$(select_reality_target "$HANDSHAKE_PORT"); then
         _target_verified=1
         echo -e "${GREEN}✓ 已找到可用目标: ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
@@ -1603,7 +1628,7 @@ configure_vless() {
     [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
     validate_server_name "$SERVER_NAME" || { echo -e "${RED}REALITY 目标域名格式无效${PLAIN}"; return 1; }
     if [ "$SERVER_NAME" != "$_default_sni" ] || [ "$_target_verified" != "1" ]; then
-        if reality_target_usable "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+        if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
             echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}"
         else
             echo -e "${YELLOW}! 当前 VPS 无法验证该目标，节点可能握手不稳定或无法连接${PLAIN}"
@@ -1717,7 +1742,7 @@ change_config() {
     fi
     if [ -n "${_sni}${_handshake_port}" ]; then
         echo -e "${YELLOW}正在验证 REALITY 目标...${PLAIN}"
-        reality_target_usable "$SERVER_NAME" "$HANDSHAKE_PORT" \
+        reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT" \
             && echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}" \
             || echo -e "${YELLOW}! 当前 VPS 无法验证该目标，保存后可能影响连接稳定性${PLAIN}"
     fi
@@ -2170,8 +2195,102 @@ _diagnose_read_config_field_error() {
     fi
 }
 
+get_default_egress_interface() {
+    local _family _iface _families
+    command -v ip >/dev/null 2>&1 || return 1
+    case "${BIND_FAMILY:-v4}" in
+        v6) _families="-6 -4" ;;
+        *)  _families="-4 -6" ;;
+    esac
+    for _family in $_families; do
+        _iface=$(ip "$_family" route show default 2>/dev/null | awk '
+            /default/ {
+                for (i = 1; i <= NF; i++) {
+                    if ($i == "dev") { print $(i + 1); exit }
+                }
+            }
+        ')
+        if [ -n "$_iface" ]; then
+            printf '%s' "$_iface"
+            return 0
+        fi
+    done
+    return 1
+}
+
+show_vless_network_diagnostics() {
+    local _cc _qdisc _connections _stats _iface _link_stats _tc_stats
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
+    echo -e "  ${DIM}TCP 拥塞控制: ${_cc:-未知} | 默认队列: ${_qdisc:-未知}${PLAIN}"
+
+    if command -v ss >/dev/null 2>&1; then
+        _connections=$(ss -tn state established 2>/dev/null | awk -v port="$LISTEN_PORT" '
+            NR == 1 {
+                for (i = 1; i <= NF; i++) {
+                    if ($i == "Local") { local_column=i; break }
+                }
+                next
+            }
+            local_column > 0 && $local_column ~ ("(^|:|\\])" port "$") { count++ }
+            END { print count + 0 }
+        ')
+        echo -e "  ${DIM}当前 VLESS TCP 已建立连接: ${_connections:-0}${PLAIN}"
+    fi
+
+    if command -v nstat >/dev/null 2>&1; then
+        _stats=$(nstat -az 2>/dev/null | awk '
+            $1 == "TcpRetransSegs"      { retrans=$2 }
+            $1 == "TcpExtTCPTimeouts"   { timeouts=$2 }
+            $1 == "TcpExtTCPSynRetrans" { syn_retrans=$2 }
+            $1 == "IpInDiscards"        { in_discards=$2 }
+            $1 == "IpOutDiscards"       { out_discards=$2 }
+            END {
+                if (retrans == "") retrans=0
+                if (timeouts == "") timeouts=0
+                if (syn_retrans == "") syn_retrans=0
+                if (in_discards == "") in_discards=0
+                if (out_discards == "") out_discards=0
+                printf "%s %s %s %s %s", retrans, timeouts, syn_retrans, in_discards, out_discards
+            }
+        ')
+        set -- $_stats
+        echo -e "  ${DIM}内核累计 TCP: 重传 ${1:-0} | 超时 ${2:-0} | SYN 重传 ${3:-0}${PLAIN}"
+        echo -e "  ${DIM}内核累计 IP 丢弃: 入站 ${4:-0} | 出站 ${5:-0}${PLAIN}"
+    fi
+
+    _iface=$(get_default_egress_interface 2>/dev/null || true)
+    [ -n "$_iface" ] || return 0
+    if command -v ip >/dev/null 2>&1; then
+        _link_stats=$(ip -s link show dev "$_iface" 2>/dev/null | awk '
+            /^[[:space:]]*RX:/ { getline; rx_errors=$3; rx_dropped=$4 }
+            /^[[:space:]]*TX:/ { getline; tx_errors=$3; tx_dropped=$4 }
+            END {
+                if (rx_errors != "" || tx_errors != "")
+                    printf "RX errors=%d dropped=%d | TX errors=%d dropped=%d", rx_errors, rx_dropped, tx_errors, tx_dropped
+            }
+        ')
+        [ -z "$_link_stats" ] || echo -e "  ${DIM}网卡 ${_iface}: ${_link_stats}${PLAIN}"
+    fi
+    if command -v tc >/dev/null 2>&1; then
+        _tc_stats=$(tc -s qdisc show dev "$_iface" 2>/dev/null | awk '
+            NR == 1 && $1 == "qdisc" { qdisc=$2 }
+            {
+                for (i = 1; i <= NF; i++) {
+                    key=$i; gsub(/[^A-Za-z]/, "", key)
+                    if (key == "dropped") {
+                        value=$(i + 1); gsub(/[^0-9]/, "", value); drops += value
+                    }
+                }
+            }
+            END { if (qdisc != "") printf "%s | 累计丢弃 %d", qdisc, drops }
+        ')
+        [ -z "$_tc_stats" ] || echo -e "  ${DIM}活动队列 ${_iface}: ${_tc_stats}${PLAIN}"
+    fi
+}
+
 diagnose_vless() {
-    local _speed _cc _v4_ok _v6_ok
+    local _speed _v4_ok _v6_ok _domain_strategy
     echo -e "\n${GREEN}VLESS 运行诊断${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -2202,6 +2321,13 @@ diagnose_vless() {
     else
         echo -e "  ${RED}✗ sing-box 配置无效${PLAIN}"
         check_config 2>&1 | sed 's/^/    /'
+    fi
+    _domain_strategy=$(reality_domain_strategy)
+    if grep -q '"domain_resolver"' "$VLESS_CONFIG" 2>/dev/null && \
+        grep -q '"strategy": "'"${_domain_strategy}"'"' "$VLESS_CONFIG" 2>/dev/null; then
+        echo -e "  ${GREEN}✓ REALITY 握手地址族已限制为 ${_domain_strategy}${PLAIN}"
+    else
+        echo -e "  ${YELLOW}! 当前配置未限制 REALITY 握手地址族，修改配置并保存或重装后可补齐${PLAIN}"
     fi
     if validate_uuid "$UUID" && validate_reality_key "$REALITY_PRIVATE_KEY" && \
         validate_reality_key "$REALITY_PUBLIC_KEY" && validate_short_id "$SHORT_ID"; then
@@ -2237,16 +2363,129 @@ diagnose_vless() {
     echo -e "  REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT}  IPv4: ${_v4_ok}  IPv6: ${_v6_ok}"
     echo -e "  ${DIM}若 IPv4 可达、IPv6 不可达属正常；若两者均不可达，客户端将无法完成握手。${PLAIN}"
 
-    # --- 出口带宽 ---
+    # --- 外部测速源到 VPS 的入站下载与本机网络状态 ---
     if _speed=$(probe_vps_download_mbps); then
-        echo -e "  ${GREEN}✓ VPS 直连下载探测: ${_speed} Mbps${PLAIN}"
+        echo -e "  ${GREEN}✓ 外部测速源 → VPS 入站下载探测: ${_speed} Mbps${PLAIN}"
     else
-        echo -e "  ${YELLOW}! VPS 直连下载探测失败，可能是出口网络或测速站限制${PLAIN}"
+        echo -e "  ${YELLOW}! 外部测速源 → VPS 入站下载探测失败，可能是入站网络或测速站限制${PLAIN}"
     fi
-    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
-    [ -n "$_cc" ] && echo -e "  ${DIM}TCP 拥塞控制: ${_cc}${PLAIN}"
-    echo -e "  ${DIM}说明: 直连探测正常但客户端慢时，应继续检查客户端分流、MTU、运营商路由和测速站限制。${PLAIN}"
+    echo -e "  ${DIM}该探针不覆盖 VPS → 客户端方向，也不等价于代理端到端测速。${PLAIN}"
+    show_vless_network_diagnostics
+    echo -e "  ${DIM}说明: 累计计数需在复现前后对比；持续增长时再检查 MTU、宿主机和运营商路由。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+}
+
+show_bbr_status() {
+    local _cc _qdisc _avail
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
+    _avail=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || true)
+    echo -e "\n${GREEN}BBR / TCP 队列状态${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    echo -e "  拥塞控制算法: ${YELLOW}${_cc:-未知}${PLAIN}"
+    echo -e "  默认队列算法: ${YELLOW}${_qdisc:-未知}${PLAIN}"
+    echo -e "  可用算法列表: ${SKYBLUE}${_avail:-未知}${PLAIN}"
+    if [ "$_cc" = "bbr" ] && [ "$_qdisc" = "fq" ]; then
+        echo -e "  标准 BBR 状态: ${GREEN}已启用 (bbr + fq)${PLAIN}"
+    elif [ "$_cc" = "bbr" ]; then
+        echo -e "  标准 BBR 状态: ${YELLOW}部分启用 (bbr / ${_qdisc:-未知})${PLAIN}"
+    else
+        echo -e "  标准 BBR 状态: ${RED}未启用${PLAIN}"
+    fi
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+}
+
+enable_standard_bbr() {
+    local _kver _kmaj _kmin _old_cc _old_qdisc _cc _qdisc _confirm
+    local _dir _tmp _backup="" _rollback_ok=1
+    echo -e "\n${GREEN}开启标准 BBR + fq${PLAIN}"
+    echo -e "${DIM}仅手动启用，不会在安装 VLESS 时自动修改系统 TCP 参数。${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+
+    _kver=$(uname -r 2>/dev/null || printf '0.0')
+    _kmaj=$(printf '%s' "$_kver" | cut -d. -f1)
+    _kmin=$(printf '%s' "$_kver" | cut -d. -f2)
+    case "$_kmaj" in ''|*[!0-9]*) _kmaj=0 ;; esac
+    case "$_kmin" in ''|*[!0-9]*) _kmin=0 ;; esac
+    echo -e "  当前内核: ${YELLOW}${_kver}${PLAIN}"
+    if [ "$_kmaj" -lt 4 ] || { [ "$_kmaj" -eq 4 ] && [ "$_kmin" -lt 9 ]; }; then
+        echo -e "${RED}内核版本低于 4.9，不支持标准 BBR。${PLAIN}"
+        return 1
+    fi
+
+    _old_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
+    _old_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
+    if [ "$_old_cc" = "bbr" ] && [ "$_old_qdisc" = "fq" ]; then
+        echo -e "${GREEN}标准 BBR + fq 已启用，无需重复设置。${PLAIN}"
+        return 0
+    fi
+
+    read -r -p "确认开启标准 BBR + fq？[y/N]: " _confirm
+    case "$_confirm" in
+        [yY]) ;;
+        *) echo -e "${YELLOW}已取消。${PLAIN}"; return 1 ;;
+    esac
+
+    modprobe tcp_bbr 2>/dev/null || true
+    _dir=$(dirname "$BBR_SYSCTL_CONF")
+    mkdir -p "$_dir" 2>/dev/null || {
+        echo -e "${RED}无法创建 sysctl 配置目录: ${_dir}${PLAIN}"
+        return 1
+    }
+    _tmp=$(mktemp "${BBR_SYSCTL_CONF}.new.XXXXXX" 2>/dev/null) || {
+        echo -e "${RED}无法创建 BBR 临时配置${PLAIN}"
+        return 1
+    }
+    if [ -f "$BBR_SYSCTL_CONF" ]; then
+        _backup=$(mktemp "${BBR_SYSCTL_CONF}.bak.XXXXXX" 2>/dev/null) || {
+            rm -f "$_tmp"
+            echo -e "${RED}无法备份现有 BBR 配置${PLAIN}"
+            return 1
+        }
+        cp -p "$BBR_SYSCTL_CONF" "$_backup" || {
+            rm -f "$_tmp" "$_backup"
+            echo -e "${RED}无法备份现有 BBR 配置${PLAIN}"
+            return 1
+        }
+    fi
+    if ! cat > "$_tmp" <<EOF
+# Sing-box Multi-Protocol Tools - standard BBR tuning
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+    then
+        rm -f "$_tmp" "$_backup"
+        echo -e "${RED}无法写入 BBR 配置${PLAIN}"
+        return 1
+    fi
+    chmod 644 "$_tmp" && mv -f "$_tmp" "$BBR_SYSCTL_CONF" || {
+        rm -f "$_tmp" "$_backup"
+        echo -e "${RED}无法安装 BBR 配置${PLAIN}"
+        return 1
+    }
+
+    sysctl -p "$BBR_SYSCTL_CONF" >/dev/null 2>&1 || true
+    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
+    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
+    if [ "$_cc" = "bbr" ] && [ "$_qdisc" = "fq" ]; then
+        rm -f "$_backup"
+        echo -e "${GREEN}✓ 标准 BBR + fq 已启用，配置写入 ${BBR_SYSCTL_CONF}${PLAIN}"
+        return 0
+    fi
+
+    if [ -n "$_backup" ] && [ -f "$_backup" ]; then
+        mv -f "$_backup" "$BBR_SYSCTL_CONF" 2>/dev/null || _rollback_ok=0
+    else
+        rm -f "$BBR_SYSCTL_CONF" || _rollback_ok=0
+    fi
+    [ -z "$_old_qdisc" ] || sysctl -w "net.core.default_qdisc=${_old_qdisc}" >/dev/null 2>&1 || _rollback_ok=0
+    [ -z "$_old_cc" ] || sysctl -w "net.ipv4.tcp_congestion_control=${_old_cc}" >/dev/null 2>&1 || _rollback_ok=0
+    if [ "$_rollback_ok" = "1" ]; then
+        echo -e "${RED}BBR + fq 未完整生效，已恢复修改前的配置与实时参数。${PLAIN}"
+    else
+        echo -e "${RED}BBR + fq 未完整生效，且自动恢复不完整，请检查 ${BBR_SYSCTL_CONF} 与当前 sysctl。${PLAIN}"
+    fi
+    return 1
 }
 
 show_system_info() {
@@ -2278,16 +2517,20 @@ server_tools_menu() {
         echo -e " 1. 查看系统信息"
         echo -e " 2. 查看 VLESS 日志"
         echo -e " 3. 运行状态诊断"
-        echo -e " 4. 设置每周自动更新"
-        echo -e " 5. 移除自动更新"
+        echo -e " 4. 查看 BBR / TCP 队列状态"
+        echo -e " 5. 开启标准 BBR + fq"
+        echo -e " 6. 设置每周自动更新"
+        echo -e " 7. 移除自动更新"
         echo -e " 0. 返回"
-        read -r -p "请输入选项 [0-5]: " choice
+        read -r -p "请输入选项 [0-7]: " choice
         case "$choice" in
             1) show_system_info ;;
             2) service_logs; read -r -p "按回车返回..." _tmp ;;
             3) diagnose_vless; read -r -p "按回车返回..." _tmp ;;
-            4) setup_auto_update ;;
-            5) remove_auto_update ;;
+            4) show_bbr_status; read -r -p "按回车返回..." _tmp ;;
+            5) enable_standard_bbr; read -r -p "按回车返回..." _tmp ;;
+            6) setup_auto_update ;;
+            7) remove_auto_update ;;
             0|q|quit|exit) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac

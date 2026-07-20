@@ -103,8 +103,8 @@ LISTEN_PORT=""
 - 项目没有预发布分支。静态检查由 `tests/validate_scripts.sh` 和 GitHub Actions 执行；运行时行为仍需在一次性 VPS 上端到端验证。
 - 六个脚本的项目版本目前保持一致，但版本文本分散在文件头、菜单和变量中，发布时必须人工同步。
 - `anytls.sh` 使用 sing-box >= 1.12.0 原生 AnyTLS 入站；证书支持自签、已有文件和 sing-box >= 1.14.0 ACME Certificate Provider。ACME 仅在满足核心版本时开放，已有证书保留原始路径且不复制私钥。
-- `vless.sh` 使用 sing-box >= 1.12.0 原生 VLESS 入站，默认组合为 TCP + REALITY + `xtls-rprx-vision`；Shell 生成 UUID、REALITY 密钥、short ID、JSON 及 `vless-server` wrapper。
-- VLESS 安装会在当前 VPS 上筛选可达的 REALITY 握手目标；诊断中的 Cloudflare 小文件下载只反映 VPS 直连出口，不等价于客户端经 VLESS 的端到端测速。
+- `vless.sh` 使用 sing-box >= 1.12.0 原生 VLESS 入站，默认组合为 TCP + REALITY + `xtls-rprx-vision`；Shell 生成 UUID、REALITY 密钥、short ID、JSON 及 `vless-server` wrapper。REALITY `handshake` 通过本地 DNS resolver 固定到节点使用的 IPv4 或 IPv6 地址族，避免不可用的另一地址族拖住握手。
+- VLESS 安装会按节点地址族在当前 VPS 上筛选可达的 REALITY 握手目标；诊断中的 Cloudflare 小文件下载只反映外部测速源到 VPS 的入站下载，不覆盖 VPS 到客户端方向，也不等价于客户端经 VLESS 的端到端测速。
 - VLESS 与 AnyTLS 共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
 
 ## 本地验证清单
