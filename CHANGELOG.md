@@ -4,6 +4,16 @@
 
 ---
 
+## v2.0.22 (2026-07-21)
+
+- Restore the complete last-known-good VLESS fixes that were accidentally omitted from the v2.0.21 rollback, including dead-IPv6 detection, address-family-aware REALITY resolution, bounded health polling, diagnostics, and quoted Mihomo credentials.
+- Migrate installed VLESS configurations to the current schema without rotating UUIDs, REALITY keys, ports, or node addresses, and restore the previous config if validation or service recovery fails.
+- Make firewall failures visible across VLESS, AnyTLS, Hysteria 2, Shadowsocks, and EUserv; require verified listeners for service health and clean up project-owned Hysteria 2 rules on rollback or uninstall.
+- Verify AnyTLS/VLESS mirror downloads against SHA-256 digests from the official GitHub Release API; when no trusted digest is available, allow only the official GitHub asset URL.
+- Expand regression coverage for configuration migration, delayed service startup, firewall failure propagation, rule ownership, and optional real `sing-box check` validation.
+
+---
+
 ## v2.0.21 (2026-07-21)
 
 - Restore `vless.sh` and its behavior tests to the proven v2.0.19 baseline after v2.0.20 connectivity regressions.

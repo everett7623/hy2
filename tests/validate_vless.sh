@@ -51,9 +51,13 @@ curl() {
 reality_target_usable www.apple.com 443
 ! reality_target_usable www.microsoft.com 443
 unset -f curl
-reality_target_usable() { [ "$1" = 'www.apple.com' ]; }
+(
+BIND_FAMILY=v4
+reality_target_usable_v4() { [ "$1" = 'www.apple.com' ]; }
 [ "$(select_reality_target 443)" = 'www.apple.com' ]
-unset -f reality_target_usable
+)
+[ "$(BIND_FAMILY=v4 reality_domain_strategy)" = 'ipv4_only' ]
+[ "$(BIND_FAMILY=v6 reality_domain_strategy)" = 'ipv6_only' ]
 
 [ "$(detect_arch x86_64)" = amd64 ]
 [ "$(detect_arch aarch64)" = arm64 ]
@@ -63,6 +67,7 @@ unset -f reality_target_usable
 version_at_least 1.12.0 1.12.0
 version_at_least 1.13.1 1.12.0
 ! version_at_least 1.11.9 1.12.0
+[ "$(printf '%s\n' '{"assets":[{"name":"sing-box-test.tar.gz","digest":"sha256:ABCDEF1234"}]}' | parse_release_asset_sha256 sing-box-test.tar.gz)" = 'abcdef1234' ]
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -139,10 +144,10 @@ HANDSHAKE_PORT=443
 
 mihomo=$(export_mihomo_vless 192.0.2.1 8443 "VLESS Test")
 echo "$mihomo" | grep -q "type: vless"
-echo "$mihomo" | grep -q "uuid: $TEST_UUID"
+echo "$mihomo" | grep -q "uuid: '$TEST_UUID'"
 echo "$mihomo" | grep -q "flow: xtls-rprx-vision"
-echo "$mihomo" | grep -q "public-key: $TEST_PUBLIC_KEY"
-echo "$mihomo" | grep -q "short-id: $TEST_SHORT_ID"
+echo "$mihomo" | grep -q "public-key: '$TEST_PUBLIC_KEY'"
+echo "$mihomo" | grep -q "short-id: '$TEST_SHORT_ID'"
 loon=$(export_loon_vless 192.0.2.1 8443 "VLESS Test")
 echo "$loon" | grep -q 'transport=tcp'
 echo "$loon" | grep -q 'flow=xtls-rprx-vision'
@@ -170,17 +175,74 @@ MANAGED_SING_BOX=1
 PUBLIC_IP=""
 PUBLIC_IPV6=""
 
+# 防火墙后端失败时必须返回非零，不能打印成功或留下规则记录。
+(
+firewall-cmd() {
+    case "$*" in
+        '--state') return 0 ;;
+        '--permanent --query-port='*) return 1 ;;
+        *) return 1 ;;
+    esac
+}
+rm -rf "$VLESS_META/firewall"
+! open_ports 8443 >/dev/null 2>&1
+[ ! -e "$VLESS_META/firewall/firewalld-8443-tcp" ]
+unset -f firewall-cmd
+)
+
 write_config
 grep -q '"type": "vless"' "$VLESS_CONFIG"
 grep -q '"uuid": "'"$TEST_UUID"'"' "$VLESS_CONFIG"
+
+if [ -n "${REAL_SING_BOX_BIN:-}" ] && [ -x "$REAL_SING_BOX_BIN" ]; then
+    "$REAL_SING_BOX_BIN" check -c "$VLESS_CONFIG"
+fi
 grep -q '"flow": "xtls-rprx-vision"' "$VLESS_CONFIG"
 grep -q '"enabled": true' "$VLESS_CONFIG"
 grep -q '"server": "www.example.com"' "$VLESS_CONFIG"
 grep -q '"server_port": 443' "$VLESS_CONFIG"
+grep -q '"type": "local", "tag": "reality-local"' "$VLESS_CONFIG"
+grep -q '"domain_resolver"' "$VLESS_CONFIG"
+grep -q '"server": "reality-local"' "$VLESS_CONFIG"
+grep -q '"strategy": "ipv6_only"' "$VLESS_CONFIG"
+! grep -q '"domain_strategy"' "$VLESS_CONFIG"
 grep -q '"private_key": "'"$TEST_PRIVATE_KEY"'"' "$VLESS_CONFIG"
 grep -q '"short_id": \["'"$TEST_SHORT_ID"'"\]' "$VLESS_CONFIG"
 ! grep -q "$TEST_PUBLIC_KEY" "$VLESS_CONFIG"
 [ -z "$(find "$VLESS_DIR" -type f -name '*.new.*' -print -quit)" ]
+
+# 旧元数据没有 schema 标记时，迁移必须保留凭据并写入当前配置结构。
+sed -i '/^CONFIG_SCHEMA=/d' "$VLESS_META/config.env"
+CONFIG_SCHEMA=0
+migrate_vless_config
+grep -q '^CONFIG_SCHEMA=2$' "$VLESS_META/config.env"
+grep -q '"domain_resolver"' "$VLESS_CONFIG"
+grep -q '"strategy": "ipv6_only"' "$VLESS_CONFIG"
+grep -q '"uuid": "'"$TEST_UUID"'"' "$VLESS_CONFIG"
+
+# 同端口重装回滚时，不得删除旧安装已经拥有的防火墙规则。
+(
+firewall_rule=0
+firewall_log="$tmp/rollback-firewall.log"
+iptables() {
+    case "$1" in
+        -C) [ "$firewall_rule" = '1' ] ;;
+        -I) firewall_rule=1 ;;
+        -D) firewall_rule=0; echo delete >> "$firewall_log" ;;
+    esac
+}
+HAS_IPV6=0
+open_ports "$LISTEN_PORT" >/dev/null
+service_is_active() { return 1; }
+service_is_enabled() { return 1; }
+service_stop() { :; }
+service_disable() { :; }
+backup_current_install
+restore_current_install
+[ "$firewall_rule" = '1' ]
+[ ! -s "$firewall_log" ]
+[ -f "$VLESS_META/firewall/iptables4-${LISTEN_PORT}-tcp" ]
+)
 
 config_before=$(cat "$VLESS_CONFIG")
 mktemp() { return 1; }
@@ -203,28 +265,273 @@ MANAGED_SING_BOX=0
 read_config
 [ "$LISTEN_PORT:$EXT_PORT:$UUID:$SHORT_ID:$NAT_MODE:$BIND_FAMILY:$LISTEN_HOST:$SERVER_NAME:$HANDSHAKE_PORT:$MANAGED_SING_BOX" = "8443:9443:$TEST_UUID:$TEST_SHORT_ID:1:v6::::www.example.com:443:1" ]
 
-# 诊断必须分别报告服务、REALITY 目标和 VPS 直连下载结果。
+# 诊断正常路径：报告握手地址族、per-family 可达性、入站探针及本机 TCP/网卡/队列状态。
 (
 read_config() { return 0; }
 check_config() { return 0; }
 service_is_active() { return 0; }
-ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.0.0:8443'; }
-reality_target_usable() { return 0; }
+ss() {
+    case "$*" in
+        '-lnt') printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.0.0:8443' ;;
+        '-tn state established') printf '%s\n' 'Recv-Q Send-Q Local Address:Port Peer Address:Port' '0 0 0.0.0.0:8443 192.0.2.50:50000' ;;
+        *) return 1 ;;
+    esac
+}
+reality_target_usable_v4() { return 0; }
+reality_target_usable_v6() { return 0; }
 probe_vps_download_mbps() { printf '123.4'; }
-sysctl() { printf 'bbr'; }
+sysctl() {
+    case "$*" in
+        '-n net.ipv4.tcp_congestion_control') printf 'bbr' ;;
+        '-n net.core.default_qdisc') printf 'fq' ;;
+        *) return 1 ;;
+    esac
+}
+nstat() {
+    printf '%s\n' \
+        'TcpRetransSegs 12 0.0' \
+        'TcpExtTCPTimeouts 3 0.0' \
+        'TcpExtTCPSynRetrans 2 0.0' \
+        'IpInDiscards 1 0.0' \
+        'IpOutDiscards 4 0.0'
+}
+ip() {
+    case "$*" in
+        '-6 route show default') printf 'default via 2001:db8::1 dev eth0\n' ;;
+        '-4 route show default') printf 'default via 192.0.2.1 dev eth4\n' ;;
+        '-s link show dev eth0')
+            printf '%s\n' \
+                '2: eth0: <UP>' \
+                '    RX: bytes packets errors dropped missed mcast' \
+                '    1000 10 1 2 0 0' \
+                '    TX: bytes packets errors dropped carrier collsns' \
+                '    2000 20 3 4 0 0'
+            ;;
+        *) return 1 ;;
+    esac
+}
+tc() {
+    printf '%s\n' \
+        'qdisc fq 0: root refcnt 2' \
+        ' Sent 1000 bytes 10 pkt (dropped 5, overlimits 0 requeues 0)'
+}
 diagnose_output=$(diagnose_vless)
 grep -q 'sing-box 配置有效' <<EOF
 $diagnose_output
 EOF
-grep -q 'REALITY 目标 www.example.com:443 HTTPS/TLS 可达' <<EOF
+grep -q 'REALITY 握手目标' <<EOF
 $diagnose_output
 EOF
-grep -q 'VPS 直连下载探测: 123.4 Mbps' <<EOF
+grep -q '监听地址' <<EOF
 $diagnose_output
 EOF
-grep -q 'TCP 拥塞控制: bbr' <<EOF
+grep -q 'REALITY 握手地址族已限制为 ipv6_only' <<EOF
 $diagnose_output
 EOF
+grep -q '外部测速源 → VPS 入站下载探测: 123.4 Mbps' <<EOF
+$diagnose_output
+EOF
+grep -q 'TCP 拥塞控制: bbr | 默认队列: fq' <<EOF
+$diagnose_output
+EOF
+grep -q '当前 VLESS TCP 已建立连接: 1' <<EOF
+$diagnose_output
+EOF
+grep -q '内核累计 TCP: 重传 12 | 超时 3 | SYN 重传 2' <<EOF
+$diagnose_output
+EOF
+grep -q '内核累计 IP 丢弃: 入站 1 | 出站 4' <<EOF
+$diagnose_output
+EOF
+grep -q '网卡 eth0: RX errors=1 dropped=2 | TX errors=3 dropped=4' <<EOF
+$diagnose_output
+EOF
+grep -q '活动队列 eth0: fq | 累计丢弃 5' <<EOF
+$diagnose_output
+EOF
+)
+
+# 独立 VLESS 工具提供标准 BBR + fq，并在实时参数未完整生效时恢复配置。
+(
+BBR_SYSCTL_CONF="$tmp/bbr.conf"
+_test_cc=cubic
+_test_qdisc=fq_codel
+uname() { printf '6.1.0-test'; }
+modprobe() { :; }
+sysctl() {
+    case "$*" in
+        '-n net.ipv4.tcp_congestion_control') printf '%s' "$_test_cc" ;;
+        '-n net.core.default_qdisc') printf '%s' "$_test_qdisc" ;;
+        '-p '*) _test_cc=bbr; _test_qdisc=fq ;;
+        '-w net.core.default_qdisc='*) _test_qdisc="${2#*=}" ;;
+        '-w net.ipv4.tcp_congestion_control='*) _test_cc="${2#*=}" ;;
+        *) return 1 ;;
+    esac
+}
+printf 'old-setting\n' > "$BBR_SYSCTL_CONF"
+printf 'y\n' | enable_standard_bbr >/dev/null
+grep -q 'net.core.default_qdisc = fq' "$BBR_SYSCTL_CONF"
+grep -q 'net.ipv4.tcp_congestion_control = bbr' "$BBR_SYSCTL_CONF"
+)
+
+(
+BBR_SYSCTL_CONF="$tmp/bbr-rollback.conf"
+_test_cc=cubic
+_test_qdisc=fq_codel
+uname() { printf '6.1.0-test'; }
+modprobe() { :; }
+sysctl() {
+    case "$*" in
+        '-n net.ipv4.tcp_congestion_control') printf '%s' "$_test_cc" ;;
+        '-n net.core.default_qdisc') printf '%s' "$_test_qdisc" ;;
+        '-p '*) return 1 ;;
+        '-w '*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+printf 'old-setting\n' > "$BBR_SYSCTL_CONF"
+before=$(cat "$BBR_SYSCTL_CONF")
+! printf 'y\n' | enable_standard_bbr >/dev/null
+[ "$(cat "$BBR_SYSCTL_CONF")" = "$before" ]
+)
+
+# 诊断：config 和 meta 均缺失时报告"均缺失"。
+(
+VLESS_CONFIG="$tmp/no-config.json"
+VLESS_META="$tmp/no-meta-dir"
+out=$(diagnose_vless 2>&1 || true)
+grep -q '均缺失' <<EOF
+$out
+EOF
+)
+
+# 诊断：仅 config 缺失（meta 存在）时报告"配置文件缺失"。
+(
+VLESS_CONFIG="$tmp/no-config.json"
+out=$(diagnose_vless 2>&1 || true)
+grep -q '配置文件缺失' <<EOF
+$out
+EOF
+)
+
+# 诊断：仅 meta 缺失（config 存在）时报告"元数据缺失"。
+(
+VLESS_META="$tmp/no-meta-dir"
+out=$(diagnose_vless 2>&1 || true)
+grep -q '元数据缺失' <<EOF
+$out
+EOF
+)
+
+# 诊断：元数据字段校验失败时报告具体字段名（非密钥字段显示原值）。
+(
+_bad_meta="$tmp/bad-meta"
+mkdir -p "$_bad_meta"
+printf 'LISTEN_PORT=not_a_port\n' > "$_bad_meta/config.env"
+touch "$tmp/dummy-vless.json"
+VLESS_CONFIG="$tmp/dummy-vless.json"
+VLESS_META="$_bad_meta"
+out=$(diagnose_vless 2>&1 || true)
+grep -q 'LISTEN_PORT' <<EOF
+$out
+EOF
+)
+
+# wait_for_health：第三次才成功时应正常返回，且恰好尝试了三次。
+(
+_attempt=0
+service_is_healthy() { _attempt=$((_attempt + 1)); [ "$_attempt" -ge 3 ]; }
+sleep() { :; }
+wait_for_health 5
+[ "$_attempt" = "3" ]
+)
+
+# wait_for_health：达到轮询上限仍失败时返回非零。
+(
+service_is_healthy() { return 1; }
+sleep() { :; }
+! wait_for_health 3
+)
+
+# wait_for_health：第二参数可传自定义判定函数（升级路径给共享 AnyTLS 用）。
+(
+_shared_attempt=0
+shared_anytls_service_is_active() { _shared_attempt=$((_shared_attempt + 1)); [ "$_shared_attempt" -ge 2 ]; }
+service_is_healthy() { return 1; }   # 确认走的是自定义判定而非默认
+sleep() { :; }
+wait_for_health 5 shared_anytls_service_is_active
+[ "$_shared_attempt" = "2" ]
+)
+
+# reality_target_usable_v4 和 _v6 分别透传 -4 / -6 旗标给 curl。
+(
+curl() {
+    case "$*" in
+        '--help all') printf '%s\n' '--tls-max' ;;
+        *'-4'*'www.apple.com'*) return 0 ;;
+        *'-6'*'www.apple.com'*) return 1 ;;
+        *) return 1 ;;
+    esac
+}
+reality_target_usable_v4 www.apple.com 443
+! reality_target_usable_v6 www.apple.com 443
+! reality_target_usable_v4 www.microsoft.com 443
+unset -f curl
+)
+
+# has_default_ipv6_route：有默认 IPv6 路由为真，无输出为假。
+(
+ip() { case "$*" in '-6 route show default') printf 'default via fe80::1 dev eth0\n' ;; *) return 0 ;; esac; }
+has_default_ipv6_route
+unset -f ip
+ip() { return 0; }
+! has_default_ipv6_route
+unset -f ip
+)
+
+# detect_network：接口有全局 IPv6 但外网不可达且无默认路由 → 判纯 IPv4，
+# 避免向客户端下发死 IPv6 节点、避免 sing-box 握手拨向死 IPv6。
+(
+detect_warp() { return 1; }
+get_default_public_ipv4() { printf '203.0.113.5'; }
+get_native_public_ipv4() { printf '203.0.113.5'; }
+curl() { return 1; }
+has_default_ipv6_route() { return 1; }
+ip() {
+    case "$*" in
+        '-6 addr show scope global') printf '2: eth0\n    inet6 2001:db8::5/64 scope global\n' ;;
+        '-4 addr show scope global') printf '2: eth0\n    inet 203.0.113.5/24 scope global\n' ;;
+        'addr show') printf '    inet 203.0.113.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV6" = "0" ]
+[ "$HAS_IPV4" = "1" ]
+[ "$LISTEN_HOST" = "0.0.0.0" ]
+[ "$BIND_FAMILY" = "v4" ]
+[ -z "$PUBLIC_IPV6" ]
+)
+
+# detect_network：接口有全局 IPv6 且存在默认路由 → 仍判双栈（正常机不受影响）。
+(
+detect_warp() { return 1; }
+get_default_public_ipv4() { printf '203.0.113.5'; }
+get_native_public_ipv4() { printf '203.0.113.5'; }
+curl() { return 1; }
+has_default_ipv6_route() { return 0; }
+ip() {
+    case "$*" in
+        '-6 addr show scope global') printf '2: eth0\n    inet6 2001:db8::5/64 scope global\n' ;;
+        '-4 addr show scope global') printf '2: eth0\n    inet 203.0.113.5/24 scope global\n' ;;
+        'addr show') printf '    inet 203.0.113.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV6" = "1" ]
+[ "$PUBLIC_IPV6" = "2001:db8::5" ]
+[ "$BIND_FAMILY" = "v4" ]
 )
 
 # 最新版不重复替换；候选核心导致配置校验失败时必须恢复旧二进制。

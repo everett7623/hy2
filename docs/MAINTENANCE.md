@@ -8,6 +8,7 @@
 - VLESS 配置位于 `/etc/sing-box/vless.json`，元数据位于 `vless-meta/`；默认使用 TCP + REALITY + `xtls-rprx-vision`。
 - `/etc/sing-box` 与 `/usr/local/bin/sing-box` 由 AnyTLS、VLESS 或其他服务共享。协议卸载只能删除自身产物；`.singbox-tools-managed` 用于延续项目安装核心的所有权。
 - AnyTLS/VLESS 下载候选核心后，必须先用候选二进制校验 `/etc/sing-box/*.json`，全部通过后才可原子替换共享核心。
+- AnyTLS/VLESS 使用第三方下载镜像时，必须先从 GitHub 官方 Release API 获取对应资产 SHA-256 摘要并校验；无法取得可信摘要时只允许官方 GitHub 资产 URL。
 - AnyTLS/VLESS 核心升级共用 `/var/lock/sing-box-tools-upgrade.lock`；自动任务应错峰，避免并发替换共享二进制。
 - 核心替换成功后，升级入口会重启替换前处于运行状态的 AnyTLS/VLESS 服务；任一共享服务启动失败时恢复旧核心并重启原服务。
 - 自动测试不替代真实 VPS 的服务启动、防火墙和客户端连通性验证。
@@ -61,7 +62,7 @@
 
 - 不记录或提交密码、私钥和完整节点链接。
 - VLESS 服务端 REALITY 私钥只能保存在 root 可读配置/元数据中；节点、二维码和诊断输出只能使用公钥。
-- 远程脚本必须使用 HTTPS，并对下载结果做语法或二进制验证。
+- 远程脚本必须使用 HTTPS，并对下载结果做语法或二进制验证；第三方二进制镜像还必须使用官方来源摘要校验。
 - 不使用 `eval` 执行用户输入。
 - 不直接 `source` 可被用户修改的元数据文件。
 - `rm -rf` 目标必须是固定项目路径，不能由未经验证的输入拼接。

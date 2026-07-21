@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.21"
+EXPECTED_VERSION="v2.0.22"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -234,8 +234,8 @@ grep -q 'info|node|export|all) show_config' ss.sh
 grep -q 'qrcode|qr) show_config qrcode' ss.sh
 grep -q '_downloaded_version.*LAST_VERSION' hy2.sh
 grep -q '_downloaded_version.*LAST_VERSION' ss.sh
-grep -q '\[ "\$_was_active" = "0" \] || { service_restart; sleep 2; }' hy2.sh
-grep -q '\[ "\$_was_active" = "0" \] || { service_restart; sleep 2; }' ss.sh
+grep -q '\[ "\$_was_active" = "0" \] || service_restart' hy2.sh
+grep -q '\[ "\$_was_active" = "0" \] || service_restart' ss.sh
 grep -q 'install) install_anytls' anytls.sh
 grep -q 'info|node|export|all) show_config' anytls.sh
 grep -q 'qrcode|qr) show_config qrcode' anytls.sh

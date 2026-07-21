@@ -88,6 +88,13 @@ ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port Peer Address:Port' 
 service_is_healthy
 ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port Peer Address:Port' 'UNCONN 0 0 0.0.0.0:9443 0.0.0.0:*'; }
 ! service_is_healthy
+(
+health_attempt=0
+service_is_healthy() { health_attempt=$((health_attempt + 1)); [ "$health_attempt" -ge 3 ]; }
+sleep() { :; }
+wait_for_health 5
+[ "$health_attempt" = '3' ]
+)
 df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 100000 1 100000 1% /'; }
 has_free_space_mb "$tmp" 48
 df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 100000 99999 1 99% /'; }
@@ -95,6 +102,33 @@ df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
 unset -f ss df service_is_active
 HY_CONFIG="$tmp/config.yaml"; HY_META="$tmp/meta"
 mkdir -p "$HY_META"
+
+# 防火墙规则必须验证后记录所有权，失败不得误报成功。
+firewall_log="$tmp/firewall.log"; firewall_state="$tmp/firewall-state"; firewall_fail=0; HAS_IPV6=0
+mkdir -p "$firewall_state"
+iptables() {
+    local _action="$1" _port="" _proto=""
+    shift
+    while [ "$#" -gt 0 ]; do
+        [ "$1" = '-p' ] && { shift; _proto="$1"; shift; continue; }
+        [ "$1" = '--dport' ] && { shift; _port="$1"; break; }
+        shift
+    done
+    case "$_action" in
+        -C) [ -f "$firewall_state/${_port}-${_proto}" ] ;;
+        -I) [ "$firewall_fail" = '0' ] || return 1; : > "$firewall_state/${_port}-${_proto}"; echo "add ${_port}-${_proto}" >> "$firewall_log" ;;
+        -D) rm -f "$firewall_state/${_port}-${_proto}"; echo "delete ${_port}-${_proto}" >> "$firewall_log" ;;
+    esac
+}
+open_firewall_port 8443 udp >/dev/null
+[ -f "$HY_META/firewall/iptables4-udp-port-8443-0" ]
+close_all_owned_firewall_rules
+[ ! -e "$firewall_state/8443-udp" ]
+firewall_fail=1
+! open_firewall_port 10443 udp >/dev/null 2>&1
+[ ! -e "$HY_META/firewall/iptables4-udp-port-10443-0" ]
+firewall_fail=0
+
 printf '%s\n' 'listen: :8443' 'auth:' '  type: password' '  password: testpass' > "$HY_CONFIG"
 printf '%s' '8443' > "$HY_META/ext_port"
 printf '%s' '0' > "$HY_META/nat_mode"
@@ -131,6 +165,8 @@ service_enable() { : > "$tmp/enabled"; }
 service_start() { : > "$tmp/restarted"; }
 trap -p INT > "$tmp/int-trap-before"
 backup_current_install
+open_firewall_port 9443 udp >/dev/null
+[ -f "$firewall_state/9443-udp" ]
 printf '%s' 'new-bin' > "$HY_BIN"
 printf '%s' 'new-config' > "$HY_CONFIG"
 printf '%s' 'new-cert' > "$HY_CERT_DIR/server.crt"
@@ -140,6 +176,7 @@ restore_current_install
 [ "$(cat "$HY_CONFIG")" = 'old-config' ]
 [ "$(cat "$HY_CERT_DIR/server.crt")" = 'old-cert' ]
 [ "$(cat "$HY_META/marker")" = 'old-meta' ]
+[ ! -e "$firewall_state/9443-udp" ]
 [ -f "$tmp/restarted" ]
 [ -f "$tmp/disabled" ]
 [ -f "$tmp/enabled" ]
@@ -160,6 +197,7 @@ set -e
 [ -f "$tmp/enabled" ]
 INSTALL_BACKUP_DIR=""
 disarm_install_rollback
+unset -f iptables
 
 PASSWORD=testpass; BW_UP=50; BW_DOWN=100; SNI=example.com
 write_hy2_config ':8443'

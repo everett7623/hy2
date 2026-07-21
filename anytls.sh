@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.0.21
+# 版本：v2.0.22
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -175,7 +175,7 @@ retry_command() {
 
 install_dependencies() {
     local _cmd _ready=1
-    for _cmd in curl tar openssl ip; do
+    for _cmd in curl tar openssl ip ss; do
         command -v "$_cmd" >/dev/null 2>&1 || _ready=0
     done
     if [ "$_ready" = "1" ]; then
@@ -215,7 +215,7 @@ install_dependencies() {
     esac
 
     local _missing=0
-    for _cmd in curl tar openssl ip; do
+    for _cmd in curl tar openssl ip ss; do
         if ! command -v "$_cmd" >/dev/null 2>&1; then
             echo -e "${RED}致命错误: 缺少组件 [ $_cmd ]，请手动安装后重试${PLAIN}"
             _missing=1
@@ -545,47 +545,82 @@ detect_network() {
 }
 
 open_ports() {
-    local _port=$1
-    local _fw_meta="$ANYTLS_META/firewall"
-    mkdir -p "$_fw_meta" 2>/dev/null || true
+    local _port="$1" _fw_meta="$ANYTLS_META/firewall" _added4=0
+    validate_port "$_port" || { echo -e "${RED}无效的防火墙端口: ${_port}${PLAIN}"; return 1; }
+    mkdir -p "$_fw_meta" 2>/dev/null || {
+        echo -e "${RED}无法创建防火墙规则记录目录，已取消放行${PLAIN}"
+        return 1
+    }
     echo -e "${YELLOW}正在自动放行 TCP 端口 ${_port}...${PLAIN}"
 
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         if ! firewall-cmd --permanent --query-port="${_port}/tcp" >/dev/null 2>&1; then
-            firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1 && \
-                : > "$_fw_meta/firewalld-${_port}-tcp"
+            if ! firewall-cmd --permanent --add-port="${_port}/tcp" >/dev/null 2>&1 || \
+                ! firewall-cmd --reload >/dev/null 2>&1 || \
+                ! firewall-cmd --query-port="${_port}/tcp" >/dev/null 2>&1; then
+                firewall-cmd --permanent --remove-port="${_port}/tcp" >/dev/null 2>&1 || true
+                firewall-cmd --reload >/dev/null 2>&1 || true
+                echo -e "${RED}firewalld 放行 tcp/${_port} 失败${PLAIN}"
+                return 1
+            fi
+            : > "$_fw_meta/firewalld-${_port}-tcp"
         fi
-        firewall-cmd --reload >/dev/null 2>&1
+        if ! firewall-cmd --query-port="${_port}/tcp" >/dev/null 2>&1; then
+            firewall-cmd --reload >/dev/null 2>&1 && firewall-cmd --query-port="${_port}/tcp" >/dev/null 2>&1 || {
+                echo -e "${RED}firewalld 未能应用 tcp/${_port}${PLAIN}"
+                return 1
+            }
+        fi
         echo -e "  ${GREEN}✓ firewalld 已放行 tcp/${_port}${PLAIN}"
-        return
+        return 0
     fi
 
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
         if ! ufw status 2>/dev/null | grep -qE "^${_port}/tcp[[:space:]]+ALLOW"; then
-            ufw allow "${_port}/tcp" >/dev/null 2>&1 && : > "$_fw_meta/ufw-${_port}-tcp"
+            if ! ufw allow "${_port}/tcp" >/dev/null 2>&1 || \
+                ! ufw status 2>/dev/null | grep -qE "^${_port}/tcp[[:space:]]+ALLOW"; then
+                echo -e "${RED}ufw 放行 tcp/${_port} 失败${PLAIN}"
+                return 1
+            fi
+            : > "$_fw_meta/ufw-${_port}-tcp"
         fi
         echo -e "  ${GREEN}✓ ufw 已放行 tcp/${_port}${PLAIN}"
-        return
+        return 0
     fi
 
     if command -v iptables >/dev/null 2>&1; then
         if ! iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
-            iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
-                : > "$_fw_meta/iptables4-${_port}-tcp"
+            if ! iptables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+                ! iptables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+                echo -e "${RED}iptables 放行 tcp/${_port} 失败${PLAIN}"
+                return 1
+            fi
+            _added4=1
+            : > "$_fw_meta/iptables4-${_port}-tcp"
         fi
         if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
             if ! ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
-                ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
-                    : > "$_fw_meta/iptables6-${_port}-tcp"
+                if ! ip6tables -I INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+                    ! ip6tables -C INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+                    [ "$_added4" = "0" ] || iptables -D INPUT -p tcp --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || true
+                    [ "$_added4" = "0" ] || rm -f "$_fw_meta/iptables4-${_port}-tcp"
+                    echo -e "${RED}ip6tables 放行 tcp/${_port} 失败${PLAIN}"
+                    return 1
+                fi
+                : > "$_fw_meta/iptables6-${_port}-tcp"
             fi
         fi
         if command -v netfilter-persistent >/dev/null 2>&1; then
-            netfilter-persistent save >/dev/null 2>&1
+            netfilter-persistent save >/dev/null 2>&1 || echo -e "  ${YELLOW}! 规则已生效，但持久化保存失败${PLAIN}"
         elif [ -f /etc/sysconfig/iptables ] && command -v service >/dev/null 2>&1; then
-            service iptables save >/dev/null 2>&1
+            service iptables save >/dev/null 2>&1 || echo -e "  ${YELLOW}! 规则已生效，但持久化保存失败${PLAIN}"
         fi
         echo -e "  ${GREEN}✓ iptables 已放行 tcp/${_port}${PLAIN}"
+        return 0
     fi
+
+    echo -e "  ${YELLOW}! 未检测到启用的本机防火墙；请确认云安全组已放行 tcp/${_port}${PLAIN}"
+    return 0
 }
 
 close_ports() {
@@ -620,8 +655,7 @@ close_ports() {
 open_acme_challenge_ports() {
     [ "$CERT_MODE" = "acme" ] || return 0
     echo -e "${YELLOW}ACME 需要公网 TCP 80/443；请确认域名解析及 NAT/安全组转发正确。${PLAIN}"
-    open_ports 80
-    open_ports 443
+    open_ports 80 && open_ports 443
 }
 
 close_acme_challenge_ports() {
@@ -728,6 +762,38 @@ download_file() {
     return 1
 }
 
+parse_release_asset_sha256() {
+    local _asset="$1"
+    awk -v asset="$_asset" '
+        /"name":[[:space:]]*"/ {
+            name=$0
+            sub(/^.*"name":[[:space:]]*"/, "", name)
+            sub(/".*$/, "", name)
+        }
+        name == asset && /"digest":[[:space:]]*"sha256:/ {
+            digest=$0
+            sub(/^.*"digest":[[:space:]]*"sha256:/, "", digest)
+            sub(/".*$/, "", digest)
+            print tolower(digest)
+            exit
+        }
+    '
+}
+
+get_release_asset_sha256() {
+    local _tag="$1" _asset="$2"
+    curl -fsSL --connect-timeout 8 --max-time 20 \
+        "https://api.github.com/repos/SagerNet/sing-box/releases/tags/${_tag}" 2>/dev/null \
+        | parse_release_asset_sha256 "$_asset"
+}
+
+verify_archive_sha256() {
+    local _file="$1" _expected="$2" _actual
+    [ -n "$_expected" ] || return 1
+    _actual=$(openssl dgst -sha256 "$_file" 2>/dev/null | awk '{ print tolower($NF) }')
+    [ "$_actual" = "$_expected" ]
+}
+
 download_anytls() {
     check_download_space || return 1
     local _arch
@@ -743,15 +809,24 @@ download_anytls() {
         "https://gh.api.99988866.xyz/https://github.com/${_gh_path}"
     )
 
-    local _tmp_archive _tmp_dir _ok=0 _url _host
+    local _tmp_archive _tmp_dir _ok=0 _url _host _expected_sha256
+    _expected_sha256=$(get_release_asset_sha256 "$LAST_VERSION_TAG" "$_asset" 2>/dev/null || true)
+    if [ -z "$_expected_sha256" ]; then
+        echo -e "${YELLOW}! 无法获取 GitHub 官方摘要，本次仅允许官方 GitHub 下载源${PLAIN}"
+    fi
     _tmp_dir=$(mktemp -d "$(disk_tmp_dir)/sing-box-XXXXXX") || return 1
     _tmp_archive="${_tmp_dir}/${_asset}"
 
     for _url in "${_urls[@]}"; do
         _host=$(echo "$_url" | awk -F/ '{print $3}')
+        [ -n "$_expected_sha256" ] || [ "$_host" = "github.com" ] || continue
         echo -e "${YELLOW}正在下载 ${_asset}（来源: ${_host}）${PLAIN}"
         rm -f "$_tmp_archive"
         if download_file "$_url" "$_tmp_archive"; then
+            if [ -n "$_expected_sha256" ] && ! verify_archive_sha256 "$_tmp_archive" "$_expected_sha256"; then
+                echo -e "${RED}  ↳ SHA-256 校验失败，拒绝使用该下载内容${PLAIN}"
+                continue
+            fi
             if tar -tzf "$_tmp_archive" >/dev/null 2>&1; then
                 _ok=1
                 break
@@ -1366,9 +1441,14 @@ discard_install_backup() {
 }
 
 restore_current_install() {
+    local _marker
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
     service_stop
     service_disable
+    for _marker in "$INSTALL_BACKUP_DIR"/meta/firewall/*; do
+        [ -f "$_marker" ] || continue
+        rm -f "$ANYTLS_META/firewall/$(basename "$_marker")"
+    done
     close_ports "${LISTEN_PORT:-}"
     close_acme_challenge_ports
     rm -f "$ANYTLS_CONFIG" "$ANYTLS_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
@@ -1394,6 +1474,14 @@ restore_current_install() {
     [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
     [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
     discard_install_backup
+}
+
+close_replaced_install_port() {
+    local _old_port=""
+    [ -f "$INSTALL_BACKUP_DIR/meta/config.env" ] || return 0
+    _old_port=$(awk -F= '$1 == "LISTEN_PORT" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
+    validate_port "$_old_port" || return 0
+    [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$_old_port"
 }
 
 read_config_live() {
@@ -1560,12 +1648,22 @@ shared_vless_service_restart() {
 
 service_is_healthy() {
     service_is_active || return 1
-    validate_port "${LISTEN_PORT:-}" || return 0
-    command -v ss >/dev/null 2>&1 || return 0
+    validate_port "${LISTEN_PORT:-}" || return 1
+    command -v ss >/dev/null 2>&1 || return 1
     ss -lnt 2>/dev/null | awk -v port="$LISTEN_PORT" '
         NR > 1 { addr=$4; if (addr ~ (":" port "$")) found=1 }
         END { exit(found ? 0 : 1) }
     '
+}
+
+wait_for_health() {
+    local _attempts="${1:-12}" _check="${2:-service_is_healthy}" _i=0
+    while [ "$_i" -lt "$_attempts" ]; do
+        "$_check" && return 0
+        _i=$((_i + 1))
+        [ "$_i" -lt "$_attempts" ] && sleep 1
+    done
+    return 1
 }
 
 has_free_space_mb() {
@@ -1688,14 +1786,17 @@ install_anytls() {
         write_openrc_service
     fi
 
-    service_enable
-    open_ports "$LISTEN_PORT"
-    sync_acme_challenge_ports
+    service_enable || { echo -e "${RED}AnyTLS 服务开机启动设置失败${PLAIN}"; restore_current_install; return; }
+    open_ports "$LISTEN_PORT" || { restore_current_install; return; }
+    sync_acme_challenge_ports || { restore_current_install; return; }
     echo -e "${YELLOW}正在启动 AnyTLS 服务...${PLAIN}"
-    if service_is_active; then service_restart; else service_start; fi
+    if service_is_active; then
+        service_restart || { restore_current_install; return; }
+    else
+        service_start || { restore_current_install; return; }
+    fi
 
-    sleep 2
-    if service_is_healthy; then
+    if wait_for_health; then
         echo -e "${GREEN}✓ AnyTLS 服务端启动成功${PLAIN}"
     else
         echo -e "${RED}✗ AnyTLS 启动失败，请查看日志：${PLAIN}"
@@ -1706,6 +1807,7 @@ install_anytls() {
         return
     fi
 
+    close_replaced_install_port
     discard_install_backup
     show_config
 }
@@ -1715,7 +1817,7 @@ change_config() {
         echo -e "${RED}未安装 AnyTLS${PLAIN}"; sleep 2; return
     fi
     read_config || { echo -e "${RED}AnyTLS 配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
-    local _old_sni="$SERVER_NAME" _old_port="$LISTEN_PORT" _was_active=0
+    local _old_sni="$SERVER_NAME" _old_port="$LISTEN_PORT" _old_cert_mode="$CERT_MODE" _was_active=0
     service_is_active && _was_active=1 || true
     detect_network
 
@@ -1799,11 +1901,23 @@ change_config() {
         write_openrc_service
     fi
 
-    open_ports "$LISTEN_PORT"
-    [ "$_was_active" = "1" ] && service_restart
-    sleep 1
-    if [ "$_was_active" = "1" ] && ! service_is_healthy; then
+    if ! open_ports "$LISTEN_PORT" || ! sync_acme_challenge_ports; then
         [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
+        if [ "$_old_cert_mode" = "acme" ]; then open_acme_challenge_ports || true; else close_acme_challenge_ports; fi
+        mv -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG" 2>/dev/null || true
+        mv -f "$ANYTLS_META/config.env.bak" "$ANYTLS_META/config.env" 2>/dev/null || true
+        mv -f "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ip" 2>/dev/null || true
+        mv -f "$ANYTLS_META/public_ipv6.bak" "$ANYTLS_META/public_ipv6" 2>/dev/null || true
+        mv -f "${ANYTLS_CERT}.bak" "$ANYTLS_CERT" 2>/dev/null || true
+        mv -f "${ANYTLS_KEY}.bak" "$ANYTLS_KEY" 2>/dev/null || true
+        read_config || true
+        echo -e "${RED}防火墙放行失败，配置已回滚${PLAIN}"
+        return
+    fi
+    [ "$_was_active" = "0" ] || service_restart || true
+    if [ "$_was_active" = "1" ] && ! wait_for_health; then
+        [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
+        if [ "$_old_cert_mode" = "acme" ]; then open_acme_challenge_ports || true; else close_acme_challenge_ports; fi
         mv -f "${ANYTLS_CONFIG}.bak" "$ANYTLS_CONFIG" 2>/dev/null || true
         mv -f "$ANYTLS_META/config.env.bak" "$ANYTLS_META/config.env" 2>/dev/null || true
         mv -f "$ANYTLS_META/public_ip.bak" "$ANYTLS_META/public_ip" 2>/dev/null || true
@@ -2120,7 +2234,7 @@ _upgrade_core_locked() {
     if [ "$_was_active" = "1" ] || [ "$_shared_was_active" = "1" ]; then
         sleep 2
     fi
-    [ "$_was_active" = "0" ] || service_is_healthy || _restart_failed=1
+    [ "$_was_active" = "0" ] || wait_for_health || _restart_failed=1
     [ "$_shared_was_active" = "0" ] || shared_vless_service_is_active || _restart_failed=1
     if [ "$_restart_failed" = "1" ]; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
@@ -2375,7 +2489,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.21${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.22${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

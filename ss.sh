@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：everettlabs
-# 版本：v2.0.21
+# 版本：v2.0.22
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -231,57 +231,95 @@ detect_network() {
 # ============================================================
 
 open_ports() {
-    local _port=$1
-    local _fw_meta="$SS_META/firewall" _proto
-    mkdir -p "$_fw_meta" 2>/dev/null || true
+    local _port="$1" _fw_meta="$SS_META/firewall" _proto
+    valid_port "$_port" || { echo -e "${RED}无效的防火墙端口: ${_port}${PLAIN}"; return 1; }
+    mkdir -p "$_fw_meta" 2>/dev/null || {
+        echo -e "${RED}无法创建防火墙规则记录目录，已取消放行${PLAIN}"
+        return 1
+    }
     echo -e "${YELLOW}正在自动放行 Linux 系统防火墙端口 ${_port}...${PLAIN}"
 
     # firewalld：用 --state 判断运行状态（比 is-active 更可靠）
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         for _proto in tcp udp; do
             if ! firewall-cmd --permanent --query-port="${_port}/${_proto}" >/dev/null 2>&1; then
-                firewall-cmd --permanent --add-port="${_port}/${_proto}" >/dev/null 2>&1 && \
-                    : > "$_fw_meta/firewalld-${_port}-${_proto}"
+                if ! firewall-cmd --permanent --add-port="${_port}/${_proto}" >/dev/null 2>&1; then
+                    close_ports "$_port"
+                    echo -e "${RED}firewalld 放行 ${_proto}/${_port} 失败${PLAIN}"
+                    return 1
+                fi
+                : > "$_fw_meta/firewalld-${_port}-${_proto}"
             fi
         done
-        firewall-cmd --reload >/dev/null 2>&1
+        if ! firewall-cmd --reload >/dev/null 2>&1; then
+            close_ports "$_port"
+            echo -e "${RED}firewalld 重载失败${PLAIN}"
+            return 1
+        fi
+        for _proto in tcp udp; do
+            firewall-cmd --query-port="${_port}/${_proto}" >/dev/null 2>&1 || {
+                close_ports "$_port"
+                echo -e "${RED}firewalld 未能应用 ${_proto}/${_port}${PLAIN}"
+                return 1
+            }
+        done
         echo -e "  ${GREEN}✓ firewalld 已放行 tcp+udp/${_port}${PLAIN}"
-        return
+        return 0
     fi
 
     # ufw：用 ufw status 判断 active（比 is-active 更可靠）
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
         for _proto in tcp udp; do
             if ! ufw status 2>/dev/null | grep -qE "^${_port}/${_proto}[[:space:]]+ALLOW"; then
-                ufw allow "${_port}/${_proto}" >/dev/null 2>&1 && : > "$_fw_meta/ufw-${_port}-${_proto}"
+                if ! ufw allow "${_port}/${_proto}" >/dev/null 2>&1 || \
+                    ! ufw status 2>/dev/null | grep -qE "^${_port}/${_proto}[[:space:]]+ALLOW"; then
+                    close_ports "$_port"
+                    echo -e "${RED}ufw 放行 ${_proto}/${_port} 失败${PLAIN}"
+                    return 1
+                fi
+                : > "$_fw_meta/ufw-${_port}-${_proto}"
             fi
         done
         echo -e "  ${GREEN}✓ ufw 已放行 tcp+udp/${_port}${PLAIN}"
-        return
+        return 0
     fi
 
     if command -v iptables >/dev/null 2>&1; then
         for _proto in tcp udp; do
             if ! iptables -C INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
-                iptables -I INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
-                    : > "$_fw_meta/iptables4-${_port}-${_proto}"
+                if ! iptables -I INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+                    ! iptables -C INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+                    close_ports "$_port"
+                    echo -e "${RED}iptables 放行 ${_proto}/${_port} 失败${PLAIN}"
+                    return 1
+                fi
+                : > "$_fw_meta/iptables4-${_port}-${_proto}"
             fi
         done
         if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
             for _proto in tcp udp; do
                 if ! ip6tables -C INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
-                    ip6tables -I INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1 && \
-                        : > "$_fw_meta/iptables6-${_port}-${_proto}"
+                    if ! ip6tables -I INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1 || \
+                        ! ip6tables -C INPUT -p "$_proto" --dport "${_port}" -j ACCEPT >/dev/null 2>&1; then
+                        close_ports "$_port"
+                        echo -e "${RED}ip6tables 放行 ${_proto}/${_port} 失败${PLAIN}"
+                        return 1
+                    fi
+                    : > "$_fw_meta/iptables6-${_port}-${_proto}"
                 fi
             done
         fi
         if command -v netfilter-persistent >/dev/null 2>&1; then
-            netfilter-persistent save >/dev/null 2>&1
+            netfilter-persistent save >/dev/null 2>&1 || echo -e "  ${YELLOW}! 规则已生效，但持久化保存失败${PLAIN}"
         elif [ -f /etc/sysconfig/iptables ] && command -v service >/dev/null 2>&1; then
-            service iptables save >/dev/null 2>&1
+            service iptables save >/dev/null 2>&1 || echo -e "  ${YELLOW}! 规则已生效，但持久化保存失败${PLAIN}"
         fi
         echo -e "  ${GREEN}✓ iptables 已放行 tcp+udp/${_port}${PLAIN}"
+        return 0
     fi
+
+    echo -e "  ${YELLOW}! 未检测到启用的本机防火墙；请确认云安全组已放行 tcp+udp/${_port}${PLAIN}"
+    return 0
 }
 
 close_ports() {
@@ -377,12 +415,22 @@ service_is_active() {
 
 service_is_healthy() {
     service_is_active || return 1
-    valid_port "${LISTEN_PORT:-}" || return 0
-    command -v ss >/dev/null 2>&1 || return 0
+    valid_port "${LISTEN_PORT:-}" || return 1
+    command -v ss >/dev/null 2>&1 || return 1
     ss -lntu 2>/dev/null | awk -v port="$LISTEN_PORT" '
         NR > 1 { addr=$5; if (addr == "") addr=$4; if (addr ~ (":" port "$")) found=1 }
         END { exit(found ? 0 : 1) }
     '
+}
+
+wait_for_health() {
+    local _attempts="${1:-12}" _i=0
+    while [ "$_i" -lt "$_attempts" ]; do
+        service_is_healthy && return 0
+        _i=$((_i + 1))
+        [ "$_i" -lt "$_attempts" ] && sleep 1
+    done
+    return 1
 }
 
 has_free_space_mb() {
@@ -506,9 +554,14 @@ discard_install_backup() {
 }
 
 restore_current_install() {
+    local _marker
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
     service_stop
     service_disable
+    for _marker in "$INSTALL_BACKUP_DIR"/meta/firewall/*; do
+        [ -f "$_marker" ] || continue
+        rm -f "$SS_META/firewall/$(basename "$_marker")"
+    done
     close_ports "${LISTEN_PORT:-}"
     rm -f "$SS_BIN" "$SS_CONFIG" "$SERVICE_FILE" "$OPENRC_SERVICE"
     rm -rf "$SS_META"
@@ -521,6 +574,14 @@ restore_current_install() {
     [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
     [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
     discard_install_backup
+}
+
+close_replaced_install_port() {
+    local _old_port=""
+    [ -f "$INSTALL_BACKUP_DIR/meta/listen_port" ] || return 0
+    _old_port=$(cat "$INSTALL_BACKUP_DIR/meta/listen_port" 2>/dev/null || true)
+    valid_port "$_old_port" || return 0
+    [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$_old_port"
 }
 
 # ============================================================
@@ -541,7 +602,7 @@ retry_command() {
 
 install_dependencies() {
     local _cmd _ready=1
-    for _cmd in curl openssl tar xz ip; do
+    for _cmd in curl openssl tar xz ip ss; do
         command -v "$_cmd" >/dev/null 2>&1 || _ready=0
     done
     if [ "$_ready" = "1" ]; then
@@ -572,7 +633,7 @@ install_dependencies() {
     fi
 
     local _missing=0
-    for _cmd in curl openssl tar xz ip; do
+    for _cmd in curl openssl tar xz ip ss; do
         if ! command -v "$_cmd" >/dev/null 2>&1; then
             echo -e "${RED}致命错误: 系统中缺少组件 [ $_cmd ]${PLAIN}"
             _missing=1
@@ -739,21 +800,20 @@ install_ss() {
     }
     _save_meta
 
-    open_ports "$LISTEN_PORT"
+    open_ports "$LISTEN_PORT" || { restore_current_install; return; }
 
     if   [ "$INIT_SYS" = "systemd" ]; then setup_systemd_service
     elif [ "$INIT_SYS" = "openrc"  ]; then setup_openrc_service
     fi
 
-    service_enable
+    service_enable || { echo -e "${RED}Shadowsocks 服务开机启动设置失败${PLAIN}"; restore_current_install; return; }
     if service_is_active; then
-        service_restart
+        service_restart || { restore_current_install; return; }
     else
-        service_start
+        service_start || { restore_current_install; return; }
     fi
 
-    sleep 2
-    if service_is_healthy; then
+    if wait_for_health; then
         echo -e "${GREEN}✓ Shadowsocks 服务端启动成功${PLAIN}"
     else
         echo -e "${RED}✗ 启动失败，请查看以下日志排查原因：${PLAIN}"
@@ -764,6 +824,7 @@ install_ss() {
         return
     fi
 
+    close_replaced_install_port
     discard_install_backup
     show_config
 }
@@ -903,9 +964,9 @@ _upgrade_ss_locked() {
     }
 
     if download_ss; then
-        [ "$_was_active" = "0" ] || { service_restart; sleep 2; }
+        [ "$_was_active" = "0" ] || service_restart || true
 
-        if [ "$_was_active" = "0" ] || service_is_healthy; then
+        if [ "$_was_active" = "0" ] || wait_for_health; then
             local _new_raw _new_ver=""
             _new_raw=$("$SS_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             [ -n "$_new_raw" ] && _new_ver="v${_new_raw}"
@@ -1008,11 +1069,19 @@ modify_config() {
         return
     fi
     _save_meta
-    [ "$_old_listen_port" = "$LISTEN_PORT" ] || open_ports "$LISTEN_PORT"
+    if [ "$_old_listen_port" != "$LISTEN_PORT" ] && ! open_ports "$LISTEN_PORT"; then
+        cp "$_config_backup" "$SS_CONFIG"
+        rm -rf "$SS_META"
+        mkdir -p "$SS_META"
+        cp -a "$_meta_backup"/. "$SS_META"/ 2>/dev/null || true
+        rm -f "$_config_backup"
+        rm -rf "$_meta_backup"
+        echo -e "${RED}防火墙放行失败，配置已回滚${PLAIN}"
+        return
+    fi
     service_restart || true
-    sleep 1
 
-    if service_is_healthy; then
+    if wait_for_health; then
         [ "$_old_listen_port" = "$LISTEN_PORT" ] || close_ports "$_old_listen_port"
         rm -f "$_config_backup"
         rm -rf "$_meta_backup"
@@ -1893,7 +1962,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.21${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.22${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

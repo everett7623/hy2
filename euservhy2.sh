@@ -3,7 +3,7 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.21
+#  版本: v2.0.22
 #  更新时间: 2026-07-21
 # ============================================================
 
@@ -67,7 +67,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.21"
+SCRIPT_VERSION="2.0.22"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -685,41 +685,60 @@ EOF
 # ============================================================
 configure_firewall() {
     local port="$1"
+    valid_port "$port" || { error "无效的防火墙端口: ${port}"; return 1; }
     step "配置防火墙（IPv6 UDP/TCP ${port}）..."
 
     if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-        ufw allow "${port}/udp" >> "$LOG_FILE" 2>&1
-        ufw allow "${port}/tcp" >> "$LOG_FILE" 2>&1
+        ufw allow "${port}/udp" >> "$LOG_FILE" 2>&1 && \
+            ufw allow "${port}/tcp" >> "$LOG_FILE" 2>&1 || {
+            error "UFW 规则添加失败，详情见 ${LOG_FILE}"
+            return 1
+        }
         info "UFW 规则已添加"
+        return 0
     fi
 
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="${port}/udp" >> "$LOG_FILE" 2>&1
-        firewall-cmd --permanent --add-port="${port}/tcp" >> "$LOG_FILE" 2>&1
-        firewall-cmd --reload >> "$LOG_FILE" 2>&1
+        firewall-cmd --permanent --query-port="${port}/udp" >/dev/null 2>&1 || \
+            firewall-cmd --permanent --add-port="${port}/udp" >> "$LOG_FILE" 2>&1 || return 1
+        firewall-cmd --permanent --query-port="${port}/tcp" >/dev/null 2>&1 || \
+            firewall-cmd --permanent --add-port="${port}/tcp" >> "$LOG_FILE" 2>&1 || return 1
+        firewall-cmd --reload >> "$LOG_FILE" 2>&1 && \
+            firewall-cmd --query-port="${port}/udp" >/dev/null 2>&1 && \
+            firewall-cmd --query-port="${port}/tcp" >/dev/null 2>&1 || {
+            error "firewalld 规则添加或重载失败，详情见 ${LOG_FILE}"
+            return 1
+        }
         info "firewalld 规则已添加"
+        return 0
     fi
 
     if command -v ip6tables &>/dev/null; then
         ip6tables -C INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null \
-            || ip6tables -I INPUT -p udp --dport "${port}" -j ACCEPT
+            || ip6tables -I INPUT -p udp --dport "${port}" -j ACCEPT || return 1
         ip6tables -C INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null \
-            || ip6tables -I INPUT -p tcp --dport "${port}" -j ACCEPT
+            || ip6tables -I INPUT -p tcp --dport "${port}" -j ACCEPT || return 1
+        ip6tables -C INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null && \
+            ip6tables -C INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null || return 1
         mkdir -p /etc/iptables
         ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
         command -v netfilter-persistent &>/dev/null \
             && netfilter-persistent save >> "$LOG_FILE" 2>&1 || true
         info "ip6tables 规则已添加"
+        return 0
     fi
 
     if command -v iptables &>/dev/null; then
         iptables -C INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null \
-            || iptables -I INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null || true
+            || iptables -I INPUT -p udp --dport "${port}" -j ACCEPT 2>/dev/null || return 1
         iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null \
-            || iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null || true
+            || iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null || return 1
+        info "iptables 规则已添加"
+        return 0
     fi
 
-    success "防火墙配置完成（端口 ${port} UDP/TCP）"
+    warn "未检测到启用的本机防火墙，请确认云安全组已放行端口 ${port} UDP/TCP"
+    return 0
 }
 
 # ============================================================
@@ -945,7 +964,7 @@ do_install() {
     generate_self_signed_cert "$NODE_DOMAIN" || { read -rp "  按 Enter 返回..." _; return; }
     generate_config "$PORT" "$PASSWORD" "$MASQUERADE_DOMAIN" "$NODE_DOMAIN"
     create_service
-    configure_firewall "$PORT"
+    configure_firewall "$PORT" || { error "防火墙配置失败，已取消启动服务"; read -rp "  按 Enter 返回..." _; return; }
 
     # 保存节点配置（使用 printf 避免注入）
     {
@@ -1087,7 +1106,13 @@ modify_config() {
         printf 'MODIFY_DATE=%s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
     } > "${HY2_CONFIG_DIR}/node.conf"
 
-    configure_firewall "$NODE_PORT"
+    if ! configure_firewall "$NODE_PORT"; then
+        cp "$config_backup" "${HY2_CONFIG_DIR}/config.yaml"
+        cp "$node_backup" "${HY2_CONFIG_DIR}/node.conf"
+        rm -f "$config_backup" "$node_backup"
+        error "防火墙配置失败，配置已回滚"
+        return
+    fi
     systemctl restart hysteria-server
     sleep 1
 

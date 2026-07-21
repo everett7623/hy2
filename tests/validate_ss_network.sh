@@ -111,6 +111,13 @@ ss() { printf '%s\n' 'Netid State Recv-Q Send-Q Local Address:Port' 'tcp LISTEN 
 service_is_healthy
 ss() { printf '%s\n' 'Netid State Recv-Q Send-Q Local Address:Port' 'tcp LISTEN 0 128 0.0.0.0:9443'; }
 ! service_is_healthy
+(
+health_attempt=0
+service_is_healthy() { health_attempt=$((health_attempt + 1)); [ "$health_attempt" -ge 3 ]; }
+sleep() { :; }
+wait_for_health 5
+[ "$health_attempt" = '3' ]
+)
 df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 200000 1 200000 1% /'; }
 has_free_space_mb "$tmp" 128
 df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 100000 99999 1 99% /'; }
@@ -120,24 +127,35 @@ SS_CONFIG="$tmp/config.json"; SS_META="$tmp/meta"
 mkdir -p "$SS_META"
 
 # 只删除脚本实际创建的规则，用户预先存在的规则不得被接管。
-firewall_log="$tmp/firewall.log"; firewall_existing=0; HAS_IPV6=0
+firewall_log="$tmp/firewall.log"; firewall_state="$tmp/firewall-state"; firewall_existing=0; firewall_fail=0; HAS_IPV6=0
+mkdir -p "$firewall_state"
 iptables() {
-    case "$1" in
-        -C) [ "$firewall_existing" = '1' ] ;;
-        -I) echo add >> "$firewall_log" ;;
-        -D) echo delete >> "$firewall_log" ;;
+    local _action="$1" _port="" _proto=""
+    shift
+    while [ "$#" -gt 0 ]; do
+        [ "$1" = '-p' ] && { shift; _proto="$1"; shift; continue; }
+        [ "$1" = '--dport' ] && { shift; _port="$1"; break; }
+        shift
+    done
+    case "$_action" in
+        -C) [ "$firewall_existing" = '1' ] || [ -f "$firewall_state/${_port}-${_proto}" ] ;;
+        -I) [ "$firewall_fail" = '0' ] || return 1; : > "$firewall_state/${_port}-${_proto}"; echo "add ${_port}-${_proto}" >> "$firewall_log" ;;
+        -D) rm -f "$firewall_state/${_port}-${_proto}"; echo "delete ${_port}-${_proto}" >> "$firewall_log" ;;
     esac
 }
 open_ports 8443 >/dev/null
 [ -f "$SS_META/firewall/iptables4-8443-tcp" ]
 [ -f "$SS_META/firewall/iptables4-8443-udp" ]
 close_ports 8443
-[ "$(grep -c '^delete$' "$firewall_log")" = '2' ]
+[ "$(grep -c '^delete 8443-' "$firewall_log")" = '2' ]
 : > "$firewall_log"; firewall_existing=1
 open_ports 9443 >/dev/null
 [ ! -e "$SS_META/firewall/iptables4-9443-tcp" ]
 close_ports 9443
 [ ! -s "$firewall_log" ]
+firewall_existing=0; firewall_fail=1
+! open_ports 10443 >/dev/null 2>&1
+[ ! -e "$SS_META/firewall/iptables4-10443-tcp" ]
 unset -f iptables
 printf '%s\n' '{"server_port":8443,"password":"testpass","method":"aes-256-gcm"}' > "$SS_CONFIG"
 printf '%s' '8443' > "$SS_META/ext_port"

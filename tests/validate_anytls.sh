@@ -53,6 +53,7 @@ unset -f generate_random_port
 version_at_least 1.12.0 1.12.0
 version_at_least 1.13.1 1.12.0
 ! version_at_least 1.11.9 1.12.0
+[ "$(printf '%s\n' '{"assets":[{"name":"sing-box-test.tar.gz","digest":"sha256:ABCDEF1234"}]}' | parse_release_asset_sha256 sing-box-test.tar.gz)" = 'abcdef1234' ]
 [ "$(normalize_version_tag 'https://github.com/SagerNet/sing-box/releases/tag/v1.13.14')" = "v1.13.14" ]
 [ "$(normalize_version_tag '1.13.14')" = "v1.13.14" ]
 ! normalize_version_tag latest >/dev/null 2>&1
@@ -184,6 +185,13 @@ ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.
 service_is_healthy
 ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.0.0:9443'; }
 ! service_is_healthy
+(
+health_attempt=0
+service_is_healthy() { health_attempt=$((health_attempt + 1)); [ "$health_attempt" -ge 3 ]; }
+sleep() { :; }
+wait_for_health 5
+[ "$health_attempt" = '3' ]
+)
 df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 200000 1 200000 1% /'; }
 has_free_space_mb "$tmp" 160
 df() { printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' 'mock 100000 99999 1 99% /'; }
@@ -198,18 +206,25 @@ LISTEN_PORT=8443; EXT_PORT=9443; PASSWORD=Abcdef12; NAT_MODE=1; BIND_FAMILY=v6
 LISTEN_HOST=::; SERVER_NAME=www.example.com; MANAGED_SING_BOX=1; PUBLIC_IP=""; PUBLIC_IPV6=""
 
 # 只删除脚本实际创建的防火墙规则，保留用户预先存在的规则。
-firewall_log="$tmp/firewall.log"; firewall_existing=0; HAS_IPV6=0
+firewall_log="$tmp/firewall.log"; firewall_state="$tmp/firewall-state"; firewall_existing=0; firewall_fail=0; HAS_IPV6=0
+mkdir -p "$firewall_state"
 iptables() {
-    case "$1" in
-        -C) [ "$firewall_existing" = '1' ] ;;
-        -I) echo add >> "$firewall_log" ;;
-        -D) echo delete >> "$firewall_log" ;;
+    local _action="$1" _port=""
+    shift
+    while [ "$#" -gt 0 ]; do
+        [ "$1" = '--dport' ] && { shift; _port="$1"; break; }
+        shift
+    done
+    case "$_action" in
+        -C) [ "$firewall_existing" = '1' ] || [ -f "$firewall_state/$_port" ] ;;
+        -I) [ "$firewall_fail" = '0' ] || return 1; : > "$firewall_state/$_port"; echo "add $_port" >> "$firewall_log" ;;
+        -D) rm -f "$firewall_state/$_port"; echo "delete $_port" >> "$firewall_log" ;;
     esac
 }
 open_ports 8443 >/dev/null
 [ -f "$ANYTLS_META/firewall/iptables4-8443-tcp" ]
 close_ports 8443
-grep -q '^delete$' "$firewall_log"
+grep -q '^delete 8443$' "$firewall_log"
 : > "$firewall_log"; firewall_existing=1
 open_ports 9443 >/dev/null
 [ ! -e "$ANYTLS_META/firewall/iptables4-9443-tcp" ]
@@ -220,7 +235,8 @@ open_acme_challenge_ports >/dev/null
 [ -f "$ANYTLS_META/firewall/iptables4-80-tcp" ]
 [ -f "$ANYTLS_META/firewall/iptables4-443-tcp" ]
 close_acme_challenge_ports
-grep -q '^delete$' "$firewall_log"
+grep -q '^delete 80$' "$firewall_log"
+grep -q '^delete 443$' "$firewall_log"
 
 # 从 ACME 切换到其他证书模式时必须清理项目创建的 80/443 规则。
 firewall_existing=0; CERT_MODE=acme
@@ -232,6 +248,9 @@ sync_acme_challenge_ports
 [ ! -e "$ANYTLS_META/firewall/iptables4-80-tcp" ]
 [ ! -e "$ANYTLS_META/firewall/iptables4-443-tcp" ]
 CERT_MODE=self_signed
+firewall_fail=1
+! open_ports 10443 >/dev/null 2>&1
+[ ! -e "$ANYTLS_META/firewall/iptables4-10443-tcp" ]
 unset -f iptables
 has_control_chars $'/tmp/cert\nMANAGED_SING_BOX=1'
 has_control_chars $'/tmp/cert\tpath'

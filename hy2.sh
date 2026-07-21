@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：everettlabs
-# 版本：v2.0.21
+# 版本：v2.0.22
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -99,6 +99,7 @@ INSTALL_BACKUP_DIR=""
 INSTALL_ROLLBACK_ARMED=0
 INSTALL_PREV_INT_TRAP=""
 INSTALL_PREV_TERM_TRAP=""
+INSTALL_NEW_FIREWALL_MARKERS=""
 UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/hy2-upgrade.lock}"
 UPGRADE_LOCK_MODE=""
 
@@ -225,12 +226,22 @@ service_is_active() {
 
 service_is_healthy() {
     service_is_active || return 1
-    valid_port "${LISTEN_PORT:-}" || return 0
-    command -v ss >/dev/null 2>&1 || return 0
+    valid_port "${LISTEN_PORT:-}" || return 1
+    command -v ss >/dev/null 2>&1 || return 1
     ss -lnu 2>/dev/null | awk -v port="$LISTEN_PORT" '
         NR > 1 { addr=$4; if (addr ~ (":" port "$")) found=1 }
         END { exit(found ? 0 : 1) }
     '
+}
+
+wait_for_health() {
+    local _attempts="${1:-12}" _i=0
+    while [ "$_i" -lt "$_attempts" ]; do
+        service_is_healthy && return 0
+        _i=$((_i + 1))
+        [ "$_i" -lt "$_attempts" ] && sleep 1
+    done
+    return 1
 }
 
 has_free_space_mb() {
@@ -309,6 +320,7 @@ EOF
 }
 
 backup_current_install() {
+    INSTALL_NEW_FIREWALL_MARKERS=""
     INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/hy2-install-backup-XXXXXX" 2>/dev/null) || return 1
     [ ! -f "$HY_BIN" ] || cp -a "$HY_BIN" "$INSTALL_BACKUP_DIR/bin" || { discard_install_backup; return 1; }
     [ ! -f "$HY_CONFIG" ] || cp -a "$HY_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
@@ -351,11 +363,13 @@ rollback_install_on_signal() {
 discard_install_backup() {
     [ -n "$INSTALL_BACKUP_DIR" ] && rm -rf "$INSTALL_BACKUP_DIR"
     INSTALL_BACKUP_DIR=""
+    INSTALL_NEW_FIREWALL_MARKERS=""
     disarm_install_rollback
 }
 
 restore_current_install() {
     [ -n "$INSTALL_BACKUP_DIR" ] && [ -d "$INSTALL_BACKUP_DIR" ] || return 0
+    close_new_firewall_rules
     service_stop
     service_disable
     rm -f "$HY_BIN" "$HY_CONFIG" "$SERVICE_FILE" "$OPENRC_SERVICE"
@@ -473,7 +487,7 @@ retry_command() {
 
 install_dependencies() {
     local _cmd _ready=1
-    for _cmd in curl openssl ip; do
+    for _cmd in curl openssl ip ss; do
         command -v "$_cmd" >/dev/null 2>&1 || _ready=0
     done
     if [ "$_ready" = "1" ]; then
@@ -511,7 +525,7 @@ install_dependencies() {
             fi
             ;;
     esac
-    for _cmd in curl openssl ip; do
+    for _cmd in curl openssl ip ss; do
         command -v "$_cmd" >/dev/null 2>&1 || {
             echo -e "${RED}依赖安装失败: 缺少 ${_cmd}${PLAIN}"
             return 1
@@ -721,61 +735,158 @@ configure_std_port() {
 # 防火墙放行端口（ufw / firewalld / iptables 三套兼容）
 # ============================================================
 
-open_firewall_port() {
-    local _port="$1"
-    local _proto="${2:-udp}"
-
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
-        ufw allow "${_port}/${_proto}" >/dev/null 2>&1
-        echo -e "  ${GREEN}✓ ufw 已放行 ${_proto}/${_port}${PLAIN}"
-    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="${_port}/${_proto}" >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-        echo -e "  ${GREEN}✓ firewalld 已放行 ${_proto}/${_port}${PLAIN}"
-    elif command -v iptables >/dev/null 2>&1; then
-        iptables -C INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null || \
-            iptables -I INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null
-        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
-            ip6tables -C INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null || \
-                ip6tables -I INPUT -p "${_proto}" --dport "${_port}" -j ACCEPT 2>/dev/null
-        fi
-        # 尝试持久化
-        if [ -f /etc/iptables/rules.v4 ] && command -v iptables-save >/dev/null 2>&1; then
-            iptables-save > /etc/iptables/rules.v4 2>/dev/null
-        fi
-        echo -e "  ${GREEN}✓ iptables 已放行 ${_proto}/${_port}${PLAIN}"
-    else
-        echo -e "  ${YELLOW}⚠ 未检测到防火墙工具，请手动放行 ${_proto}/${_port}${PLAIN}"
-    fi
+record_firewall_rule() {
+    local _backend="$1" _proto="$2" _kind="$3" _start="$4" _end="${5:-0}" _marker
+    mkdir -p "$HY_META/firewall" 2>/dev/null || return 1
+    _marker="$HY_META/firewall/${_backend}-${_proto}-${_kind}-${_start}-${_end}"
+    printf '%s %s %s %s %s\n' "$_backend" "$_proto" "$_kind" "$_start" "$_end" > "$_marker" || return 1
+    INSTALL_NEW_FIREWALL_MARKERS="${INSTALL_NEW_FIREWALL_MARKERS}${INSTALL_NEW_FIREWALL_MARKERS:+ }${_marker}"
 }
 
-# 防火墙端口范围放行（端口跳跃专用）
-open_firewall_range() {
-    local _start="$1" _end="$2"
-    local _proto="${3:-udp}"
+close_firewall_marker() {
+    local _marker="$1" _backend _proto _kind _start _end _spec
+    [ -f "$_marker" ] || return 0
+    read -r _backend _proto _kind _start _end < "$_marker" || return 1
+    valid_port "$_start" || return 1
+    case "$_proto" in tcp|udp) ;; *) return 1 ;; esac
+    if [ "$_kind" = "range" ]; then
+        valid_port "$_end" && [ "$_start" -le "$_end" ] || return 1
+    elif [ "$_kind" != "port" ]; then
+        return 1
+    fi
+    case "$_backend" in
+        ufw)
+            command -v ufw >/dev/null 2>&1 || return 1
+            [ "$_kind" = "range" ] && _spec="${_start}:${_end}/${_proto}" || _spec="${_start}/${_proto}"
+            ufw delete allow "$_spec" >/dev/null 2>&1 || return 1
+            ;;
+        firewalld)
+            command -v firewall-cmd >/dev/null 2>&1 || return 1
+            [ "$_kind" = "range" ] && _spec="${_start}-${_end}/${_proto}" || _spec="${_start}/${_proto}"
+            firewall-cmd --permanent --remove-port="$_spec" >/dev/null 2>&1 || return 1
+            firewall-cmd --reload >/dev/null 2>&1 || return 1
+            ;;
+        iptables4|iptables6)
+            [ "$_kind" = "range" ] && _spec="${_start}:${_end}" || _spec="$_start"
+            if [ "$_backend" = "iptables4" ]; then
+                command -v iptables >/dev/null 2>&1 || return 1
+                iptables -D INPUT -p "$_proto" --dport "$_spec" -j ACCEPT >/dev/null 2>&1 || return 1
+            else
+                command -v ip6tables >/dev/null 2>&1 || return 1
+                ip6tables -D INPUT -p "$_proto" --dport "$_spec" -j ACCEPT >/dev/null 2>&1 || return 1
+            fi
+            ;;
+        *) return 1 ;;
+    esac
+    rm -f "$_marker"
+}
+
+close_new_firewall_rules() {
+    local _marker
+    for _marker in $INSTALL_NEW_FIREWALL_MARKERS; do
+        close_firewall_marker "$_marker" || echo -e "${YELLOW}! 无法回收新建防火墙规则: ${_marker}${PLAIN}" >&2
+    done
+    INSTALL_NEW_FIREWALL_MARKERS=""
+}
+
+close_all_owned_firewall_rules() {
+    local _marker _status=0
+    for _marker in "$HY_META"/firewall/*; do
+        [ -f "$_marker" ] || continue
+        close_firewall_marker "$_marker" || _status=1
+    done
+    [ "$_status" = "0" ] || echo -e "${YELLOW}! 部分脚本创建的防火墙规则未能删除，请手动检查${PLAIN}"
+    return "$_status"
+}
+
+close_replaced_firewall_rules() {
+    local _marker _backend _proto _kind _start _end _current_kind="port" _current_start="$LISTEN_PORT" _current_end=0
+    if [ -n "$PORT_HOP" ]; then
+        _current_kind="range"
+        _current_start=${PORT_HOP%%:*}
+        _current_end=${PORT_HOP##*:}
+    fi
+    for _marker in "$HY_META"/firewall/*; do
+        [ -f "$_marker" ] || continue
+        read -r _backend _proto _kind _start _end < "$_marker" || continue
+        if [ "$_proto" = "udp" ] && [ "$_kind" = "$_current_kind" ] && \
+            [ "$_start" = "$_current_start" ] && [ "$_end" = "$_current_end" ]; then
+            continue
+        fi
+        close_firewall_marker "$_marker" || echo -e "${YELLOW}! 旧防火墙规则清理失败: ${_marker}${PLAIN}"
+    done
+}
+
+open_firewall_rule() {
+    local _start="$1" _end="$2" _proto="$3" _kind="port"
+    local _ufw_spec _firewalld_spec _iptables_spec _added4=0
+    valid_port "$_start" || return 1
+    case "$_proto" in tcp|udp) ;; *) return 1 ;; esac
+    if [ -n "$_end" ]; then
+        valid_port "$_end" && [ "$_start" -le "$_end" ] || return 1
+        _kind="range"
+        _ufw_spec="${_start}:${_end}/${_proto}"
+        _firewalld_spec="${_start}-${_end}/${_proto}"
+        _iptables_spec="${_start}:${_end}"
+    else
+        _end=0
+        _ufw_spec="${_start}/${_proto}"
+        _firewalld_spec="${_start}/${_proto}"
+        _iptables_spec="$_start"
+    fi
+    mkdir -p "$HY_META/firewall" 2>/dev/null || return 1
 
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
-        # ufw 支持端口范围语法
-        ufw allow "${_start}:${_end}/${_proto}" >/dev/null 2>&1
-        echo -e "  ${GREEN}✓ ufw 已放行 ${_proto}/${_start}:${_end}${PLAIN}"
-    elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        firewall-cmd --permanent --add-port="${_start}-${_end}/${_proto}" >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-        echo -e "  ${GREEN}✓ firewalld 已放行 ${_proto}/${_start}-${_end}${PLAIN}"
-    elif command -v iptables >/dev/null 2>&1; then
-        iptables -C INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null || \
-            iptables -I INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null
-        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1; then
-            ip6tables -C INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null || \
-                ip6tables -I INPUT -p "${_proto}" --dport "${_start}:${_end}" -j ACCEPT 2>/dev/null
+        if ! ufw status 2>/dev/null | grep -qE "^${_ufw_spec}[[:space:]]+ALLOW"; then
+            ufw allow "$_ufw_spec" >/dev/null 2>&1 && \
+                ufw status 2>/dev/null | grep -qE "^${_ufw_spec}[[:space:]]+ALLOW" || return 1
+            record_firewall_rule ufw "$_proto" "$_kind" "$_start" "$_end" || return 1
+        fi
+        echo -e "  ${GREEN}✓ ufw 已放行 ${_proto}/${_ufw_spec%/*}${PLAIN}"
+        return 0
+    fi
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        if ! firewall-cmd --permanent --query-port="$_firewalld_spec" >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-port="$_firewalld_spec" >/dev/null 2>&1 && \
+                firewall-cmd --reload >/dev/null 2>&1 && \
+                firewall-cmd --query-port="$_firewalld_spec" >/dev/null 2>&1 || return 1
+            record_firewall_rule firewalld "$_proto" "$_kind" "$_start" "$_end" || return 1
+        fi
+        echo -e "  ${GREEN}✓ firewalld 已放行 ${_proto}/${_firewalld_spec%/*}${PLAIN}"
+        return 0
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        if ! iptables -C INPUT -p "$_proto" --dport "$_iptables_spec" -j ACCEPT >/dev/null 2>&1; then
+            iptables -I INPUT -p "$_proto" --dport "$_iptables_spec" -j ACCEPT >/dev/null 2>&1 && \
+                iptables -C INPUT -p "$_proto" --dport "$_iptables_spec" -j ACCEPT >/dev/null 2>&1 || return 1
+            _added4=1
+            record_firewall_rule iptables4 "$_proto" "$_kind" "$_start" "$_end" || return 1
+        fi
+        if [ "$HAS_IPV6" = "1" ] && command -v ip6tables >/dev/null 2>&1 && \
+            ! ip6tables -C INPUT -p "$_proto" --dport "$_iptables_spec" -j ACCEPT >/dev/null 2>&1; then
+            if ! ip6tables -I INPUT -p "$_proto" --dport "$_iptables_spec" -j ACCEPT >/dev/null 2>&1 || \
+                ! ip6tables -C INPUT -p "$_proto" --dport "$_iptables_spec" -j ACCEPT >/dev/null 2>&1; then
+                [ "$_added4" = "0" ] || close_firewall_marker "$HY_META/firewall/iptables4-${_proto}-${_kind}-${_start}-${_end}" || true
+                return 1
+            fi
+            record_firewall_rule iptables6 "$_proto" "$_kind" "$_start" "$_end" || return 1
         fi
         if [ -f /etc/iptables/rules.v4 ] && command -v iptables-save >/dev/null 2>&1; then
-            iptables-save > /etc/iptables/rules.v4 2>/dev/null
+            iptables-save > /etc/iptables/rules.v4 2>/dev/null || echo -e "  ${YELLOW}! 规则已生效，但持久化保存失败${PLAIN}"
         fi
-        echo -e "  ${GREEN}✓ iptables 已放行 ${_proto}/${_start}:${_end}${PLAIN}"
-    else
-        echo -e "  ${YELLOW}⚠ 未检测到防火墙工具，请手动放行 ${_proto}/${_start}-${_end}${PLAIN}"
+        echo -e "  ${GREEN}✓ iptables 已放行 ${_proto}/${_iptables_spec}${PLAIN}"
+        return 0
     fi
+    echo -e "  ${YELLOW}! 未检测到启用的本机防火墙；请确认云安全组已放行 ${_proto}/${_iptables_spec}${PLAIN}"
+    return 0
+}
+
+open_firewall_port() {
+    open_firewall_rule "$1" "" "${2:-udp}"
+}
+
+open_firewall_range() {
+    open_firewall_rule "$1" "$2" "${3:-udp}"
 }
 
 # ============================================================
@@ -859,9 +970,17 @@ install_hy2() {
         local _hop_start _hop_end
         _hop_start=$(echo "$PORT_HOP" | cut -d: -f1)
         _hop_end=$(echo "$PORT_HOP" | cut -d: -f2)
-        open_firewall_range "$_hop_start" "$_hop_end" "udp"
+        open_firewall_range "$_hop_start" "$_hop_end" "udp" || {
+            echo -e "${RED}防火墙端口范围放行失败${PLAIN}"
+            restore_current_install
+            return
+        }
     else
-        open_firewall_port "$LISTEN_PORT" "udp"
+        open_firewall_port "$LISTEN_PORT" "udp" || {
+            echo -e "${RED}防火墙端口放行失败${PLAIN}"
+            restore_current_install
+            return
+        }
     fi
 
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
@@ -936,16 +1055,15 @@ install_hy2() {
     if   [ "$INIT_SYS" = "systemd" ]; then setup_systemd_service
     elif [ "$INIT_SYS" = "openrc"  ]; then setup_openrc_service
     fi
-    service_enable
+    service_enable || { echo -e "${RED}Hysteria2 服务开机启动设置失败${PLAIN}"; restore_current_install; return; }
     if service_is_active; then
-        service_restart
+        service_restart || { restore_current_install; return; }
     else
-        service_start
+        service_start || { restore_current_install; return; }
     fi
 
-    sleep 2
     echo -e "${YELLOW}验证服务状态...${PLAIN}"
-    if service_is_healthy; then
+    if wait_for_health; then
         echo -e "${GREEN}✓ Hysteria2 启动成功${PLAIN}"
         command -v ss >/dev/null 2>&1 && \
             ss -unlp 2>/dev/null | grep -q ":${LISTEN_PORT}" \
@@ -958,6 +1076,7 @@ install_hy2() {
         return
     fi
 
+    close_replaced_firewall_rules
     discard_install_backup
     echo -e "${GREEN}安装完成！${PLAIN}"
     show_config
@@ -1038,9 +1157,9 @@ _upgrade_hy2_locked() {
     }
 
     if download_hy2; then
-        [ "$_was_active" = "0" ] || { service_restart; sleep 2; }
+        [ "$_was_active" = "0" ] || service_restart || true
 
-        if [ "$_was_active" = "0" ] || service_is_healthy; then
+        if [ "$_was_active" = "0" ] || wait_for_health; then
             local _new_ver
             _new_ver=$("$HY_BIN" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo -e "${GREEN}✓ 升级成功，当前版本: ${_new_ver:-未知}${PLAIN}"
@@ -1458,7 +1577,7 @@ change_password() {
         rm -f "$_tmp_cfg" "$_bak_cfg"; echo -e "${RED}配置写入失败${PLAIN}"; sleep 2; return
     }
 
-    if service_restart && service_is_active; then
+    if service_restart && wait_for_health; then
         rm -f "$_bak_cfg"
         echo -e "${GREEN}密码已更新为: ${NEW_PASS}${PLAIN}"
     else
@@ -1520,9 +1639,7 @@ change_bandwidth() {
     echo "$BW_UP"   > "$HY_META/bw_up"
     echo "$BW_DOWN" > "$HY_META/bw_down"
 
-    service_restart || true
-    sleep 1
-    if service_is_active; then
+    if service_restart && wait_for_health; then
         rm -f "$_bak_cfg"
         echo -e "${GREEN}带宽已更新: 上行 ${BW_UP} Mbps / 下行 ${BW_DOWN} Mbps${PLAIN}"
     else
@@ -1577,6 +1694,7 @@ uninstall_hy2() {
 
     service_stop
     service_disable
+    close_all_owned_firewall_rules || true
     rm -f "$SERVICE_FILE" "$OPENRC_SERVICE" "$HY_BIN"
     rm -rf /etc/hysteria
 
@@ -1999,7 +2117,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.21${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.22${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

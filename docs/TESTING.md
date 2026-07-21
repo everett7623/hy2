@@ -6,6 +6,12 @@
 
 同一入口还会执行 `tests/validate_vless.sh`。该测试会 source `vless.sh`，验证 UUID、REALITY 密钥与 short ID 校验、IPv6 URI、Mihomo/Loon/Quantumult X 输出、JSON/元数据往返、wrapper、systemd/OpenRC 单元、共享核心配置预检和卸载所有权。
 
+本机已有真实 sing-box 时，可额外校验测试生成的 VLESS JSON：
+
+```bash
+REAL_SING_BOX_BIN=/path/to/sing-box bash tests/validate_vless.sh
+```
+
 静态验证会阻止 Throne 与 Sing-box/SFA 客户端导出回归。修改节点输出时，应优先保证 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码格式不受影响。
 
 发布前仍需在一次性 VPS 覆盖 systemd、OpenRC 以及 IPv4、IPv6、双栈环境。当前脚本支持上游 Linux `amd64`、`arm64`、`armv7`、`386` 和 `s390x` 发布包，其他架构应明确拒绝。
@@ -94,6 +100,8 @@ bash tests/validate_scripts.sh
 - 运行诊断分别报告 REALITY 目标可达性与 VPS 下载探针结果，不把 Speedtest 单站失败直接判定为 VLESS 故障。
 - `vless.sh diagnose` 与服务管理菜单中的诊断入口应产生相同检查结果，且不修改配置、服务或防火墙。
 - 配置修改、重装、升级或服务启动失败时恢复旧配置、核心和服务状态。
+- 旧安装执行升级时应保留 UUID、REALITY 密钥和端口，并补齐当前配置 schema；迁移校验或重启失败时恢复旧配置。
+- 服务健康检查必须同时确认进程和 TCP 监听；本机防火墙规则写入失败时安装必须中止并回滚。
 - 与 AnyTLS 共存时，升级会预检双方 JSON；不同卸载顺序都不会误删共享配置或遗留项目独占核心。
 
 ### `euservhy2.sh`
