@@ -143,10 +143,10 @@ HANDSHAKE_PORT=443
 
 mihomo=$(export_mihomo_vless 192.0.2.1 8443 "VLESS Test")
 echo "$mihomo" | grep -q "type: vless"
-echo "$mihomo" | grep -q "uuid: $TEST_UUID"
+echo "$mihomo" | grep -q "uuid: '$TEST_UUID'"
 echo "$mihomo" | grep -q "flow: xtls-rprx-vision"
-echo "$mihomo" | grep -q "public-key: $TEST_PUBLIC_KEY"
-echo "$mihomo" | grep -q "short-id: $TEST_SHORT_ID"
+echo "$mihomo" | grep -q "public-key: '$TEST_PUBLIC_KEY'"
+echo "$mihomo" | grep -q "short-id: '$TEST_SHORT_ID'"
 loon=$(export_loon_vless 192.0.2.1 8443 "VLESS Test")
 echo "$loon" | grep -q 'transport=tcp'
 echo "$loon" | grep -q 'flow=xtls-rprx-vision'

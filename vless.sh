@@ -1813,7 +1813,7 @@ export_mihomo_vless() {
     _yaml_server=$(format_server_for_yaml "$_server")
     _safe_node=$(yaml_single_quote_escape "$_node")
     _sni=$(yaml_single_quote_escape "$SERVER_NAME")
-    printf '%s' "- {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: ${UUID}, network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: ${REALITY_PUBLIC_KEY}, short-id: ${SHORT_ID}}}"
+    printf '%s' "- {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: '${UUID}', network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: '${REALITY_PUBLIC_KEY}', short-id: '${SHORT_ID}'}}"
 }
 
 export_loon_vless() {

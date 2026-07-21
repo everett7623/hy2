@@ -178,6 +178,9 @@ grep -q "Shadowsocks, %s, %s, %s, '%s'" ss.sh
 grep -q "name: '\${_safe_node}'" anytls.sh
 grep -q "fingerprint: '\${_fingerprint}'" anytls.sh
 grep -q "AnyTLS, %s, %s, '%s'" anytls.sh
+grep -q "uuid: '\${UUID}'" vless.sh
+grep -q "public-key: '\${REALITY_PUBLIC_KEY}'" vless.sh
+grep -q "short-id: '\${SHORT_ID}'" vless.sh
 grep -q "name: '\${safe_node}'" euservhy2.sh
 grep -q "password: '\${safe_password}'" euservhy2.sh
 grep -q "Hysteria2, \${ipv6_raw}, \${port}, '\${password}'" euservhy2.sh
