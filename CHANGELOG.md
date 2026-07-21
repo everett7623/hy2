@@ -4,6 +4,13 @@
 
 ---
 
+## v2.0.21 (2026-07-21)
+
+- Restore `vless.sh` and its behavior tests to the proven v2.0.19 baseline after v2.0.20 connectivity regressions.
+- Reorganize README around installation safety, protocol selection, client exports, operational boundaries, and task-oriented troubleshooting while preserving current commands and capabilities.
+
+---
+
 ## v2.0.20 (2026-07-21)
 
 - Quote VLESS UUID, REALITY public key, and short ID as YAML strings in Mihomo exports to preserve credential types and leading zeroes.

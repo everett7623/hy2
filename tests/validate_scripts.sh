@@ -6,7 +6,8 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.20"
+EXPECTED_VERSION="v2.0.21"
+EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
 AGENTS.md
@@ -97,7 +98,10 @@ for script in hy2.sh ss.sh anytls.sh vless.sh; do
     rm -f "$tmp"
 done
 
-grep -q 'SCRIPT_VERSION="2.0.20"' euservhy2.sh
+grep -q "SCRIPT_VERSION=\"${EXPECTED_VERSION_NUMBER}\"" euservhy2.sh
+grep -q '版本: v${SCRIPT_VERSION}' euservhy2.sh
+grep -q "script_version=${EXPECTED_VERSION}" install.sh
+grep -q "^> 当前版本：${EXPECTED_VERSION}" README.md
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' anytls.sh
 grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' vless.sh
@@ -178,9 +182,6 @@ grep -q "Shadowsocks, %s, %s, %s, '%s'" ss.sh
 grep -q "name: '\${_safe_node}'" anytls.sh
 grep -q "fingerprint: '\${_fingerprint}'" anytls.sh
 grep -q "AnyTLS, %s, %s, '%s'" anytls.sh
-grep -q "uuid: '\${UUID}'" vless.sh
-grep -q "public-key: '\${REALITY_PUBLIC_KEY}'" vless.sh
-grep -q "short-id: '\${SHORT_ID}'" vless.sh
 grep -q "name: '\${safe_node}'" euservhy2.sh
 grep -q "password: '\${safe_password}'" euservhy2.sh
 grep -q "Hysteria2, \${ipv6_raw}, \${port}, '\${password}'" euservhy2.sh
