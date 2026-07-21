@@ -9,8 +9,8 @@
 ![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)
 ![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)
 
-> 当前版本：v2.0.19（2026-07-17）
-> 本次更新：新增 VLESS + REALITY + Vision、AnyTLS 多证书模式、随机高位默认端口、共享 sing-box 安全升级，以及 VLESS 连通性与速度诊断。
+> 当前版本：v2.0.20（2026-07-21）
+> 本次更新：规范 VLESS 客户端凭据字符串输出，固定优先 Microsoft → Apple → Samsung 作为 REALITY 目标，并增加五个随机后备域名。
 
 ---
 
@@ -64,7 +64,7 @@ bash <(curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.co
 
 | 协议 | 推荐场景 | 安装默认端口 | 备注 |
 | --- | --- | --- | --- |
-| VLESS | 需要 TCP、REALITY 与 XTLS Vision 的节点 | 随机 `10000-65535/TCP` | 自动筛选 VPS 可达的 REALITY 目标，生成 UUID、密钥与 short ID |
+| VLESS | 需要 TCP、REALITY 与 XTLS Vision 的节点 | 随机 `10000-65535/TCP` | REALITY 固定优先 Microsoft → Apple → Samsung，并从五个随机后备中筛选可达目标 |
 | AnyTLS | 需要 TCP / TLS 传输的轻量节点 | 随机 `10000-65535/TCP` | 原生 AnyTLS；支持自签、已有域名证书与 sing-box 1.14+ ACME |
 | Hysteria 2 | 主力节点，大多数 IPv4 / 双栈 VPS | 随机 `10000-65535/UDP` | UDP，高速；自签证书 + SNI 伪装，无需域名 |
 | Shadowsocks | 备用节点，IPv6 / 双栈环境 | 随机 `10000-65535/TCP+UDP` | 支持经典 AEAD 与 SS-2022；纯 IPv4 环境风险较高 |
@@ -174,7 +174,7 @@ date
 
 ### VLESS 能连接但很慢，或 Speedtest 无法打开
 
-VLESS 的 REALITY 目标由 VPS 主动连接，只参与握手伪装，不承载后续测速流量。安装时脚本会按节点使用的 IPv4/IPv6 地址族筛选当前 VPS 实际可达的非中国大陆候选域名，并把同一地址族写入 REALITY 握手 DNS 策略。VLESS 工具箱中的运行诊断还会检查目标 HTTPS/TLS、握手地址族、外部测速源到 VPS 的入站下载、TCP/队列设置、内核累计重传与丢弃、网卡错误及活动连接数。
+VLESS 的 REALITY 目标由 VPS 主动连接，只参与握手伪装，不承载后续测速流量。安装时脚本会按节点使用的 IPv4/IPv6 地址族并行探测候选域名，固定优先使用 Microsoft → Apple → Samsung；三者均不可用时，再从 Amazon、Bing、Intel、AMD、Adobe 中随机选择首个后备。脚本会把同一地址族写入 REALITY 握手 DNS 策略。VLESS 工具箱中的运行诊断还会检查目标 HTTPS/TLS、握手地址族、外部测速源到 VPS 的入站下载、TCP/队列设置、内核累计重传与丢弃、网卡错误及活动连接数。
 
 可直接运行诊断，也可以从 VLESS 服务管理菜单选择“运行状态与速度诊断”：
 

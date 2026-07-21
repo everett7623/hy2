@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.19
+# 版本：v2.0.20
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-17
+# 更新日期: 2026-07-21
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -309,31 +309,37 @@ validate_server_address() {
     return 0
 }
 
-reality_target_candidates() {
+reality_preferred_targets() {
     printf '%s\n' \
         "www.microsoft.com" \
         "www.apple.com" \
-        "www.amazon.com" \
-        "www.amd.com" \
-        "www.mozilla.org" \
-        "www.nvidia.com" \
-        "www.samsung.com" \
-        "www.cloudflare.com"
+        "www.samsung.com"
 }
 
-random_sni() {
+reality_fallback_targets() {
+    printf '%s\n' \
+        "www.amazon.com" \
+        "www.bing.com" \
+        "www.intel.com" \
+        "www.amd.com" \
+        "www.adobe.com"
+}
+
+reality_target_candidates() {
+    reality_preferred_targets
+    reality_fallback_targets
+}
+
+random_reality_fallback() {
     local _number
     _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
     [ -z "$_number" ] && _number=$(date +%s)
-    case $((_number % 8)) in
-        0) echo "www.microsoft.com" ;;
-        1) echo "www.apple.com" ;;
-        2) echo "www.amazon.com" ;;
+    case $((_number % 5)) in
+        0) echo "www.amazon.com" ;;
+        1) echo "www.bing.com" ;;
+        2) echo "www.intel.com" ;;
         3) echo "www.amd.com" ;;
-        4) echo "www.mozilla.org" ;;
-        5) echo "www.nvidia.com" ;;
-        6) echo "www.samsung.com" ;;
-        *) echo "www.cloudflare.com" ;;
+        *) echo "www.adobe.com" ;;
     esac
 }
 
@@ -396,12 +402,12 @@ reality_target_usable_for_family() {
 }
 
 select_reality_target() {
-    local _port="${1:-443}" _preferred _candidate _selected _tmp
+    local _port="${1:-443}" _random_fallback _candidate _selected _tmp
     local _index=0 _checked=0
-    _preferred=$(random_sni)
+    _random_fallback=$(random_reality_fallback)
     _tmp=$(mktemp -d 2>/dev/null) || return 1
-    for _candidate in "$_preferred" $(reality_target_candidates); do
-        [ "$_index" -gt 0 ] && [ "$_candidate" = "$_preferred" ] && continue
+    for _candidate in $(reality_preferred_targets) "$_random_fallback" $(reality_fallback_targets); do
+        [ "$_index" -gt 3 ] && [ "$_candidate" = "$_random_fallback" ] && continue
         (
             reality_target_usable_for_family "$_candidate" "$_port" \
                 && printf '%s' "$_candidate" > "$_tmp/result-${_index}"
@@ -1621,7 +1627,7 @@ configure_vless() {
         _target_verified=1
         echo -e "${GREEN}✓ 已找到可用目标: ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
     else
-        _default_sni=$(random_sni)
+        _default_sni=$(random_reality_fallback)
         echo -e "${YELLOW}! 未能自动验证候选目标，请确认 VPS 可访问 ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
     fi
     read -r -p "请输入 REALITY 目标域名/SNI [默认 ${_default_sni}]: " SERVER_NAME
@@ -2612,7 +2618,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.19${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.20${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

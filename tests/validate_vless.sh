@@ -36,7 +36,14 @@ validate_server_name www.example.com
 validate_server_address 192.0.2.1
 validate_server_address 2001:db8::1
 ! validate_server_address 'bad"address'
-! reality_target_candidates | grep -qE '(^|\.)(cn)$|github|bing'
+[ "$(reality_target_candidates)" = "$(printf '%s\n' \
+    www.microsoft.com www.apple.com www.samsung.com www.amazon.com \
+    www.bing.com www.intel.com www.amd.com www.adobe.com)" ]
+case "$(random_reality_fallback)" in
+    www.amazon.com|www.bing.com|www.intel.com|www.amd.com|www.adobe.com) ;;
+    *) exit 1 ;;
+esac
+! reality_target_candidates | grep -qE '(^|\.)(cn)$|github'
 ss() { printf '%s\n' 'Netid State Recv-Q Send-Q Local Address:Port' 'tcp LISTEN 0 128 0.0.0.0:45678'; }
 port_is_listening 45678
 ! port_is_listening 45679
@@ -55,6 +62,12 @@ unset -f curl
 BIND_FAMILY=v4
 reality_target_usable_v4() { [ "$1" = 'www.apple.com' ]; }
 [ "$(select_reality_target 443)" = 'www.apple.com' ]
+)
+(
+BIND_FAMILY=v4
+random_reality_fallback() { printf 'www.adobe.com'; }
+reality_target_usable_v4() { [ "$1" = 'www.amazon.com' ] || [ "$1" = 'www.adobe.com' ]; }
+[ "$(select_reality_target 443)" = 'www.adobe.com' ]
 )
 [ "$(BIND_FAMILY=v4 reality_domain_strategy)" = 'ipv4_only' ]
 [ "$(BIND_FAMILY=v6 reality_domain_strategy)" = 'ipv6_only' ]

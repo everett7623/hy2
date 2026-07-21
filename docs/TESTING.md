@@ -91,7 +91,7 @@ bash tests/validate_scripts.sh
 - REALITY `handshake.domain_resolver` 使用本地 resolver，并按 IPv4 节点写入 `ipv4_only`、按纯 IPv6 节点写入 `ipv6_only`；目标筛选必须使用相同地址族。
 - URI、Mihomo、Shadowrocket、Loon 与 Quantumult X 输出包含一致的公钥、short ID、SNI 和 flow；Surfboard 输出明确兼容性提示。
 - NAT、IPv4、IPv6 与双栈节点地址和端口正确；REALITY 目标域名及端口可达。
-- 默认 REALITY 候选不使用 `.cn`、GitHub 或 Bing；安装探测和运行诊断应从 VPS 实际执行，目标不可达时明确告警。
+- REALITY 目标固定优先 Microsoft → Apple → Samsung，Amazon / Bing / Intel / AMD / Adobe 作为随机后备；候选不使用 `.cn` 或 GitHub，安装探测和运行诊断应从 VPS 实际执行，目标不可达时明确告警。
 - 运行诊断分别报告 REALITY 目标可达性、握手地址族、外部测速源到 VPS 的入站下载、本机 TCP/IP 累计计数、网卡及活动队列；不得把该探针描述为 VPS 到客户端方向，也不把 Speedtest 单站失败直接判定为 VLESS 故障。
 - `vless.sh diagnose` 与服务管理菜单中的诊断入口应产生相同检查结果，且不修改配置、服务或防火墙。
 - 独立 VLESS 工具箱手动启用标准 `bbr + fq` 时应原子写入共享 sysctl 文件；任一实时参数未生效时恢复旧文件与修改前参数。

@@ -74,7 +74,7 @@ The generated value is only the interactive default. Users can still enter an ex
 
 ## Version management
 
-There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). The current release policy keeps all six script versions unified, so a project release requires manually updating every script header, visible menu version, date, tests, and `CHANGELOG.md`.
+There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). Every committed change must increment the unified project version and manually update every script header, visible menu version, date, `README.md`, tests, and `CHANGELOG.md`; do not defer version updates until a GitHub Release is created.
 
 Do not confuse the project script version with the installed proxy version. `get_latest_version()` fetches Hysteria 2, Shadowsocks-Rust, or sing-box releases from their upstream GitHub APIs at runtime; there are no dependency pins or lockfiles.
 

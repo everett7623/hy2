@@ -15,7 +15,7 @@ Before editing, read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant
 
 ## Version management
 
-- Each script carries its own version in the header comment block; there is no shared version file. The current release policy keeps all script versions unified, so update every header, visible menu version, date, and `CHANGELOG.md` manually for a project release.
+- Each script carries its own version in the header comment block; there is no shared version file. Every committed change must increment the unified project version and update every header, visible menu version, date, `README.md`, tests, and `CHANGELOG.md`; version updates are not deferred until a GitHub Release is created.
 - `install.sh` always points to `main` branch on GitHub. There's no staging/test branch mechanism.
 - `get_latest_version()` fetches `apernet/hysteria`, `shadowsocks`, or `SagerNet/sing-box` releases from GitHub API — no dependency file for version pins.
 

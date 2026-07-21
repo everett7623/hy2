@@ -4,8 +4,10 @@
 
 ---
 
-## Unreleased
+## v2.0.20 (2026-07-21)
 
+- Quote VLESS UUID, REALITY public key, and short ID as YAML strings in Mihomo exports to preserve credential types and leading zeroes.
+- Prioritize Microsoft, Apple, and Samsung for VLESS REALITY targets, then randomize the first fallback among Amazon, Bing, Intel, AMD, and Adobe while preserving VPS-side address-family reachability checks.
 - Constrain VLESS REALITY handshake DNS resolution to the detected IPv4 or IPv6 family through sing-box 1.12+ `domain_resolver` fields, preventing dead alternate-family routes from stalling handshakes.
 - Correct the VLESS external download probe direction and add local TCP retransmit/timeout, IP discard, interface error/drop, active qdisc and established-session diagnostics without adding a throughput-test dependency.
 - Add opt-in standard `bbr + fq` status and enablement to the standalone VLESS toolbox, with atomic sysctl configuration and rollback when either setting fails to apply.
