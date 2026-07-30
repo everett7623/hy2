@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.22（2026-07-21） · 本次更新：恢复完整 VLESS 连通性修复，并强化配置迁移、防火墙与服务健康检查。
+> 当前版本：v2.0.23（2026-07-30） · 本次更新：统一 AI 开发工具文档，补充测试、版本同步等关键内容，移除已废弃的 AGENTS.md。
 
 ## 目录
 

@@ -4,6 +4,16 @@
 
 ---
 
+## v2.0.23 (2026-07-30)
+
+- Unify AI development tool documentation: refactor `CLAUDE.md` to support Claude Code, Cursor, GitHub Copilot, Windsurf, and other AI assistants.
+- Add configuration files for Cursor (`.cursorrules`), GitHub Copilot (`.github/copilot-instructions.md`), and Windsurf (`.windsurfrules`) that reference the unified `CLAUDE.md`.
+- Expand `CLAUDE.md` with current version, `sb` shortcut behavior, VLESS REALITY target selection mechanism, complete testing command list, version synchronization checklist, client export format matrix, and Git commit guidelines.
+- Remove deprecated `AGENTS.md` (content merged into `CLAUDE.md`) and update all documentation references in `CONTRIBUTING.md`, `ARCHITECTURE.md`, and `MAINTENANCE.md`.
+- Remove `AGENTS.md` validation check from `tests/validate_scripts.sh`.
+
+---
+
 ## v2.0.22 (2026-07-21)
 
 - Restore the complete last-known-good VLESS fixes that were accidentally omitted from the v2.0.21 rollback, including dead-IPv6 detection, address-family-aware REALITY resolution, bounded health polling, diagnostics, and quoted Mihomo credentials.
