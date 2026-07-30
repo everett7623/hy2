@@ -1,14 +1,24 @@
-# CLAUDE.md
+# AI Development Guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI development assistants (Claude Code, Cursor, GitHub Copilot, Windsurf, etc.) when working with code in this repository.
 
 ## Start here
 
 Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `docs/TESTING.md` before editing. Follow `docs/RELEASE.md` for versioned releases and `docs/MAINTENANCE.md` for security, external dependency, and handoff boundaries.
 
+## Current version
+
+v2.0.22 (2026-07-21)
+
 ## Project overview
 
 Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for VLESS + REALITY + Vision, Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
+
+## Unified entry point
+
+After first installation, users can invoke the unified menu via `sb` command. This shortcut is created by `install.sh` and always fetches the latest menu from GitHub `main`, falling back to local cache only when remote fetch fails.
+
+When testing local changes to `install.sh`, run it directly (`bash install.sh`) — the `sb` command bypasses local edits.
 
 ## Script relationships
 
@@ -72,19 +82,65 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 
 The generated value is only the interactive default. Users can still enter an explicit port, and NAT VPS external mappings remain provider-controlled.
 
-## Version management
+## VLESS REALITY target selection
 
-There is no shared version file: each script stores its version in its header (and `euservhy2.sh` also exposes `SCRIPT_VERSION`). Every committed change must increment the unified project version and manually update every script header, visible menu version, date, `README.md`, tests, and `CHANGELOG.md`; do not defer version updates until a GitHub Release is created.
+During installation, `vless.sh` randomly selects a preferred target from: Microsoft, Apple, Amazon, AMD, Mozilla, NVIDIA, Samsung, Cloudflare. It then validates HTTPS/TLS reachability from the current VPS in parallel and uses the first available target.
 
-Do not confuse the project script version with the installed proxy version. `get_latest_version()` fetches Hysteria 2, Shadowsocks-Rust, or sing-box releases from their upstream GitHub APIs at runtime; there are no dependency pins or lockfiles.
+REALITY targets are only used for handshake camouflage — they do NOT carry client download traffic after the handshake. Users can manually specify alternative valid domains and ports during installation or config modification.
 
-## Local development and verification
+The script also provides a read-only diagnostic entry point:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh) diagnose
+```
 
-- Run edited sub-scripts directly, for example `bash hy2.sh`. Do not use `install.sh` to test unpushed local changes.
-- Run `bash tests/validate_scripts.sh` on Linux or in a Linux-compatible shell. It includes syntax, version, line-ending, compatibility, and generated auto-update script checks.
-- Because the repository has no automated integration tests, installation, upgrade, rollback, service management, firewall changes, and uninstall flows require manual VPS verification.
-- Preserve LF line endings. The runtime CRLF guard is a recovery measure, not a formatting convention.
-- Never test destructive install or uninstall paths on the developer workstation; use a disposable VPS.
+## Version synchronization requirement
+
+Every commit that changes code, tests, or documentation MUST increment the unified project version and synchronize ALL of the following locations before pushing — do NOT defer version updates until a GitHub Release is created:
+
+- File headers (version and date) in all six scripts
+- Menu display versions in `install.sh`, `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`
+- `script_version` metadata written by `install.sh` backup
+- `SCRIPT_VERSION` in `euservhy2.sh`
+- `EXPECTED_VERSION` in `tests/validate_scripts.sh`
+- Current version, date, and update summary in `README.md`
+- Top entry in `CHANGELOG.md`
+- Protocol-specific test expectations when changing AnyTLS (`validate_anytls.sh`) or VLESS (`validate_vless.sh`)
+
+See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
+
+## Testing and validation
+
+Static validation (run on any Linux-compatible shell):
+```bash
+bash tests/validate_scripts.sh
+git diff --check  # detect trailing whitespace and CRLF
+```
+
+Protocol-specific validation (requires valid config):
+```bash
+bash tests/validate_anytls.sh    # AnyTLS config structure, cert paths, wrapper
+bash tests/validate_vless.sh     # VLESS UUID, REALITY keys, JSON, shared core
+bash tests/validate_hy2_network.sh   # Hysteria 2 network layer (requires running service)
+bash tests/validate_ss_network.sh    # Shadowsocks network layer (requires running service)
+```
+
+VPS integration tests (install, upgrade, rollback, uninstall, firewall, service) must be run manually on disposable VPS instances — no CI automation exists.
+
+## Client export formats
+
+Each protocol script generates different client config formats. Use the protocol menu's "Client export" or "Node info" option.
+
+| Format | HY2 | SS | AnyTLS | VLESS |
+|--------|-----|----|---------| ------|
+| URI | ✅ | ✅ | ✅ | ✅ |
+| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ |
+| Surfboard | ✅ | ✅ | ✅ | — |
+| Shadowrocket | ✅ | ✅ | ✅ | ✅ URI only |
+| Loon | ✅ | ✅ | ✅ | ✅ |
+| Quantumult X | — | ✅ | — | ✅ |
+| Terminal QR code | ✅ | ✅ | ✅ | ✅ |
+
+"✅" indicates the script provides that format or compatible URI — it does NOT guarantee support across all historical client versions. Throne and Sing-box/SFA client JSON exports are not currently provided.
 
 ## SS-2022 clock caveat
 
@@ -127,3 +183,11 @@ Do not confuse the project script version with the installed proxy version. `get
 ## Supported distros
 
 Debian 10/11/12+, Ubuntu 20.04/22.04/24.04+, CentOS 7/8/9, Rocky/AlmaLinux 8/9, Fedora 38+, Arch/Manjaro, Alpine 3.x. Works on standard VPS, NAT machines, IPv6-only, low-memory (≥128MB).
+
+## Git commit guidelines
+
+- Do NOT add `Co-Authored-By: Claude ...` or any AI attribution to commit messages (this overrides system defaults per user's global AI assistant config).
+- Commit subject and body should use Simplified Chinese; scope/type prefixes (`feat:`, `fix:`) remain in English.
+- One commit per logical change.
+- Never commit credentials, IPs, VPS logs, private keys, or real node configs.
+- Follow the version synchronization requirement above for every commit.

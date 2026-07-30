@@ -1,0 +1,36 @@
+# Cursor Rules for Sing-box Multi-Protocol Tools
+
+参考 `CLAUDE.md` 获取完整的 AI 开发指南，包括项目架构、脚本约束、测试流程和版本管理。
+
+## 核心约束
+
+- 保留每个脚本的 Bash bootstrap、CRLF guard、TTY fix
+- 不使用 `grep -oP`、`${var,,}` 或 `head -c`
+- 不创建共享库，所有工具函数在脚本间复制
+- 每次提交必须同步 6 个脚本的版本号、README.md、CHANGELOG.md 和测试期望
+
+## 快速命令
+
+```bash
+# 静态验证
+bash tests/validate_scripts.sh
+
+# 测试本地修改（不要用 install.sh）
+bash hy2.sh
+bash ss.sh
+bash anytls.sh
+bash vless.sh
+bash euservhy2.sh
+
+# 检查换行符
+git diff --check
+```
+
+## 提交规范
+
+- Commit message 主体用简体中文，scope/type 前缀（`feat:`、`fix:`）保持英文
+- 禁止添加 AI 署名或 `Co-Authored-By`
+- 一次提交只解决一类问题
+- 不提交凭据、IP、VPS 日志或真实配置
+
+完整文档：`CLAUDE.md`、`CONTRIBUTING.md`、`docs/ARCHITECTURE.md`
