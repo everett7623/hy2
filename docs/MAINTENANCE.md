@@ -42,7 +42,7 @@
 
 ## 安装产物
 
-维护或卸载逻辑变更时，对照 `AGENTS.md` 中的安装路径，并额外检查：
+维护或卸载逻辑变更时，对照 `CLAUDE.md` 中的安装路径，并额外检查：
 
 - `/usr/local/bin/hy2-autoupdate.sh`
 - `/usr/local/bin/ss-autoupdate.sh`
@@ -83,7 +83,7 @@
 
 其他 AI 工具开始工作前应：
 
-1. 读取 `AGENTS.md`、`CLAUDE.md` 和 `docs/ARCHITECTURE.md`。
+1. 读取 `CLAUDE.md`（统一 AI 开发指南）和 `docs/ARCHITECTURE.md`。
 2. 检查 `git status`，不得覆盖已有未提交修改。
 3. 对照脚本实际实现，不盲信 README 或历史变更日志。
 4. 将改动限制在受影响脚本和相应文档。

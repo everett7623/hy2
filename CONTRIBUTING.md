@@ -4,7 +4,7 @@
 
 ## 开发前必读
 
-1. 阅读 `AGENTS.md` 或 `CLAUDE.md`，了解不可移除的兼容约束。
+1. 阅读 `CLAUDE.md`（统一 AI 开发指南），了解不可移除的兼容约束。
 2. 阅读 `docs/ARCHITECTURE.md`，确认脚本边界和执行模型。
 3. 阅读 `docs/TESTING.md`，根据改动范围选择 VPS 测试场景。
 4. 不要通过 `install.sh` 测试未推送的本地子脚本；它始终下载 GitHub `main`。
