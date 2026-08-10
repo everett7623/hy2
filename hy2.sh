@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：everettlabs
-# 版本：v2.0.24
+# 版本：v2.0.25
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -442,7 +442,7 @@ warn_streaming_egress() {
     if [ -n "${PUBLIC_IP:-}" ] && [ -n "${PUBLIC_IPV6:-}" ]; then
         echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点，并确保客户端 DNS 走代理。${PLAIN}"
     elif [ -n "${PUBLIC_IP:-}" ] || [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理（可用下方 Mihomo 流媒体片段）。${PLAIN}"
+        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理。${PLAIN}"
     fi
 }
 
@@ -1413,26 +1413,6 @@ export_mihomo_hy2() {
     printf '%s' "- {name: '${_safe_node}', type: hysteria2, server: ${_yaml_server}, port: ${_port}, password: '${_pass}', sni: '${_sni}', skip-cert-verify: true, fast-open: true, udp: true}"
 }
 
-export_mihomo_stream_hy2() {
-    local _server="$1" _port="$2" _node="$3" _yaml_server _pass _sni _safe_node
-    _yaml_server=$(format_server_for_yaml "$_server")
-    _pass=$(yaml_single_quote_escape "$PASSWORD")
-    _sni=$(yaml_single_quote_escape "$SNI")
-    _safe_node=$(yaml_single_quote_escape "$_node")
-    cat <<SNIP
-# Mihomo 流媒体 DNS 片段（DNS 经节点 detour，降低本地 DNS 泄露导致的 proxy/VPN 误判）
-proxies:
-  - {name: '${_safe_node}', type: hysteria2, server: ${_yaml_server}, port: ${_port}, password: '${_pass}', sni: '${_sni}', skip-cert-verify: true, fast-open: true, udp: true}
-
-dns:
-  enable: true
-  enhanced-mode: redir-host
-  nameserver:
-    - https://1.1.1.1/dns-query#${_safe_node}
-    - https://8.8.8.8/dns-query#${_safe_node}
-SNIP
-}
-
 export_loon_hy2() {
     local _server="$1" _port="$2" _node="$3"
     printf "%s = Hysteria2, %s, %s, '%s', skip-cert-verify=true, sni=%s" "$_node" "$_server" "$_port" "$PASSWORD" "$SNI"
@@ -1480,8 +1460,6 @@ show_node() {
         echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
         print_copy_block "$(export_mihomo_hy2 "$_ip" "$_port" "$_node")"
         [ -n "$PORT_HOP" ] && echo -e "${YELLOW}[WARN] 端口跳跃: ${PORT_HOP}，客户端需按实际支持手动适配。${PLAIN}"
-        echo -e "${GREEN}Mihomo 流媒体 DNS 片段:${PLAIN}"
-        print_copy_block "$(export_mihomo_stream_hy2 "$_ip" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -2169,7 +2147,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.24${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.25${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

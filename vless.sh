@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.24
+# 版本：v2.0.25
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -626,7 +626,7 @@ warn_streaming_egress() {
     if [ -n "${PUBLIC_IP:-}" ] && [ -n "${PUBLIC_IPV6:-}" ]; then
         echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点，并确保客户端 DNS 走代理。${PLAIN}"
     elif [ -n "${PUBLIC_IP:-}" ] || [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理（可用下方 Mihomo 流媒体片段）。${PLAIN}"
+        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理。${PLAIN}"
     fi
     if [ -n "${BIND_INTERFACE:-}" ]; then
         echo -e "出站网卡 : ${GREEN}${BIND_INTERFACE}${PLAIN}"
@@ -2028,25 +2028,6 @@ export_mihomo_vless() {
     printf '%s' "- {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: '${UUID}', network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: '${REALITY_PUBLIC_KEY}', short-id: '${SHORT_ID}'}}"
 }
 
-export_mihomo_stream_vless() {
-    local _server="$1" _port="$2" _node="$3" _yaml_server _safe_node _sni
-    _yaml_server=$(format_server_for_yaml "$_server")
-    _safe_node=$(yaml_single_quote_escape "$_node")
-    _sni=$(yaml_single_quote_escape "$SERVER_NAME")
-    cat <<SNIP
-# Mihomo 流媒体 DNS 片段（DNS 经节点 detour，降低本地 DNS 泄露导致的 proxy/VPN 误判）
-proxies:
-  - {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: '${UUID}', network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: '${REALITY_PUBLIC_KEY}', short-id: '${SHORT_ID}'}}
-
-dns:
-  enable: true
-  enhanced-mode: redir-host
-  nameserver:
-    - https://1.1.1.1/dns-query#${_safe_node}
-    - https://8.8.8.8/dns-query#${_safe_node}
-SNIP
-}
-
 export_loon_vless() {
     local _server="$1" _port="$2" _node="$3"
     printf '%s = VLESS, %s, %s, "%s", transport=tcp, flow=xtls-rprx-vision, public-key="%s", short-id=%s, udp=true, over-tls=true, sni=%s, skip-cert-verify=true' \
@@ -2116,8 +2097,6 @@ show_node() {
     if should_show_output "$_mode" "mihomo"; then
         echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
         print_copy_block "$(export_mihomo_vless "$_server" "$_port" "$_node")"
-        echo -e "${GREEN}Mihomo 流媒体 DNS 片段:${PLAIN}"
-        print_copy_block "$(export_mihomo_stream_vless "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -2828,7 +2807,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.24${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.25${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

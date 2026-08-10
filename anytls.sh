@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.0.24
+# 版本：v2.0.25
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -473,7 +473,7 @@ warn_streaming_egress() {
     if [ -n "${PUBLIC_IP:-}" ] && [ -n "${PUBLIC_IPV6:-}" ]; then
         echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点，并确保客户端 DNS 走代理。${PLAIN}"
     elif [ -n "${PUBLIC_IP:-}" ] || [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理（可用下方 Mihomo 流媒体片段）。${PLAIN}"
+        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理。${PLAIN}"
     fi
     if [ -n "${BIND_INTERFACE:-}" ]; then
         echo -e "出站网卡 : ${GREEN}${BIND_INTERFACE}${PLAIN}"
@@ -2009,24 +2009,6 @@ export_mihomo_anytls() {
     fi
 }
 
-export_mihomo_stream_anytls() {
-    local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _line _safe_node
-    _safe_node=$(yaml_single_quote_escape "$_node")
-    _line=$(export_mihomo_anytls "$_server" "$_port" "$_node" "$_fingerprint")
-    cat <<SNIP
-# Mihomo 流媒体 DNS 片段（DNS 经节点 detour，降低本地 DNS 泄露导致的 proxy/VPN 误判）
-proxies:
-  ${_line}
-
-dns:
-  enable: true
-  enhanced-mode: redir-host
-  nameserver:
-    - https://1.1.1.1/dns-query#${_safe_node}
-    - https://8.8.8.8/dns-query#${_safe_node}
-SNIP
-}
-
 export_loon_anytls() {
     local _server="$1" _port="$2" _node="$3"
     local _skip="false"
@@ -2108,8 +2090,6 @@ show_node() {
     if should_show_output "$_mode" "mihomo"; then
         echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
         print_copy_block "$(export_mihomo_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
-        echo -e "${GREEN}Mihomo 流媒体 DNS 片段:${PLAIN}"
-        print_copy_block "$(export_mihomo_stream_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -2559,7 +2539,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.24${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.25${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

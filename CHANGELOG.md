@@ -4,6 +4,13 @@
 
 ---
 
+## v2.0.25 (2026-08-10)
+
+- Remove Mihomo streaming DNS snippet exports from protocol client output; keep single-line Mihomo proxy entries and server-side native egress binding.
+- Leave Netflix/streaming DNS customization to the user's own client YAML configuration.
+
+---
+
 ## v2.0.24 (2026-08-10)
 
 - Add standalone `proxy.sh` for HTTP/SOCKS via sing-box native `mixed` inbound (HTTP + SOCKS5 on one port), with username/password auth, wrapper/service files, firewall ownership, auto-update, and shared sing-box core management alongside AnyTLS/VLESS.

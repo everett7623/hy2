@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.24（2026-08-10） · 本次更新：新增 HTTP/SOCKS（sing-box mixed）独立协议，协议脚本支持原生网卡出站绑定与 Mihomo 流媒体 DNS 片段。
+> 当前版本：v2.0.25（2026-08-10） · 本次更新：移除客户端导出中的 Mihomo 流媒体 DNS 片段，保留节点单行配置与服务端出站绑定。
 
 ## 目录
 
@@ -102,7 +102,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 | AnyTLS | 需要轻量 TCP/TLS 传输 | 随机 `10000-65535/TCP` | 支持自签、已有域名证书和 sing-box 1.14+ ACME |
 | Hysteria 2 | 大多数 IPv4/双栈 VPS，偏重 UDP 性能 | 随机 `10000-65535/UDP` | 支持单端口、端口跳跃和 NAT 外部端口 |
 | Shadowsocks | 备用节点、IPv6/双栈环境 | 随机 `10000-65535/TCP+UDP` | 支持经典 AEAD 与 SS-2022；SS-2022 要求准确系统时间 |
-| HTTP/SOCKS | 住宅 IP / 需要标准 HTTP 与 SOCKS5 同端口 | 随机 `10000-65535/TCP` | sing-box mixed 入站；出站可绑定原生网卡，导出含流媒体 DNS 片段 |
+| HTTP/SOCKS | 住宅 IP / 需要标准 HTTP 与 SOCKS5 同端口 | 随机 `10000-65535/TCP` | sing-box mixed 入站；出站可绑定原生网卡 |
 | EUserv HY2 | EUserv IPv6-only VPS | 自定义 | 独立处理 NAT64 DNS、WARP 与纯 IPv6 下载回退 |
 
 安装时生成的端口只是交互默认值，用户输入和 NAT 服务商的外部端口映射始终优先。

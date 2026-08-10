@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.24
+# 版本：v2.0.25
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1778,27 +1778,6 @@ export_mihomo_socks() {
     printf "%s" "- {name: '${_safe_node}', type: socks5, server: ${_yaml_server}, port: ${_port}, username: '${_user}', password: '${_pass}', udp: true}"
 }
 
-export_mihomo_stream_snippet() {
-    local _server="$1" _port="$2" _node="$3" _yaml_server _user _pass _safe_node
-    _yaml_server=$(format_server_for_yaml "$_server")
-    _user=$(yaml_single_quote_escape "$PROXY_USER")
-    _pass=$(yaml_single_quote_escape "$PROXY_PASS")
-    _safe_node=$(yaml_single_quote_escape "$_node")
-    cat <<SNIP
-# Mihomo 流媒体 DNS 片段（推荐 SOCKS5 + 远程 DNS / socks5h）
-# 说明: nameserver 通过 #节点名 detour，DNS 查询走代理，避免本地 DNS 泄露
-proxies:
-  - {name: '${_safe_node}', type: socks5, server: ${_yaml_server}, port: ${_port}, username: '${_user}', password: '${_pass}', udp: true}
-
-dns:
-  enable: true
-  enhanced-mode: redir-host
-  nameserver:
-    - https://1.1.1.1/dns-query#${_safe_node}
-    - https://8.8.8.8/dns-query#${_safe_node}
-SNIP
-}
-
 show_node() {
     local _server="$1" _port="$2" _tag="$3" _mode="${4:-all}"
     [ -z "$_server" ] && return
@@ -1837,8 +1816,6 @@ show_node() {
         print_copy_block "$(export_mihomo_http "$_server" "$_port" "$_node_http")"
         echo -e "${GREEN}Mihomo SOCKS5 单行（推荐）:${PLAIN}"
         print_copy_block "$(export_mihomo_socks "$_server" "$_port" "$_node_socks")"
-        echo -e "${GREEN}Mihomo 流媒体 DNS 片段（socks5h / redir-host）:${PLAIN}"
-        print_copy_block "$(export_mihomo_stream_snippet "$_server" "$_port" "$_node_socks")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -2307,7 +2284,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.24${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.25${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
