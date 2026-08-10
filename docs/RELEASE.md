@@ -8,10 +8,10 @@
 
 1. 确认工作区只包含本次发布内容。
 2. 确认本次变更集已按语义化版本提升版本，例如 `v1.0.3`。
-3. 同步六个脚本的文件头版本和更新日期。
-4. 同步五个菜单版本和 EUserv `SCRIPT_VERSION`。
+3. 同步七个脚本的文件头版本和更新日期。
+4. 同步菜单版本（含 `proxy.sh`）和 EUserv `SCRIPT_VERSION`。
 5. 更新 `tests/validate_scripts.sh` 中的 `EXPECTED_VERSION`。
-6. AnyTLS 或 VLESS 变更需确认行为测试覆盖官方下载 URL、配置和服务文件生成；共享 sing-box 升级还需验证所有现存配置。
+6. AnyTLS、VLESS 或 HTTP/SOCKS 变更需确认行为测试覆盖官方下载 URL、配置和服务文件生成；共享 sing-box 升级还需验证所有现存配置。
 7. 同步 `README.md` 的当前版本、日期和本次更新摘要。
 8. 在 `CHANGELOG.md` 顶部增加版本、日期和用户可见变化。
 
@@ -47,6 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh | head
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh | head
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh | head
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh | head
+curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/proxy.sh | head
 curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh | head
 ```
 

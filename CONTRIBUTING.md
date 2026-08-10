@@ -11,7 +11,7 @@
 
 ## 修改原则
 
-- 保持 `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh`、`euservhy2.sh` 可独立执行。
+- 保持 `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh`、`proxy.sh`、`euservhy2.sh` 可独立执行。
 - 不引入共享 `source` 文件；远程启动器只下载单个脚本。
 - 保留 Bash 自举、TTY 修复和 CRLF guard。
 - 不使用 `grep -oP`、`${var,,}`、`${var^^}` 或 `head -c`。
@@ -34,14 +34,15 @@ bash tests/validate_scripts.sh
 
 项目没有共享版本文件。每次准备提交一组代码、测试或文档修改时，都必须提升统一项目版本并同步以下位置；不能等到创建 GitHub Release 时再补版本：
 
-- 六个脚本的文件头版本和日期
-- `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh` 的菜单显示版本
+- 七个脚本的文件头版本和日期
+- `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh`、`proxy.sh` 的菜单显示版本
 - `install.sh` 写入备份元数据的 `script_version`
 - `euservhy2.sh` 的 `SCRIPT_VERSION`
 - `tests/validate_scripts.sh` 的 `EXPECTED_VERSION`
 - `README.md` 的当前版本、日期和本次更新摘要
 - AnyTLS 变更需同步 `tests/validate_anytls.sh`；保持 sing-box 原生 AnyTLS 入站、JSON 配置、证书与 wrapper 的测试覆盖。
 - VLESS 变更需同步 `tests/validate_vless.sh`；保持 UUID、REALITY 密钥/short ID、JSON、客户端输出、共享核心和 wrapper/service 的测试覆盖。
+- HTTP/SOCKS 变更需同步 `tests/validate_proxy.sh`；保持 mixed 入站、用户凭据、`bind_interface`、wrapper/service 的测试覆盖。
 - `CHANGELOG.md` 顶部对应版本、日期和用户可见变更
 
 完整发布步骤见 `docs/RELEASE.md`。

@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：everettlabs
-# 版本：v2.0.23
+# 版本：v2.0.24
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-07-30
+# 更新日期: 2026-08-10
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
@@ -93,6 +93,8 @@ HAS_IPV4=0
 HAS_IPV6=0
 PUBLIC_IP=""
 PUBLIC_IPV6=""
+DEFAULT_EGRESS_IPV4=""
+WARP_ACTIVE=0
 LISTEN_PORT=""
 EXT_PORT=""
 
@@ -179,10 +181,26 @@ get_default_public_ipv4() {
     return 1
 }
 
+warn_streaming_egress() {
+    if [ "${WARP_ACTIVE:-0}" = "1" ] && [ -n "${DEFAULT_EGRESS_IPV4:-}" ] && [ -n "${PUBLIC_IP:-}" ] && \
+        [ "$DEFAULT_EGRESS_IPV4" != "$PUBLIC_IP" ]; then
+        echo -e "${RED}[WARN] 默认出站 IP (${DEFAULT_EGRESS_IPV4}) 与节点 IP (${PUBLIC_IP}) 不一致。${PLAIN}"
+        echo -e "${RED}        流媒体（如 Netflix）可能提示 proxy/VPN；SS 无法绑定出站网卡，请关闭 WARP。${PLAIN}"
+    fi
+    if [ -n "${PUBLIC_IP:-}" ] && [ -n "${PUBLIC_IPV6:-}" ]; then
+        echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点，并确保客户端 DNS 走代理。${PLAIN}"
+    elif [ -n "${PUBLIC_IP:-}" ] || [ -n "${PUBLIC_IPV6:-}" ]; then
+        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理（可用下方 Mihomo 流媒体片段）。${PLAIN}"
+    fi
+}
+
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
-    NAT_MODE=0; IPV6_ONLY=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""
+    NAT_MODE=0; IPV6_ONLY=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; DEFAULT_EGRESS_IPV4=""; WARP_ACTIVE=0
     local _ip _url
+
+    detect_warp && WARP_ACTIVE=1 || true
+    DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
 
     # IPv6 优先探测
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
@@ -195,9 +213,8 @@ detect_network() {
     _ip=$(get_native_public_ipv4 2>/dev/null || true)
     if is_valid_ipv4 "$_ip"; then
         PUBLIC_IP="$_ip"; HAS_IPV4=1
-    elif ! detect_warp; then
-        _ip=$(get_default_public_ipv4 2>/dev/null || true)
-        is_valid_ipv4 "$_ip" && { PUBLIC_IP="$_ip"; HAS_IPV4=1; }
+    elif [ "$WARP_ACTIVE" = "0" ] && is_valid_ipv4 "$DEFAULT_EGRESS_IPV4"; then
+        PUBLIC_IP="$DEFAULT_EGRESS_IPV4"; HAS_IPV4=1
     fi
 
     if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
@@ -213,6 +230,14 @@ detect_network() {
     elif [ "$HAS_IPV6"  = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv6: ${PUBLIC_IPV6} | IPv4: ${PUBLIC_IP}）"
     elif [ "$HAS_IPV4"  = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
     else                               echo -e "  机器类型: ${RED}无法检测，请手动输入${PLAIN}"
+    fi
+    if [ "$WARP_ACTIVE" = "1" ]; then
+        echo -e "  WARP 状态: ${YELLOW}已检测到${PLAIN}（仅作为出站，不用于节点入口）"
+        [ -n "$DEFAULT_EGRESS_IPV4" ] && echo -e "  默认出口 IPv4: ${YELLOW}${DEFAULT_EGRESS_IPV4}${PLAIN}"
+        if [ -n "$PUBLIC_IP" ] && [ -n "$DEFAULT_EGRESS_IPV4" ] && [ "$DEFAULT_EGRESS_IPV4" != "$PUBLIC_IP" ]; then
+            echo -e "  原生入口 IPv4: ${GREEN}${PUBLIC_IP}${PLAIN}"
+            echo -e "  ${RED}注意: 默认出站与节点 IP 不一致，流媒体可能判 VPN；SS 无法绑定出站网卡，请关闭 WARP 或修正路由${PLAIN}"
+        fi
     fi
 
     if [ "$HAS_IPV6" = "0" ]; then
@@ -1251,6 +1276,25 @@ export_mihomo_ss() {
     printf '%s' "- {name: '${_safe_node}', type: ss, server: ${_yaml_server}, port: ${_port}, cipher: ${METHOD}, password: '${_pass}', udp: true}"
 }
 
+export_mihomo_stream_ss() {
+    local _server="$1" _port="$2" _node="$3" _yaml_server _pass _safe_node
+    _yaml_server=$(format_server_for_yaml "$_server")
+    _pass=$(yaml_single_quote_escape "$PASSWORD")
+    _safe_node=$(yaml_single_quote_escape "$_node")
+    cat <<SNIP
+# Mihomo 流媒体 DNS 片段（DNS 经节点 detour，降低本地 DNS 泄露导致的 proxy/VPN 误判）
+proxies:
+  - {name: '${_safe_node}', type: ss, server: ${_yaml_server}, port: ${_port}, cipher: ${METHOD}, password: '${_pass}', udp: true}
+
+dns:
+  enable: true
+  enhanced-mode: redir-host
+  nameserver:
+    - https://1.1.1.1/dns-query#${_safe_node}
+    - https://8.8.8.8/dns-query#${_safe_node}
+SNIP
+}
+
 export_loon_ss() {
     local _server="$1" _port="$2" _node="$3"
     printf "%s = Shadowsocks, %s, %s, %s, '%s'" "$_node" "$_server" "$_port" "$METHOD" "$PASSWORD"
@@ -1292,10 +1336,14 @@ read_config_vars() {
     [[ -z "$PASSWORD"  ]] && PASSWORD=$(grep '"password"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
     [[ -z "$METHOD"    ]] && METHOD=$(grep '"method"' "$SS_CONFIG" | awk -F'"' '{print $4}' | head -1)
 
+    WARP_ACTIVE=0
+    DEFAULT_EGRESS_IPV4=""
     if detect_warp; then
+        WARP_ACTIVE=1
         local _native_ipv4 _default_ipv4
         _native_ipv4=$(get_native_public_ipv4 2>/dev/null || true)
         _default_ipv4=$(get_default_public_ipv4 2>/dev/null || true)
+        DEFAULT_EGRESS_IPV4="$_default_ipv4"
         if is_valid_ipv4 "$_native_ipv4"; then
             PUBLIC_IP="$_native_ipv4"
             [ ! -d "$SS_META" ] || printf '%s' "$PUBLIC_IP" > "$SS_META/public_ip"
@@ -1347,6 +1395,8 @@ show_node() {
     if should_show_output "$_mode" "mihomo"; then
         echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
         print_copy_block "$(export_mihomo_ss "$_ip" "$_port" "$_node")"
+        echo -e "${GREEN}Mihomo 流媒体 DNS 片段:${PLAIN}"
+        print_copy_block "$(export_mihomo_stream_ss "$_ip" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -1412,6 +1462,7 @@ show_config() {
     echo -e "国家/地区: ${YELLOW}${_country} / $(get_country_name "$_country")${PLAIN}"
     [ -n "$PUBLIC_IP"   ] && echo -e "IPv4 地址 : ${YELLOW}${PUBLIC_IP}${PLAIN}"
     [ -n "$PUBLIC_IPV6" ] && echo -e "IPv6 地址 : ${YELLOW}${PUBLIC_IPV6}${PLAIN} ${GREEN}(推荐)${PLAIN}"
+    warn_streaming_egress
 
     if [ "$NAT_MODE" = "1" ] && [ "$EXT_PORT" != "$LISTEN_PORT" ]; then
         echo -e "监听端口 : ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
@@ -1962,7 +2013,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.23${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.24${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

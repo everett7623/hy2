@@ -1,6 +1,6 @@
 # Sing-box Multi-Protocol Tools
 
-面向 Linux VPS 的多协议部署与管理脚本，统一管理 VLESS + REALITY + Vision、AnyTLS、Hysteria 2、Shadowsocks-Rust 和 EUserv IPv6-only Hysteria 2。
+面向 Linux VPS 的多协议部署与管理脚本，统一管理 VLESS + REALITY + Vision、AnyTLS、Hysteria 2、Shadowsocks-Rust、HTTP/SOCKS（住宅 IP 独立协议）和 EUserv IPv6-only Hysteria 2。
 
 [![GitHub release](https://img.shields.io/github/v/release/everett7623/hy2?color=blue&label=Latest%20Version)](https://github.com/everett7623/hy2/releases)
 [![Shell Script](https://img.shields.io/badge/Language-Shell-green)](https://github.com/everett7623/hy2)
@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.23（2026-07-30） · 本次更新：统一 AI 开发工具文档，补充测试、版本同步等关键内容，移除已废弃的 AGENTS.md。
+> 当前版本：v2.0.24（2026-08-10） · 本次更新：新增 HTTP/SOCKS（sing-box mixed）独立协议，协议脚本支持原生网卡出站绑定与 Mihomo 流媒体 DNS 片段。
 
 ## 目录
 
@@ -25,12 +25,12 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 统一入口 | 一个 `install.sh` 管理五种协议方案，首次运行后可使用 `sb` 快捷命令 |
+| 统一入口 | 一个 `install.sh` 管理多种协议方案，首次运行后可使用 `sb` 快捷命令 |
 | 自动检测 | 识别发行版、CPU 架构、systemd/OpenRC、IPv4/IPv6、NAT 与防火墙环境 |
 | 安全部署 | 下载校验、临时文件、原子替换、配置备份、服务失败回滚 |
 | 节点导出 | 按协议输出 URI、Mihomo、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码 |
 | 服务管理 | 安装、重装、查看状态、启停、重启、日志、修改配置、升级和卸载 |
-| 共享核心 | AnyTLS 与 VLESS 安全共用 sing-box，升级前检查全部现存配置 |
+| 共享核心 | AnyTLS、VLESS 与 HTTP/SOCKS 安全共用 sing-box，升级前检查全部现存配置 |
 | 系统工具 | 网络诊断、手动备份/恢复，以及按需启用标准 `bbr + fq` |
 
 ## 快速开始
@@ -85,6 +85,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/hy2.sh)
 # Shadowsocks-Rust
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 
+# HTTP/SOCKS Proxy (residential IP / mixed inbound)
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/proxy.sh)
+
 # EUserv IPv6-only Hysteria 2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
 ```
@@ -99,6 +102,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 | AnyTLS | 需要轻量 TCP/TLS 传输 | 随机 `10000-65535/TCP` | 支持自签、已有域名证书和 sing-box 1.14+ ACME |
 | Hysteria 2 | 大多数 IPv4/双栈 VPS，偏重 UDP 性能 | 随机 `10000-65535/UDP` | 支持单端口、端口跳跃和 NAT 外部端口 |
 | Shadowsocks | 备用节点、IPv6/双栈环境 | 随机 `10000-65535/TCP+UDP` | 支持经典 AEAD 与 SS-2022；SS-2022 要求准确系统时间 |
+| HTTP/SOCKS | 住宅 IP / 需要标准 HTTP 与 SOCKS5 同端口 | 随机 `10000-65535/TCP` | sing-box mixed 入站；出站可绑定原生网卡，导出含流媒体 DNS 片段 |
 | EUserv HY2 | EUserv IPv6-only VPS | 自定义 | 独立处理 NAT64 DNS、WARP 与纯 IPv6 下载回退 |
 
 安装时生成的端口只是交互默认值，用户输入和 NAT 服务商的外部端口映射始终优先。
@@ -111,15 +115,15 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 
 ## 客户端导出
 
-| 客户端/平台 | Hysteria 2 | Shadowsocks | AnyTLS | VLESS REALITY |
-| --- | :---: | :---: | :---: | :---: |
-| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ |
-| Shadowrocket | ✅ | ✅ | ✅ | ✅ URI |
-| Loon | ✅ | ✅ | ✅ | ✅ |
-| Surfboard | ✅ | ✅ | ✅ | 暂无已确认格式 |
-| Quantumult X | 暂不推荐 | ✅ | 暂不推荐 | ✅ |
-| v2rayN / NekoBox | ✅ | ✅ | 视客户端支持 | ✅ URI |
-| Stash | ✅ | ✅ | 视客户端支持 | 视客户端版本 |
+| 客户端/平台 | Hysteria 2 | Shadowsocks | AnyTLS | VLESS REALITY | HTTP/SOCKS |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Shadowrocket | ✅ | ✅ | ✅ | ✅ URI | URI |
+| Loon | ✅ | ✅ | ✅ | ✅ | — |
+| Surfboard | ✅ | ✅ | ✅ | 暂无已确认格式 | — |
+| Quantumult X | 暂不推荐 | ✅ | 暂不推荐 | ✅ | — |
+| v2rayN / NekoBox | ✅ | ✅ | 视客户端支持 | ✅ URI | URI |
+| Stash | ✅ | ✅ | 视客户端支持 | 视客户端版本 | 视客户端支持 |
 
 “✅”表示脚本提供对应格式或兼容 URI，不代表所有历史客户端版本均支持。升级客户端后仍无法导入时，优先使用 URI 或 Mihomo 配置，并核对协议、UUID/密码、SNI、公钥、short ID、端口和传输类型。
 
@@ -153,7 +157,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.s
 
 - 安装、升级和卸载不会自动创建 VPS 配置归档；如有需要，请先在“备份/恢复”中手动备份。
 - BBR 默认只显示状态，不会随协议安装自动开启；启用标准 `bbr + fq` 属于用户主动操作。
-- AnyTLS 与 VLESS 共用 `/usr/local/bin/sing-box`，替换核心前会检查 `/etc/sing-box/*.json`。
+- AnyTLS、VLESS 与 HTTP/SOCKS 共用 `/usr/local/bin/sing-box`，替换核心前会检查 `/etc/sing-box/*.json`。
 - `sb` 优先获取 GitHub `main` 的最新入口，远端失败时才尝试使用本地缓存。
 - 本地修改不会被远程 `install.sh` 使用；开发测试应直接运行本地子脚本。
 
@@ -232,6 +236,7 @@ VLESS 诊断会检查 REALITY 目标、Cloudflare 下载探针和当前 TCP 拥�
 | `install.sh` | 统一入口、菜单、缓存和跨协议调度 |
 | `hy2.sh` / `ss.sh` | Hysteria 2 与 Shadowsocks-Rust 管理 |
 | `anytls.sh` / `vless.sh` | sing-box 原生 AnyTLS 与 VLESS 管理 |
+| `proxy.sh` | sing-box 原生 mixed（HTTP + SOCKS5）管理 |
 | `euservhy2.sh` | EUserv IPv6-only 独立脚本 |
 | `tests/validate_scripts.sh` | Bash 语法、版本、换行和行为验证总入口 |
 | `docs/` | 架构、测试、发布和维护边界 |

@@ -4,6 +4,17 @@
 
 ---
 
+## v2.0.24 (2026-08-10)
+
+- Add standalone `proxy.sh` for HTTP/SOCKS via sing-box native `mixed` inbound (HTTP + SOCKS5 on one port), with username/password auth, wrapper/service files, firewall ownership, auto-update, and shared sing-box core management alongside AnyTLS/VLESS.
+- Bind direct outbound traffic to the native egress interface when detected, reducing WARP/tunnel IP leakage for residential or streaming use cases.
+- Export Mihomo streaming DNS snippets (SOCKS5 / socks5h + nameserver detour) across proxy and other protocol scripts to keep client DNS on-proxy.
+- Integrate HTTP/SOCKS into the unified `install.sh` menus for install, status, service, upgrade, cache refresh, and uninstall.
+- Add `tests/validate_proxy.sh` and synchronize version, documentation, and static validation for seven scripts at v2.0.24.
+- Fix `detect_network` returning non-zero under `set -e` when no egress interface is bound, so AnyTLS/VLESS/Proxy validation and install flows no longer abort after a successful detection.
+
+---
+
 ## v2.0.23 (2026-07-30)
 
 - Unify AI development tool documentation: refactor `CLAUDE.md` to support Claude Code, Cursor, GitHub Copilot, Windsurf, and other AI assistants.

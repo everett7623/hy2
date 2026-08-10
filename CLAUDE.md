@@ -8,11 +8,11 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.23 (2026-07-30)
+v2.0.24 (2026-08-10)
 
 ## Project overview
 
-Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for VLESS + REALITY + Vision, Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
+Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for VLESS + REALITY + Vision, Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, HTTP/SOCKS (sing-box mixed) for residential IP use cases, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
 
 ## Unified entry point
 
@@ -27,11 +27,12 @@ When testing local changes to `install.sh`, run it directly (`bash install.sh`) 
 - **`ss.sh`** — Shadowsocks-Rust management script. Full-featured: install/upgrade/uninstall, service management, BBR tuning, auto-update cron, modify config, terminal QR codes, connection test, server tools. IPv6-first detection with WARP filtering.
 - **`anytls.sh`** — Standalone shell management around sing-box >= 1.12.0 native AnyTLS inbound. Generates JSON, TLS certificates, wrapper and service files without Python.
 - **`vless.sh`** — Standalone shell management around sing-box >= 1.12.0 native VLESS inbound with TCP, REALITY, and `xtls-rprx-vision`. Generates UUID, REALITY key pair, short ID, JSON, wrapper and service files without Python.
+- **`proxy.sh`** — Standalone shell management around sing-box >= 1.12.0 native `mixed` inbound (HTTP + SOCKS5 on one port). Generates JSON with username/password users, optional `bind_interface` direct outbound, wrapper and service files without Python. Intended as an independent protocol for residential IP / streaming-friendly egress.
 - **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with hy2.sh.
 
 ## `install.sh` references
 
-`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, and `euservhy2.sh` on the GitHub `main` branch.
+`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`, and `euservhy2.sh` on the GitHub `main` branch.
 
 `install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2.sh`) rather than going through `install.sh`.
 
@@ -55,21 +56,21 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 
 ## Feature matrix
 
-| Feature | hy2.sh | ss.sh | anytls.sh | vless.sh | euservhy2.sh |
-|---------|--------|-------|-----------|----------|-------------|
-| Install / upgrade / uninstall | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Service management (start/stop/restart) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| View logs | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Node info / share links | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Client export | ✅ | ✅ | ✅ | ✅ | ✅ |
-| BBR tuning | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Auto-update | ✅ | ✅ | ✅ | ✅ | — |
-| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Terminal QR code (qrencode) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Server tools sub-menu | ✅ | ✅ | ✅ | ✅ | ✅ |
-| IPv4/IPv6 switch | — | ✅ | — | — | — |
-| Connection test | — | ✅ | — | — | — |
+| Feature | hy2.sh | ss.sh | anytls.sh | vless.sh | proxy.sh | euservhy2.sh |
+|---------|--------|-------|-----------|----------|----------|-------------|
+| Install / upgrade / uninstall | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Service management (start/stop/restart) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| View logs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Node info / share links | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Client export | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| BBR tuning | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Auto-update | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| Firewall auto-ports | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Modify bandwidth/config | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Terminal QR code (qrencode) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Server tools sub-menu | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| IPv4/IPv6 switch | — | ✅ | — | — | — | — |
+| Connection test | — | ✅ | — | — | — | — |
 
 ## Installation port defaults
 
@@ -79,6 +80,7 @@ Common helpers (color vars, system detection, service wrappers) are copy-pasted 
 | AnyTLS | Random unused `10000-65535/TCP` | Uses the configured public port |
 | Hysteria 2 | Random unused `10000-65535/UDP` | Custom external port supported |
 | Shadowsocks | Random unused `10000-65535/TCP+UDP` | Custom external port supported |
+| HTTP/SOCKS | Random unused `10000-65535/TCP` | Custom external port supported |
 
 The generated value is only the interactive default. Users can still enter an explicit port, and NAT VPS external mappings remain provider-controlled.
 
@@ -97,14 +99,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.s
 
 Every commit that changes code, tests, or documentation MUST increment the unified project version and synchronize ALL of the following locations before pushing — do NOT defer version updates until a GitHub Release is created:
 
-- File headers (version and date) in all six scripts
-- Menu display versions in `install.sh`, `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`
+- File headers (version and date) in all seven scripts
+- Menu display versions in `install.sh`, `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`
 - `script_version` metadata written by `install.sh` backup
 - `SCRIPT_VERSION` in `euservhy2.sh`
 - `EXPECTED_VERSION` in `tests/validate_scripts.sh`
 - Current version, date, and update summary in `README.md`
 - Top entry in `CHANGELOG.md`
-- Protocol-specific test expectations when changing AnyTLS (`validate_anytls.sh`) or VLESS (`validate_vless.sh`)
+- Protocol-specific test expectations when changing AnyTLS (`validate_anytls.sh`), VLESS (`validate_vless.sh`), or HTTP/SOCKS (`validate_proxy.sh`)
 
 See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 
@@ -120,6 +122,7 @@ Protocol-specific validation (requires valid config):
 ```bash
 bash tests/validate_anytls.sh    # AnyTLS config structure, cert paths, wrapper
 bash tests/validate_vless.sh     # VLESS UUID, REALITY keys, JSON, shared core
+bash tests/validate_proxy.sh     # HTTP/SOCKS mixed inbound, users, bind_interface, wrapper
 bash tests/validate_hy2_network.sh   # Hysteria 2 network layer (requires running service)
 bash tests/validate_ss_network.sh    # Shadowsocks network layer (requires running service)
 ```
@@ -130,15 +133,15 @@ VPS integration tests (install, upgrade, rollback, uninstall, firewall, service)
 
 Each protocol script generates different client config formats. Use the protocol menu's "Client export" or "Node info" option.
 
-| Format | HY2 | SS | AnyTLS | VLESS |
-|--------|-----|----|---------| ------|
-| URI | ✅ | ✅ | ✅ | ✅ |
-| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ |
-| Surfboard | ✅ | ✅ | ✅ | — |
-| Shadowrocket | ✅ | ✅ | ✅ | ✅ URI only |
-| Loon | ✅ | ✅ | ✅ | ✅ |
-| Quantumult X | — | ✅ | — | ✅ |
-| Terminal QR code | ✅ | ✅ | ✅ | ✅ |
+| Format | HY2 | SS | AnyTLS | VLESS | Proxy |
+|--------|-----|----|---------| ------|-------|
+| URI | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Surfboard | ✅ | ✅ | ✅ | — | — |
+| Shadowrocket | ✅ | ✅ | ✅ | ✅ URI only | URI |
+| Loon | ✅ | ✅ | ✅ | ✅ | — |
+| Quantumult X | — | ✅ | — | ✅ | — |
+| Terminal QR code | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 "✅" indicates the script provides that format or compatible URI — it does NOT guarantee support across all historical client versions. Throne and Sing-box/SFA client JSON exports are not currently provided.
 
@@ -172,13 +175,18 @@ Each protocol script generates different client config formats. Use the protocol
 | VLESS wrapper | `/usr/local/bin/vless-server` |
 | VLESS config | `/etc/sing-box/vless.json` |
 | VLESS metadata | `/etc/sing-box/vless-meta/` |
+| HTTP/SOCKS wrapper | `/usr/local/bin/proxy-server` |
+| HTTP/SOCKS config | `/etc/sing-box/proxy.json` |
+| HTTP/SOCKS metadata | `/etc/sing-box/proxy-meta/` |
 | Shared sing-box ownership marker | `/etc/sing-box/.singbox-tools-managed` |
 | Hysteria 2 systemd service | `/etc/systemd/system/hysteria-server.service` |
 | AnyTLS systemd service | `/etc/systemd/system/anytls-server.service` |
 | VLESS systemd service | `/etc/systemd/system/vless-server.service` |
+| HTTP/SOCKS systemd service | `/etc/systemd/system/proxy-server.service` |
 | Hysteria 2 OpenRC service | `/etc/init.d/hysteria-server` |
 | AnyTLS OpenRC service | `/etc/init.d/anytls-server` |
 | VLESS OpenRC service | `/etc/init.d/vless-server` |
+| HTTP/SOCKS OpenRC service | `/etc/init.d/proxy-server` |
 
 ## Supported distros
 

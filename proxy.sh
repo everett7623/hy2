@@ -1,6 +1,6 @@
 #!/bin/bash
 #====================================================================================
-# 项目：VLESS Management Script
+# 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
 # 版本：v2.0.24
 # GitHub: https://github.com/everett7623/hy2
@@ -11,7 +11,7 @@
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
-# 实现方式: 使用 sing-box >= 1.12.0 原生 VLESS 入站
+# 实现方式: 使用 sing-box >= 1.12.0 原生 mixed 入站（HTTP + SOCKS5 同端口）
 #====================================================================================
 
 # ============================================================
@@ -38,7 +38,7 @@ fi
 
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 
-[ "${VLESS_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ] && [ -c /dev/tty ] && exec < /dev/tty
+[ "${PROXY_LIB_ONLY:-0}" != "1" ] && [ ! -t 0 ] && [ -c /dev/tty ] && exec < /dev/tty
 
 if [ -f "$SCRIPT_PATH" ] && grep -q $'\r' "$SCRIPT_PATH" 2>/dev/null; then
     sed -i 's/\r$//' "$SCRIPT_PATH"
@@ -46,9 +46,9 @@ if [ -f "$SCRIPT_PATH" ] && grep -q $'\r' "$SCRIPT_PATH" 2>/dev/null; then
 fi
 
 # ============================================================
-# VLESS_LIB_ONLY=1：仅加载函数库，不执行任何副作用（供测试 source）
+# PROXY_LIB_ONLY=1：仅加载函数库，不执行任何副作用（供测试 source）
 # ============================================================
-[ "${VLESS_LIB_ONLY:-0}" = "1" ] && _VLESS_LIB_ONLY=1 || _VLESS_LIB_ONLY=0
+[ "${PROXY_LIB_ONLY:-0}" = "1" ] && _PROXY_LIB_ONLY=1 || _PROXY_LIB_ONLY=0
 
 # --- 颜色 ---
 RED='\033[0;31m'
@@ -74,17 +74,16 @@ disk_tmp_dir() {
 }
 
 # --- 路径 ---
-VLESS_BIN="${VLESS_BIN:-/usr/local/bin/vless-server}"
+PROXY_BIN="${PROXY_BIN:-/usr/local/bin/proxy-server}"
 SING_BOX_BIN="${SING_BOX_BIN:-/usr/local/bin/sing-box}"
-VLESS_DIR="${VLESS_DIR:-/etc/sing-box}"
-VLESS_CONFIG="${VLESS_CONFIG:-${VLESS_DIR}/vless.json}"
-VLESS_META="${VLESS_META:-${VLESS_DIR}/vless-meta}"
-SING_BOX_MANAGED_MARKER="${SING_BOX_MANAGED_MARKER:-${VLESS_DIR}/.singbox-tools-managed}"
-SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/vless-server.service}"
-OPENRC_SERVICE="/etc/init.d/vless-server"
-AUTO_UPDATE_SCRIPT="/usr/local/bin/vless-autoupdate.sh"
-AUTO_UPDATE_LOG="/var/log/vless-autoupdate.log"
-BBR_SYSCTL_CONF="${BBR_SYSCTL_CONF:-/etc/sysctl.d/99-singbox-tools-bbr.conf}"
+PROXY_DIR="${PROXY_DIR:-/etc/sing-box}"
+PROXY_CONFIG="${PROXY_CONFIG:-${PROXY_DIR}/proxy.json}"
+PROXY_META="${PROXY_META:-${PROXY_DIR}/proxy-meta}"
+SING_BOX_MANAGED_MARKER="${SING_BOX_MANAGED_MARKER:-${PROXY_DIR}/.singbox-tools-managed}"
+SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/proxy-server.service}"
+OPENRC_SERVICE="/etc/init.d/proxy-server"
+AUTO_UPDATE_SCRIPT="/usr/local/bin/proxy-autoupdate.sh"
+AUTO_UPDATE_LOG="/var/log/proxy-autoupdate.log"
 
 # --- 运行时变量 ---
 RELEASE="unknown"
@@ -101,16 +100,10 @@ BIND_FAMILY="v4"
 LISTEN_HOST="::"
 LISTEN_PORT=""
 EXT_PORT=""
-UUID=""
-REALITY_PRIVATE_KEY=""
-REALITY_PUBLIC_KEY=""
-SHORT_ID=""
+PROXY_USER=""
+PROXY_PASS=""
 NODE_NAME=""
-SERVER_NAME="www.example.com"
-HANDSHAKE_PORT="443"
 MANAGED_SING_BOX=0
-CONFIG_SCHEMA=0
-VLESS_CONFIG_SCHEMA=2
 LAST_VERSION_TAG=""
 SING_BOX_STABLE_FALLBACK_TAG="${SING_BOX_STABLE_FALLBACK_TAG:-v1.13.14}"
 INSTALL_BACKUP_DIR=""
@@ -180,7 +173,7 @@ install_dependencies() {
         command -v "$_cmd" >/dev/null 2>&1 || _ready=0
     done
     if [ "$_ready" = "1" ]; then
-        echo -e "${GREEN}✓ 核心依赖已就绪，跳过软件源刷新${PLAIN}"
+        echo -e "${GREEN}[OK] 核心依赖已就绪，跳过软件源刷新${PLAIN}"
         return 0
     fi
 
@@ -216,7 +209,7 @@ install_dependencies() {
     esac
 
     local _missing=0
-    for _cmd in curl tar openssl ip; do
+    for _cmd in curl tar openssl ip ss; do
         if ! command -v "$_cmd" >/dev/null 2>&1; then
             echo -e "${RED}致命错误: 缺少组件 [ $_cmd ]，请手动安装后重试${PLAIN}"
             _missing=1
@@ -227,7 +220,7 @@ install_dependencies() {
 }
 
 # ============================================================
-# 输入校验
+# 输入校验 / 随机生成
 # ============================================================
 validate_port() {
     local port="$1"
@@ -273,34 +266,38 @@ generate_random_port() {
     return 1
 }
 
-validate_uuid() {
-    printf '%s\n' "$1" | grep -qE '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+validate_password() {
+    local pw="$1"
+    local len="${#pw}"
+    [ "$len" -lt 8 ]   && return 1
+    [ "$len" -gt 128 ] && return 1
+    case "$pw" in
+        *'"'*)  return 1 ;;
+        *'\'*)  return 1 ;;
+        *'$'*)  return 1 ;;
+        *'`'*)  return 1 ;;
+        *' '*)  return 1 ;;
+        *'@'*)  return 1 ;;
+        *':'*)  return 1 ;;
+        *'/'*)  return 1 ;;
+        *'?'*)  return 1 ;;
+        *'#'*)  return 1 ;;
+    esac
+    local _has_ctrl
+    _has_ctrl=$(printf '%s' "$pw" | od -An -tx1 | tr ' \n' '\n' | { grep -cE '^[01][0-9a-f]$|^7f$' 2>/dev/null || true; })
+    [ "${_has_ctrl:-0}" -gt 0 ] 2>/dev/null && return 1
+    return 0
 }
 
-validate_reality_key() {
-    printf '%s\n' "$1" | grep -qE '^[A-Za-z0-9_-]{43}$'
-}
-
-validate_short_id() {
-    local _short_id="$1" _length
-    _length="${#_short_id}"
-    [ "$_length" -ge 2 ] && [ "$_length" -le 16 ] || return 1
-    [ $((_length % 2)) -eq 0 ] || return 1
-    printf '%s\n' "$_short_id" | grep -qE '^[0-9A-Fa-f]+$'
-}
-
-validate_server_name() {
-    local _name="$1"
-    [ -n "$_name" ] || return 1
-    [ "${#_name}" -le 253 ] || return 1
-    printf '%s\n' "$_name" | awk -F. '
-        NF < 2 { exit 1 }
-        {
-            for (i = 1; i <= NF; i++) {
-                if ($i == "" || length($i) > 63 || $i !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/) exit 1
-            }
-        }
-    '
+validate_username() {
+    local user="$1"
+    local len="${#user}"
+    [ "$len" -lt 3 ]   && return 1
+    [ "$len" -gt 64 ]  && return 1
+    case "$user" in
+        *[!A-Za-z0-9._-]*) return 1 ;;
+    esac
+    return 0
 }
 
 validate_server_address() {
@@ -312,175 +309,31 @@ validate_server_address() {
     return 0
 }
 
-reality_target_candidates() {
-    printf '%s\n' \
-        "www.microsoft.com" \
-        "www.apple.com" \
-        "www.amazon.com" \
-        "www.amd.com" \
-        "www.mozilla.org" \
-        "www.nvidia.com" \
-        "www.samsung.com" \
-        "www.cloudflare.com"
-}
-
-random_sni() {
-    local _number
-    _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
-    [ -z "$_number" ] && _number=$(date +%s)
-    case $((_number % 8)) in
-        0) echo "www.microsoft.com" ;;
-        1) echo "www.apple.com" ;;
-        2) echo "www.amazon.com" ;;
-        3) echo "www.amd.com" ;;
-        4) echo "www.mozilla.org" ;;
-        5) echo "www.nvidia.com" ;;
-        6) echo "www.samsung.com" ;;
-        *) echo "www.cloudflare.com" ;;
-    esac
-}
-
-reality_target_usable() {
-    local _host="$1" _port="${2:-443}" _url
-    validate_server_name "$_host" && validate_port "$_port" || return 1
-    command -v curl >/dev/null 2>&1 || return 1
-    _url="https://${_host}:${_port}/"
-    if curl --help all 2>/dev/null | grep -q -- '--tls-max'; then
-        curl --noproxy '*' -sSI --connect-timeout 4 --max-time 7 \
-            --tlsv1.3 --tls-max 1.3 "$_url" >/dev/null 2>&1
+gen_password() {
+    local _pass=""
+    if command -v openssl >/dev/null 2>&1; then
+        while [ ${#_pass} -lt 20 ]; do
+            _pass="${_pass}$(openssl rand -base64 32 2>/dev/null | tr -dc 'A-Za-z0-9')"
+        done
     else
-        curl --noproxy '*' -sSI --connect-timeout 4 --max-time 7 \
-            "$_url" >/dev/null 2>&1
+        while [ ${#_pass} -lt 20 ]; do
+            _pass="${_pass}$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | tr -dc 'A-Za-z0-9')"
+        done
     fi
+    [ -z "$_pass" ] && _pass="Proxy$(date +%s)"
+    printf '%s' "${_pass:0:20}"
 }
 
-# 强制指定协议族探测 REALITY 握手目标可达性（诊断用）。
-# -4/-6 旗标存在于所有主流 curl 发行版；即使失败也不影响安装流程。
-reality_target_usable_v4() {
-    local _host="$1" _port="${2:-443}" _url
-    validate_server_name "$_host" && validate_port "$_port" || return 1
-    command -v curl >/dev/null 2>&1 || return 1
-    _url="https://${_host}:${_port}/"
-    if curl --help all 2>/dev/null | grep -q -- '--tls-max'; then
-        curl -4 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
-            --tlsv1.3 --tls-max 1.3 "$_url" >/dev/null 2>&1
+gen_username() {
+    local _user="" _suffix=""
+    if command -v openssl >/dev/null 2>&1; then
+        _suffix=$(openssl rand -hex 3 2>/dev/null | tr -dc 'a-f0-9')
     else
-        curl -4 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
-            "$_url" >/dev/null 2>&1
+        _suffix=$(dd if=/dev/urandom bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')
     fi
-}
-
-reality_target_usable_v6() {
-    local _host="$1" _port="${2:-443}" _url
-    validate_server_name "$_host" && validate_port "$_port" || return 1
-    command -v curl >/dev/null 2>&1 || return 1
-    _url="https://${_host}:${_port}/"
-    if curl --help all 2>/dev/null | grep -q -- '--tls-max'; then
-        curl -6 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
-            --tlsv1.3 --tls-max 1.3 "$_url" >/dev/null 2>&1
-    else
-        curl -6 --noproxy '*' -sSI --connect-timeout 5 --max-time 9 \
-            "$_url" >/dev/null 2>&1
-    fi
-}
-
-reality_domain_strategy() {
-    case "${BIND_FAMILY:-v4}" in
-        v6) printf '%s' "ipv6_only" ;;
-        *)  printf '%s' "ipv4_only" ;;
-    esac
-}
-
-reality_target_usable_for_family() {
-    case "${BIND_FAMILY:-v4}" in
-        v6) reality_target_usable_v6 "$@" ;;
-        *)  reality_target_usable_v4 "$@" ;;
-    esac
-}
-
-select_reality_target() {
-    local _port="${1:-443}" _preferred _candidate _selected _tmp
-    local _index=0 _checked=0
-    _preferred=$(random_sni)
-    _tmp=$(mktemp -d 2>/dev/null) || return 1
-    for _candidate in "$_preferred" $(reality_target_candidates); do
-        [ "$_index" -gt 0 ] && [ "$_candidate" = "$_preferred" ] && continue
-        (
-            reality_target_usable_for_family "$_candidate" "$_port" \
-                && printf '%s' "$_candidate" > "$_tmp/result-${_index}"
-        ) &
-        _index=$((_index + 1))
-    done
-    wait || true
-    while [ "$_checked" -lt "$_index" ]; do
-        if [ -s "$_tmp/result-${_checked}" ]; then
-            IFS= read -r _selected < "$_tmp/result-${_checked}"
-            rm -f "$_tmp"/result-* 2>/dev/null
-            rmdir "$_tmp" 2>/dev/null || true
-            printf '%s' "$_selected"
-            return 0
-        fi
-        _checked=$((_checked + 1))
-    done
-    rm -f "$_tmp"/result-* 2>/dev/null
-    rmdir "$_tmp" 2>/dev/null || true
-    return 1
-}
-
-probe_vps_download_mbps() {
-    local _speed
-    command -v curl >/dev/null 2>&1 || return 1
-    _speed=$(curl --noproxy '*' -fsSL --connect-timeout 5 --max-time 15 \
-        -o /dev/null -w '%{speed_download}' \
-        'https://speed.cloudflare.com/__down?bytes=5000000') || return 1
-    case "$_speed" in
-        ''|*[!0-9.]*|*.*.*) return 1 ;;
-    esac
-    awk -v speed="$_speed" 'BEGIN { printf "%.1f", speed * 8 / 1000000 }'
-}
-
-generate_uuid() {
-    local _uuid="" _hex
-    if [ -x "$SING_BOX_BIN" ]; then
-        _uuid=$("$SING_BOX_BIN" generate uuid 2>/dev/null | awk '/^[0-9A-Fa-f-]{36}$/ { print; exit }')
-    fi
-    if ! validate_uuid "$_uuid" && [ -r /proc/sys/kernel/random/uuid ]; then
-        _uuid=$(tr -d '[:space:]' < /proc/sys/kernel/random/uuid)
-    fi
-    if ! validate_uuid "$_uuid"; then
-        _hex=$(openssl rand -hex 16 2>/dev/null | tr -d '[:space:]')
-        [ "${#_hex}" = "32" ] || return 1
-        _uuid=$(printf '%s-%s-%s-%s-%s' \
-            "$(printf '%s' "$_hex" | cut -c1-8)" \
-            "$(printf '%s' "$_hex" | cut -c9-12)" \
-            "$(printf '%s' "$_hex" | cut -c13-16)" \
-            "$(printf '%s' "$_hex" | cut -c17-20)" \
-            "$(printf '%s' "$_hex" | cut -c21-32)")
-    fi
-    validate_uuid "$_uuid" || return 1
-    printf '%s' "$_uuid"
-}
-
-generate_reality_keypair() {
-    local _output _private _public
-    [ -x "$SING_BOX_BIN" ] || return 1
-    _output=$("$SING_BOX_BIN" generate reality-keypair 2>/dev/null) || return 1
-    _private=$(printf '%s\n' "$_output" | awk -F':[[:space:]]*' 'tolower($1) ~ /private/ { print $2; exit }')
-    _public=$(printf '%s\n' "$_output" | awk -F':[[:space:]]*' 'tolower($1) ~ /public/ { print $2; exit }')
-    validate_reality_key "$_private" || return 1
-    validate_reality_key "$_public" || return 1
-    REALITY_PRIVATE_KEY="$_private"
-    REALITY_PUBLIC_KEY="$_public"
-}
-
-generate_short_id() {
-    local _short_id
-    _short_id=$(openssl rand -hex 8 2>/dev/null | tr -d '[:space:]')
-    if ! validate_short_id "$_short_id"; then
-        _short_id=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
-    fi
-    validate_short_id "$_short_id" || return 1
-    printf '%s' "$_short_id"
+    [ -z "$_suffix" ] && _suffix=$(printf '%06x' "$(( (RANDOM << 1) ^ RANDOM ))")
+    _user="user${_suffix:0:6}"
+    printf '%s' "$_user"
 }
 
 # ============================================================
@@ -617,22 +470,6 @@ get_native_public_ipv4() {
     return 1
 }
 
-warn_streaming_egress() {
-    if [ "${WARP_ACTIVE:-0}" = "1" ] && [ -n "${DEFAULT_EGRESS_IPV4:-}" ] && [ -n "${PUBLIC_IP:-}" ] && \
-        [ "$DEFAULT_EGRESS_IPV4" != "$PUBLIC_IP" ]; then
-        echo -e "${RED}[WARN] 默认出站 IP (${DEFAULT_EGRESS_IPV4}) 与节点 IP (${PUBLIC_IP}) 不一致。${PLAIN}"
-        echo -e "${RED}        流媒体（如 Netflix）可能提示 proxy/VPN；已尽量绑定原生网卡出站。${PLAIN}"
-    fi
-    if [ -n "${PUBLIC_IP:-}" ] && [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点，并确保客户端 DNS 走代理。${PLAIN}"
-    elif [ -n "${PUBLIC_IP:-}" ] || [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理（可用下方 Mihomo 流媒体片段）。${PLAIN}"
-    fi
-    if [ -n "${BIND_INTERFACE:-}" ]; then
-        echo -e "出站网卡 : ${GREEN}${BIND_INTERFACE}${PLAIN}"
-    fi
-}
-
 get_default_public_ipv4() {
     local _ip _url
     for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
@@ -655,12 +492,31 @@ detect_warp() {
     return 1
 }
 
-# 是否存在默认 IPv6 路由。用于区分"分到 IPv6 地址但路由已死"的廉价 VPS：
-# 这类机器接口上有全局 IPv6，但既连不通外网又无默认路由，必须按纯 IPv4 处理，
-# 否则 sing-box 握手拨号会解析到 AAAA 并拨向死 IPv6，导致 REALITY 握手全部超时。
-has_default_ipv6_route() {
-    command -v ip >/dev/null 2>&1 || return 1
-    ip -6 route show default 2>/dev/null | grep -q .
+check_egress_ip() {
+    local _default=""
+    [ -z "${DEFAULT_EGRESS_IPV4:-}" ] && DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
+    _default="${DEFAULT_EGRESS_IPV4:-}"
+    echo -e "${GREEN}出站自检${PLAIN}"
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    [ -n "${PUBLIC_IP:-}" ] && echo -e "  节点入口 IPv4 : ${YELLOW}${PUBLIC_IP}${PLAIN}"
+    [ -n "$_default" ] && echo -e "  默认出站 IPv4 : ${YELLOW}${_default}${PLAIN}"
+    [ -n "${BIND_INTERFACE:-}" ] && echo -e "  绑定网卡      : ${GREEN}${BIND_INTERFACE}${PLAIN}"
+    if [ -n "${PUBLIC_IP:-}" ] && [ -n "$_default" ] && [ "$PUBLIC_IP" != "$_default" ]; then
+        echo -e "${RED}[WARN] 默认出站 IP (${_default}) 与节点 IP (${PUBLIC_IP}) 不一致。${PLAIN}"
+        echo -e "${RED}        流媒体（如 Netflix）可能提示 proxy/VPN；已尽量绑定原生网卡出站。${PLAIN}"
+    elif [ -n "${PUBLIC_IP:-}" ] && [ -n "$_default" ]; then
+        echo -e "  ${GREEN}[OK] 出站 IP 与节点 IP 一致${PLAIN}"
+    fi
+    if [ -n "${PUBLIC_IP:-}" ] && [ -n "${PUBLIC_IPV6:-}" ]; then
+        echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点，并确保客户端 DNS 走代理（SOCKS5h）。${PLAIN}"
+    else
+        echo -e "${YELLOW}提示: SOCKS5 客户端必须使用远程 DNS（socks5h），否则易泄露真实 DNS。${PLAIN}"
+    fi
+    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+}
+
+warn_streaming_egress() {
+    check_egress_ip
 }
 
 detect_network() {
@@ -672,10 +528,9 @@ detect_network() {
     DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
     BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
 
-    local _ipv6_probe="" _ipv6_reachable=0
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if is_valid_ipv6 "$_ip"; then _ipv6_probe="$_ip"; _ipv6_reachable=1; break; fi
+        if is_valid_ipv6 "$_ip"; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
     done
 
     if command -v ip >/dev/null 2>&1; then
@@ -687,19 +542,13 @@ detect_network() {
                 if (addr !~ /^fe80:/ && addr !~ /^f[cd][0-9a-f][0-9a-f]:/ && addr !~ /^2606:4700:/) { print addr; exit }
             }
         ')
-        # 接口有全局 IPv6 时，仅当"外网可达"或"存在默认 IPv6 路由"才认定可用；
-        # 否则是死 IPv6（有地址无路由），按纯 IPv4 处理，避免握手拨号走死路由超时。
-        if [ -n "$_real_ipv6" ] && { [ "$_ipv6_reachable" = "1" ] || has_default_ipv6_route; }; then
+        if [ -n "$_real_ipv6" ]; then
             HAS_IPV6=1
             PUBLIC_IPV6="$_real_ipv6"
         else
             HAS_IPV6=0
             PUBLIC_IPV6=""
         fi
-    else
-        # 无 ip 命令时只能依赖外网探测结果。
-        HAS_IPV6="$_ipv6_reachable"
-        PUBLIC_IPV6="$_ipv6_probe"
     fi
 
     _ip=$(get_native_public_ipv4 2>/dev/null || true)
@@ -754,7 +603,7 @@ detect_network() {
 
 
 open_ports() {
-    local _port="$1" _fw_meta="$VLESS_META/firewall" _added4=0 _added6=0
+    local _port="$1" _fw_meta="$PROXY_META/firewall" _added4=0
     validate_port "$_port" || { echo -e "${RED}无效的防火墙端口: ${_port}${PLAIN}"; return 1; }
     mkdir -p "$_fw_meta" 2>/dev/null || {
         echo -e "${RED}无法创建防火墙规则记录目录，已取消放行${PLAIN}"
@@ -780,7 +629,7 @@ open_ports() {
                 return 1
             }
         fi
-        echo -e "  ${GREEN}✓ firewalld 已放行 tcp/${_port}${PLAIN}"
+        echo -e "  ${GREEN}[OK] firewalld 已放行 tcp/${_port}${PLAIN}"
         return 0
     fi
 
@@ -793,7 +642,7 @@ open_ports() {
             fi
             : > "$_fw_meta/ufw-${_port}-tcp"
         fi
-        echo -e "  ${GREEN}✓ ufw 已放行 tcp/${_port}${PLAIN}"
+        echo -e "  ${GREEN}[OK] ufw 已放行 tcp/${_port}${PLAIN}"
         return 0
     fi
 
@@ -816,7 +665,6 @@ open_ports() {
                     echo -e "${RED}ip6tables 放行 tcp/${_port} 失败${PLAIN}"
                     return 1
                 fi
-                _added6=1
                 : > "$_fw_meta/iptables6-${_port}-tcp"
             fi
         fi
@@ -825,7 +673,7 @@ open_ports() {
         elif [ -f /etc/sysconfig/iptables ] && command -v service >/dev/null 2>&1; then
             service iptables save >/dev/null 2>&1 || echo -e "  ${YELLOW}! 规则已生效，但持久化保存失败${PLAIN}"
         fi
-        echo -e "  ${GREEN}✓ iptables 已放行 tcp/${_port}${PLAIN}"
+        echo -e "  ${GREEN}[OK] iptables 已放行 tcp/${_port}${PLAIN}"
         return 0
     fi
 
@@ -835,7 +683,7 @@ open_ports() {
 
 close_ports() {
     local _port="$1"
-    local _fw_meta="$VLESS_META/firewall"
+    local _fw_meta="$PROXY_META/firewall"
     validate_port "$_port" || return 0
 
     if [ -f "$_fw_meta/firewalld-${_port}-tcp" ] && command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
@@ -879,7 +727,7 @@ validate_elf() {
 validate_shared_configs_with_bin() {
     local _bin="$1" _config
     [ -x "$_bin" ] || return 1
-    for _config in "$VLESS_DIR"/*.json; do
+    for _config in "$PROXY_DIR"/*.json; do
         [ -f "$_config" ] || continue
         if ! "$_bin" check -c "$_config" >/dev/null 2>&1; then
             echo -e "${RED}新核心无法加载共享配置: ${_config}${PLAIN}"
@@ -918,7 +766,7 @@ get_latest_version() {
             _page=$(curl -fsSL --connect-timeout 8 --max-time 15 "$_url" 2>/dev/null || true)
             _candidate=$(printf '%s\n' "$_page" \
                 | grep -oE 'SagerNet/sing-box/releases/(tag|download)/v[0-9]+\.[0-9]+\.[0-9]+' \
-                | sed -E 's#.*/(tag|download)/##' | head -1)
+                | sed -E 's#.*/(tag|download)/##' | awk 'NR==1 { print; exit }')
             set_latest_version_tag "$_candidate" && break
         done
     fi
@@ -938,7 +786,7 @@ get_latest_version() {
 
 get_installed_version() {
     [ -x "$SING_BOX_BIN" ] || return 1
-    "$SING_BOX_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    "$SING_BOX_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | awk 'NR==1 { print; exit }'
 }
 
 download_file() {
@@ -985,7 +833,22 @@ verify_archive_sha256() {
     [ "$_actual" = "$_expected" ]
 }
 
-download_vless() {
+has_free_space_mb() {
+    local _path="$1" _required="$2" _available
+    command -v df >/dev/null 2>&1 || return 0
+    _available=$(df -Pk "$_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
+    [ -z "$_available" ] && return 0
+    [ "$_available" -ge $((_required * 1024)) ]
+}
+
+check_download_space() {
+    has_free_space_mb "$(disk_tmp_dir)" 160 && has_free_space_mb "$(dirname "$SING_BOX_BIN")" 48 || {
+        echo -e "${RED}磁盘空间不足：下载并解压 sing-box 至少需要临时分区 160MB、目标分区 48MB${PLAIN}"
+        return 1
+    }
+}
+
+download_singbox() {
     check_download_space || return 1
     local _arch
     _arch=$(detect_arch) || return 1
@@ -1041,7 +904,7 @@ download_vless() {
     }
 
     local _bin
-    _bin=$(find "$_tmp_dir" -type f -name "sing-box" | head -1)
+    _bin=$(find "$_tmp_dir" -type f -name "sing-box" | awk 'NR==1 { print; exit }')
     if [ -z "$_bin" ]; then
         rm -rf "$_tmp_dir"
         echo -e "${RED}未在压缩包中找到 sing-box 二进制${PLAIN}"
@@ -1055,7 +918,7 @@ download_vless() {
         return 1
     fi
     local _downloaded_version
-    _downloaded_version=$("$_bin" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    _downloaded_version=$("$_bin" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | awk 'NR==1 { print; exit }')
     if [ "$_downloaded_version" != "$_ver" ]; then
         rm -rf "$_tmp_dir"
         echo -e "${RED}sing-box 执行或版本校验失败（期望 ${_ver}，得到 ${_downloaded_version:-未知}）${PLAIN}"
@@ -1074,31 +937,31 @@ download_vless() {
     fi
     MANAGED_SING_BOX=1
     rm -rf "$_tmp_dir"
-    echo -e "${GREEN}sing-box 安装完成: $("$SING_BOX_BIN" version 2>/dev/null | head -1)${PLAIN}"
+    echo -e "${GREEN}sing-box 安装完成: $("$SING_BOX_BIN" version 2>/dev/null | awk 'NR==1 { print; exit }')${PLAIN}"
 }
 
-ensure_vless_bin() {
+ensure_singbox() {
     local _preexisting=0
     if [ -x "$SING_BOX_BIN" ]; then
         _preexisting=1
         local _installed_version
         _installed_version=$(get_installed_version)
         if version_at_least "${_installed_version:-0.0.0}" "1.12.0"; then
-            if [ -f "$VLESS_META/config.env" ]; then
-                MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$VLESS_META/config.env")
+            if [ -f "$PROXY_META/config.env" ]; then
+                MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$PROXY_META/config.env")
                 [ "$MANAGED_SING_BOX" = "1" ] || MANAGED_SING_BOX=0
             fi
             return 0
         fi
-        echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 低于脚本最低版本 1.12.0，将安装最新版${PLAIN}"
+        echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 过旧，将安装最新版${PLAIN}"
     fi
     get_latest_version || return 1
-    download_vless || return 1
+    download_singbox || return 1
     if [ "$_preexisting" = "1" ]; then
         MANAGED_SING_BOX=0
     else
         MANAGED_SING_BOX=1
-        mkdir -p "$VLESS_DIR" || { echo -e "${RED}无法创建 sing-box 配置目录${PLAIN}"; return 1; }
+        mkdir -p "$PROXY_DIR" || { echo -e "${RED}无法创建 sing-box 配置目录${PLAIN}"; return 1; }
         { : > "$SING_BOX_MANAGED_MARKER"; } || { echo -e "${RED}无法写入 sing-box 所有权标记${PLAIN}"; return 1; }
         chmod 600 "$SING_BOX_MANAGED_MARKER" || { echo -e "${RED}无法保护 sing-box 所有权标记${PLAIN}"; return 1; }
     fi
@@ -1106,16 +969,8 @@ ensure_vless_bin() {
 }
 
 # ============================================================
-# 监听地址 / URI 构建
+# URI / 显示辅助
 # ============================================================
-listen_address() {
-    if [ "${BIND_FAMILY:-v4}" = "v6" ]; then
-        printf '[::]:' && printf '%s' "${LISTEN_PORT:-}"
-    else
-        printf '0.0.0.0:' && printf '%s' "${LISTEN_PORT:-}"
-    fi
-}
-
 uri_encode() {
     local _in="$1" _out="" _i _c _hex
     local _len="${#_in}"
@@ -1193,7 +1048,7 @@ generate_node_name() {
     _flag=$(get_country_flag "$_country")
     _server=$(trim_string "${2:-}")
     [ -z "$_server" ] && _server=$(generate_server_name)
-    _protocol=$(trim_string "${3:-VLESS}")
+    _protocol=$(trim_string "${3:-Proxy}")
     _ip_type=$(trim_string "${4:-IPv4}")
     printf '%s %s | %s | %s | %s' "$_flag" "$_country" "$_server" "$_protocol" "$_ip_type" | tr -d '\r\n\t'
 }
@@ -1204,10 +1059,6 @@ format_ipv6_for_uri() {
 
 format_server_for_yaml() {
     echo "$1" | grep -q ':' && printf "'%s'" "$1" || printf '%s' "$1"
-}
-
-shell_json_escape() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 yaml_single_quote_escape() {
@@ -1230,37 +1081,25 @@ generate_local_qrcode_png() {
     printf '%s' "$_file"
 }
 
-generate_online_qrcode_url() {
-    local _data="$1" _encoded
-    _encoded=$(uri_encode "$_data")
-    printf 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=%s' "$_encoded"
-}
-
-render_uri() {
-    local _server="$1" _port="$2" _uuid="$3" _name="$4" _sni="${5:-$SERVER_NAME}"
-    local _public_key="${6:-$REALITY_PUBLIC_KEY}" _short_id="${7:-$SHORT_ID}"
-    local _host
-    _host=$(format_ipv6_for_uri "$_server")
-    local _enc_name _enc_sni
-    _enc_name=$(uri_encode "$_name")
-    _enc_sni=$(uri_encode "$_sni")
-    printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#%s\n' \
-        "$_uuid" "$_host" "$_port" "$_enc_sni" "$_public_key" "$_short_id" "$_enc_name"
+should_show_output() {
+    local _mode="${1:-all}" _section="$2"
+    [ "$_mode" = "all" ] || [ "$_mode" = "$_section" ]
 }
 
 # ============================================================
 # 配置写入 / 读取
 # ============================================================
 write_config() {
-    mkdir -p "$VLESS_DIR" "$VLESS_META"
-    chmod 700 "$VLESS_META"
-    local _tmp_config _tmp_meta _domain_strategy _outbound_json
-    _domain_strategy=$(reality_domain_strategy)
-    _tmp_config=$(mktemp "${VLESS_DIR}/vless.json.new.XXXXXX" 2>/dev/null) || return 1
-    _tmp_meta=$(mktemp "${VLESS_META}/config.env.new.XXXXXX" 2>/dev/null) || {
+    mkdir -p "$PROXY_DIR" "$PROXY_META"
+    chmod 700 "$PROXY_META"
+    local _tmp_config _tmp_meta _outbound_json _user_esc _pass_esc
+    _tmp_config=$(mktemp "${PROXY_DIR}/proxy.json.new.XXXXXX" 2>/dev/null) || return 1
+    _tmp_meta=$(mktemp "${PROXY_META}/config.env.new.XXXXXX" 2>/dev/null) || {
         rm -f "$_tmp_config"
         return 1
     }
+    _user_esc=$(printf '%s' "$PROXY_USER" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    _pass_esc=$(printf '%s' "$PROXY_PASS" | sed 's/\\/\\\\/g; s/"/\\"/g')
     [ -z "$BIND_INTERFACE" ] && BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
     if [ -n "$BIND_INTERFACE" ]; then
         _outbound_json="{ \"type\": \"direct\", \"tag\": \"direct\", \"bind_interface\": \"${BIND_INTERFACE}\" }"
@@ -1269,42 +1108,14 @@ write_config() {
     fi
     if ! cat > "$_tmp_config" <<CFG
 {
-  "dns": {
-    "servers": [
-      { "type": "local", "tag": "reality-local" }
-    ]
-  },
   "log": { "level": "info", "timestamp": true },
   "inbounds": [
     {
-      "type": "vless",
-      "tag": "vless-in",
+      "type": "mixed",
+      "tag": "mixed-in",
       "listen": "${LISTEN_HOST}",
       "listen_port": ${LISTEN_PORT},
-      "users": [
-        {
-          "name": "default",
-          "uuid": "${UUID}",
-          "flow": "xtls-rprx-vision"
-        }
-      ],
-      "tls": {
-        "enabled": true,
-        "server_name": "${SERVER_NAME}",
-        "reality": {
-          "enabled": true,
-          "handshake": {
-            "server": "${SERVER_NAME}",
-            "server_port": ${HANDSHAKE_PORT},
-            "domain_resolver": {
-              "server": "reality-local",
-              "strategy": "${_domain_strategy}"
-            }
-          },
-          "private_key": "${REALITY_PRIVATE_KEY}",
-          "short_id": ["${SHORT_ID}"]
-        }
-      }
+      "users": [{ "username": "${_user_esc}", "password": "${_pass_esc}" }]
     }
   ],
   "outbounds": [${_outbound_json}]
@@ -1317,18 +1128,13 @@ CFG
     if ! cat > "$_tmp_meta" <<CFG
 LISTEN_PORT=${LISTEN_PORT}
 EXT_PORT=${EXT_PORT}
-UUID=${UUID}
-REALITY_PRIVATE_KEY=${REALITY_PRIVATE_KEY}
-REALITY_PUBLIC_KEY=${REALITY_PUBLIC_KEY}
-SHORT_ID=${SHORT_ID}
+PROXY_USER=${PROXY_USER}
+PROXY_PASS=${PROXY_PASS}
 NAT_MODE=${NAT_MODE}
 BIND_FAMILY=${BIND_FAMILY}
 BIND_INTERFACE=${BIND_INTERFACE}
 LISTEN_HOST=${LISTEN_HOST}
-SERVER_NAME=${SERVER_NAME}
-HANDSHAKE_PORT=${HANDSHAKE_PORT}
 MANAGED_SING_BOX=${MANAGED_SING_BOX}
-CONFIG_SCHEMA=${VLESS_CONFIG_SCHEMA}
 CFG
     then
         rm -f "$_tmp_config" "$_tmp_meta"
@@ -1338,16 +1144,16 @@ CFG
         rm -f "$_tmp_config" "$_tmp_meta"
         return 1
     }
-    mv -f "$_tmp_meta" "$VLESS_META/config.env" || {
+    mv -f "$_tmp_meta" "$PROXY_META/config.env" || {
         rm -f "$_tmp_config" "$_tmp_meta"
         return 1
     }
-    mv -f "$_tmp_config" "$VLESS_CONFIG" || {
+    mv -f "$_tmp_config" "$PROXY_CONFIG" || {
         rm -f "$_tmp_config"
         return 1
     }
-    atomic_write_meta "$VLESS_META/public_ip" "$PUBLIC_IP" || return 1
-    atomic_write_meta "$VLESS_META/public_ipv6" "$PUBLIC_IPV6" || return 1
+    atomic_write_meta "$PROXY_META/public_ip" "$PUBLIC_IP" || return 1
+    atomic_write_meta "$PROXY_META/public_ipv6" "$PUBLIC_IPV6" || return 1
 }
 
 atomic_write_meta() {
@@ -1360,73 +1166,60 @@ atomic_write_meta() {
 }
 
 read_config() {
-    [ -f "$VLESS_CONFIG" ] && [ -f "$VLESS_META/config.env" ] || return 1
-    CONFIG_SCHEMA=0
+    [ -f "$PROXY_CONFIG" ] && [ -f "$PROXY_META/config.env" ] || return 1
     while IFS='=' read -r _key _value; do
         case "$_key" in
             LISTEN_PORT) LISTEN_PORT="$_value" ;;
             EXT_PORT) EXT_PORT="$_value" ;;
-            UUID) UUID="$_value" ;;
-            REALITY_PRIVATE_KEY) REALITY_PRIVATE_KEY="$_value" ;;
-            REALITY_PUBLIC_KEY) REALITY_PUBLIC_KEY="$_value" ;;
-            SHORT_ID) SHORT_ID="$_value" ;;
+            PROXY_USER) PROXY_USER="$_value" ;;
+            PROXY_PASS) PROXY_PASS="$_value" ;;
             NAT_MODE) NAT_MODE="$_value" ;;
             BIND_FAMILY) BIND_FAMILY="$_value" ;;
             BIND_INTERFACE) BIND_INTERFACE="$_value" ;;
             LISTEN_HOST) LISTEN_HOST="$_value" ;;
-            SERVER_NAME) SERVER_NAME="$_value" ;;
-            HANDSHAKE_PORT) HANDSHAKE_PORT="$_value" ;;
             MANAGED_SING_BOX) MANAGED_SING_BOX="$_value" ;;
-            CONFIG_SCHEMA) CONFIG_SCHEMA="$_value" ;;
         esac
-    done < "$VLESS_META/config.env"
+    done < "$PROXY_META/config.env"
     validate_port "$LISTEN_PORT" || return 1
     validate_port "$EXT_PORT" || return 1
-    validate_uuid "$UUID" || return 1
-    validate_reality_key "$REALITY_PRIVATE_KEY" || return 1
-    validate_reality_key "$REALITY_PUBLIC_KEY" || return 1
-    validate_short_id "$SHORT_ID" || return 1
-    validate_server_name "$SERVER_NAME" || return 1
-    validate_port "$HANDSHAKE_PORT" || return 1
+    validate_username "$PROXY_USER" || return 1
+    validate_password "$PROXY_PASS" || return 1
     case "$NAT_MODE" in 0|1) ;; *) return 1 ;; esac
     case "$BIND_FAMILY" in v4|v6) ;; *) return 1 ;; esac
     case "$LISTEN_HOST" in 0.0.0.0|::) ;; *) LISTEN_HOST="::" ;; esac
     case "$MANAGED_SING_BOX" in 0|1) ;; *) MANAGED_SING_BOX=0 ;; esac
-    case "$CONFIG_SCHEMA" in ''|*[!0-9]*) CONFIG_SCHEMA=0 ;; esac
-    [ -z "${PUBLIC_IP:-}"   ] && PUBLIC_IP=$(cat "$VLESS_META/public_ip"   2>/dev/null || true)
-    [ -z "${PUBLIC_IPV6:-}" ] && PUBLIC_IPV6=$(cat "$VLESS_META/public_ipv6" 2>/dev/null || true)
+    [ -z "${PUBLIC_IP:-}"   ] && PUBLIC_IP=$(cat "$PROXY_META/public_ip"   2>/dev/null || true)
+    [ -z "${PUBLIC_IPV6:-}" ] && PUBLIC_IPV6=$(cat "$PROXY_META/public_ipv6" 2>/dev/null || true)
     return 0
 }
 
 show_install_diagnostics() {
     echo -e "${YELLOW}诊断信息:${PLAIN}"
     echo "  sing-box: $SING_BOX_BIN"
-    "$SING_BOX_BIN" version 2>&1 | head -1 | sed 's/^/  version : /'
-    echo "  config  : $VLESS_CONFIG"
-    echo "  meta    : $VLESS_META/config.env"
-    [ -s "$VLESS_CONFIG" ] || echo -e "  ${RED}配置文件缺失或为空${PLAIN}"
-    validate_reality_key "$REALITY_PRIVATE_KEY" || echo -e "  ${RED}REALITY 私钥缺失或无效${PLAIN}"
-    validate_reality_key "$REALITY_PUBLIC_KEY" || echo -e "  ${RED}REALITY 公钥缺失或无效${PLAIN}"
+    "$SING_BOX_BIN" version 2>&1 | awk 'NR==1 { print; exit }' | sed 's/^/  version : /'
+    echo "  config  : $PROXY_CONFIG"
+    echo "  wrapper : $PROXY_BIN"
+    [ -s "$PROXY_CONFIG" ] || echo -e "  ${RED}配置文件缺失或为空${PLAIN}"
 }
 
 write_wrapper() {
-    cat > "$VLESS_BIN" <<WRAPPER || return 1
+    cat > "$PROXY_BIN" <<WRAPPER
 #!/bin/sh
-exec "${SING_BOX_BIN}" run -c "${VLESS_CONFIG}" "\$@"
+exec "${SING_BOX_BIN}" run -c "${PROXY_CONFIG}" "\$@"
 WRAPPER
-    chmod 755 "$VLESS_BIN"
+    chmod 755 "$PROXY_BIN"
 }
 
 check_config() {
-    "$SING_BOX_BIN" check -c "$VLESS_CONFIG"
+    "$SING_BOX_BIN" check -c "$PROXY_CONFIG"
 }
 
 backup_current_install() {
-    INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/vless-backup-XXXXXX") || return 1
-    [ ! -f "$VLESS_CONFIG" ] || cp -a "$VLESS_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
-    [ ! -d "$VLESS_META" ] || cp -a "$VLESS_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
+    INSTALL_BACKUP_DIR=$(mktemp -d "$(disk_tmp_dir)/proxy-backup-XXXXXX") || return 1
+    [ ! -f "$PROXY_CONFIG" ] || cp -a "$PROXY_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
+    [ ! -d "$PROXY_META" ] || cp -a "$PROXY_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_MANAGED_MARKER" ] || cp -a "$SING_BOX_MANAGED_MARKER" "$INSTALL_BACKUP_DIR/managed-marker" || { discard_install_backup; return 1; }
-    [ ! -f "$VLESS_BIN" ] || cp -a "$VLESS_BIN" "$INSTALL_BACKUP_DIR/wrapper" || { discard_install_backup; return 1; }
+    [ ! -f "$PROXY_BIN" ] || cp -a "$PROXY_BIN" "$INSTALL_BACKUP_DIR/wrapper" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_BIN" ] || cp -a "$SING_BOX_BIN" "$INSTALL_BACKUP_DIR/sing-box" || { discard_install_backup; return 1; }
     [ ! -f "$SYSTEMD_SERVICE" ] || cp -a "$SYSTEMD_SERVICE" "$INSTALL_BACKUP_DIR/systemd-service" || { discard_install_backup; return 1; }
     [ ! -f "$OPENRC_SERVICE" ] || cp -a "$OPENRC_SERVICE" "$INSTALL_BACKUP_DIR/openrc-service" || { discard_install_backup; return 1; }
@@ -1476,17 +1269,17 @@ restore_current_install() {
     service_disable
     for _marker in "$INSTALL_BACKUP_DIR"/meta/firewall/*; do
         [ -f "$_marker" ] || continue
-        rm -f "$VLESS_META/firewall/$(basename "$_marker")"
+        rm -f "$PROXY_META/firewall/$(basename "$_marker")"
     done
     close_ports "${LISTEN_PORT:-}"
-    rm -f "$VLESS_CONFIG" "$VLESS_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
+    rm -f "$PROXY_CONFIG" "$PROXY_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
     rm -f "$SING_BOX_MANAGED_MARKER"
-    rm -rf "$VLESS_META"
+    rm -rf "$PROXY_META"
 
-    [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$VLESS_CONFIG"
-    [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$VLESS_META"
+    [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$PROXY_CONFIG"
+    [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$PROXY_META"
     [ -f "$INSTALL_BACKUP_DIR/managed-marker" ] && cp -a "$INSTALL_BACKUP_DIR/managed-marker" "$SING_BOX_MANAGED_MARKER"
-    [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$VLESS_BIN"
+    [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$PROXY_BIN"
     if [ -f "$INSTALL_BACKUP_DIR/sing-box" ]; then
         cp -a "$INSTALL_BACKUP_DIR/sing-box" "$SING_BOX_BIN"
     elif [ "$MANAGED_SING_BOX" = "1" ]; then
@@ -1494,6 +1287,9 @@ restore_current_install() {
     fi
     [ -f "$INSTALL_BACKUP_DIR/systemd-service" ] && cp -a "$INSTALL_BACKUP_DIR/systemd-service" "$SYSTEMD_SERVICE"
     [ -f "$INSTALL_BACKUP_DIR/openrc-service" ] && cp -a "$INSTALL_BACKUP_DIR/openrc-service" "$OPENRC_SERVICE"
+    if [ -f "$PROXY_META/config.env" ]; then
+        read_config >/dev/null 2>&1 || true
+    fi
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
     [ -f "$INSTALL_BACKUP_DIR/was-enabled" ] && service_enable >/dev/null 2>&1 || true
     [ -f "$INSTALL_BACKUP_DIR/was-active" ] && service_start >/dev/null 2>&1 || true
@@ -1511,8 +1307,6 @@ close_replaced_install_port() {
 read_config_live() {
     read_config || return 1
     local _warp_active=0
-    WARP_ACTIVE=0
-    DEFAULT_EGRESS_IPV4=""
     if detect_warp; then
         _warp_active=1
         WARP_ACTIVE=1
@@ -1522,33 +1316,36 @@ read_config_live() {
         DEFAULT_EGRESS_IPV4="$_default_ipv4"
         if is_valid_ipv4 "$_native_ipv4"; then
             PUBLIC_IP="$_native_ipv4"
-            printf '%s' "$PUBLIC_IP" > "$VLESS_META/public_ip"
+            printf '%s' "$PUBLIC_IP" > "$PROXY_META/public_ip"
         elif is_valid_ipv4 "$_default_ipv4" && [ "$PUBLIC_IP" = "$_default_ipv4" ]; then
             PUBLIC_IP=""
-            : > "$VLESS_META/public_ip"
+            : > "$PROXY_META/public_ip"
         fi
+    else
+        WARP_ACTIVE=0
+        DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
     fi
+    [ -z "${BIND_INTERFACE:-}" ] && BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
     if [ -z "${PUBLIC_IP:-}" ] && [ -z "${PUBLIC_IPV6:-}" ]; then
         [ "$_warp_active" = "1" ] || PUBLIC_IP=$(get_default_public_ipv4 2>/dev/null || true)
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]') || true
     fi
-    [ -z "$BIND_INTERFACE" ] && BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
 }
 
 # ============================================================
 # 服务管理
 # ============================================================
 write_systemd_service() {
-    cat > "$SYSTEMD_SERVICE" <<SVC || return 1
+    cat > "$SYSTEMD_SERVICE" <<SVC
 [Unit]
-Description=VLESS Server
+Description=HTTP/SOCKS Proxy Server (sing-box mixed)
 After=network.target nss-lookup.target
 Wants=network.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=${VLESS_BIN}
+ExecStart=${PROXY_BIN}
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=1048576
@@ -1560,19 +1357,19 @@ SVC
 }
 
 write_openrc_service() {
-    cat > "$OPENRC_SERVICE" <<'SVCHEAD' || return 1
+    cat > "$OPENRC_SERVICE" <<'SVCHEAD'
 #!/sbin/openrc-run
 
-name="vless-server"
-description="VLESS Server"
+name="proxy-server"
+description="HTTP/SOCKS Proxy Server"
 SVCHEAD
-    cat >> "$OPENRC_SERVICE" <<SVC || return 1
-command="${VLESS_BIN}"
+    cat >> "$OPENRC_SERVICE" <<SVC
+command="${PROXY_BIN}"
 command_args=""
 command_background="yes"
-pidfile="/var/run/vless-server.pid"
-output_log="/var/log/vless-server.log"
-error_log="/var/log/vless-server.log"
+pidfile="/var/run/proxy-server.pid"
+output_log="/var/log/proxy-server.log"
+error_log="/var/log/proxy-server.log"
 
 depend() {
     need net
@@ -1583,39 +1380,39 @@ SVC
 }
 
 service_start() {
-    [ -x "$VLESS_BIN" ] && [ -f "$VLESS_CONFIG" ] || {
-        echo -e "${RED}VLESS 尚未安装或配置不完整${PLAIN}"
+    [ -x "$PROXY_BIN" ] && [ -f "$PROXY_CONFIG" ] || {
+        echo -e "${RED}HTTP/SOCKS Proxy 尚未安装或配置不完整${PLAIN}"
         return 1
     }
     service_is_active && return 0
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl start vless-server
+        systemctl start proxy-server
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service vless-server start
+        rc-service proxy-server start
     else
-        nohup "$VLESS_BIN" >/var/log/vless-server.log 2>&1 &
-        echo $! > /var/run/vless-server.pid
+        nohup "$PROXY_BIN" >/var/log/proxy-server.log 2>&1 &
+        echo $! > /var/run/proxy-server.pid
     fi
 }
 
 service_stop() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl stop vless-server 2>/dev/null
+        systemctl stop proxy-server 2>/dev/null
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service vless-server stop 2>/dev/null
+        rc-service proxy-server stop 2>/dev/null
     else
-        if [ -f /var/run/vless-server.pid ]; then
-            kill "$(cat /var/run/vless-server.pid)" 2>/dev/null || true
-            rm -f /var/run/vless-server.pid
+        if [ -f /var/run/proxy-server.pid ]; then
+            kill "$(cat /var/run/proxy-server.pid)" 2>/dev/null || true
+            rm -f /var/run/proxy-server.pid
         fi
     fi
 }
 
 service_restart() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart vless-server
+        systemctl restart proxy-server
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service vless-server restart
+        rc-service proxy-server restart
     else
         service_stop; sleep 1; service_start
     fi
@@ -1624,54 +1421,56 @@ service_restart() {
 service_enable() {
     if [ "$INIT_SYS" = "systemd" ]; then
         systemctl daemon-reload
-        systemctl enable vless-server >/dev/null 2>&1
+        systemctl enable proxy-server >/dev/null 2>&1
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-update add vless-server default >/dev/null 2>&1
+        rc-update add proxy-server default >/dev/null 2>&1
     fi
 }
 
 service_disable() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl disable vless-server 2>/dev/null
+        systemctl disable proxy-server 2>/dev/null
         systemctl daemon-reload
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-update del vless-server default 2>/dev/null
+        rc-update del proxy-server default 2>/dev/null
     fi
 }
 
 service_is_active() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet vless-server
+        systemctl is-active --quiet proxy-server
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service vless-server status 2>/dev/null | grep -q "started"
+        rc-service proxy-server status 2>/dev/null | grep -q "started"
     else
-        [ -f /var/run/vless-server.pid ] && kill -0 "$(cat /var/run/vless-server.pid)" 2>/dev/null
+        [ -f /var/run/proxy-server.pid ] && kill -0 "$(cat /var/run/proxy-server.pid)" 2>/dev/null
     fi
 }
 
-shared_anytls_service_is_active() {
+shared_service_is_active() {
+    local _name="$1"
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-active --quiet anytls-server 2>/dev/null
+        systemctl is-active --quiet "$_name" 2>/dev/null
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service anytls-server status 2>/dev/null | grep -q "started"
+        rc-service "$_name" status 2>/dev/null | grep -q "started"
     else
-        [ -f /var/run/anytls-server.pid ] && kill -0 "$(cat /var/run/anytls-server.pid)" 2>/dev/null
+        [ -f "/var/run/${_name}.pid" ] && kill -0 "$(cat "/var/run/${_name}.pid")" 2>/dev/null
     fi
 }
 
-shared_anytls_service_restart() {
+shared_service_restart() {
+    local _name="$1" _bin="$2"
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart anytls-server
+        systemctl restart "$_name"
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service anytls-server restart
+        rc-service "$_name" restart
     else
-        [ -x /usr/local/bin/anytls-server ] || return 1
-        if [ -f /var/run/anytls-server.pid ]; then
-            kill "$(cat /var/run/anytls-server.pid)" 2>/dev/null || true
-            rm -f /var/run/anytls-server.pid
+        [ -x "$_bin" ] || return 1
+        if [ -f "/var/run/${_name}.pid" ]; then
+            kill "$(cat "/var/run/${_name}.pid")" 2>/dev/null || true
+            rm -f "/var/run/${_name}.pid"
         fi
-        nohup /usr/local/bin/anytls-server >/var/log/anytls-server.log 2>&1 &
-        echo $! > /var/run/anytls-server.pid
+        nohup "$_bin" >"/var/log/${_name}.log" 2>&1 &
+        echo $! > "/var/run/${_name}.pid"
     fi
 }
 
@@ -1685,51 +1484,6 @@ service_is_healthy() {
     '
 }
 
-config_needs_migration() {
-    local _domain_strategy
-    [ "$CONFIG_SCHEMA" = "$VLESS_CONFIG_SCHEMA" ] || return 0
-    _domain_strategy=$(reality_domain_strategy)
-    grep -q '"domain_resolver"' "$VLESS_CONFIG" 2>/dev/null || return 0
-    grep -q '"strategy": "'"${_domain_strategy}"'"' "$VLESS_CONFIG" 2>/dev/null || return 0
-    return 1
-}
-
-migrate_vless_config() {
-    config_needs_migration || return 0
-    local _config_backup _meta_backup _was_active=0 _rollback_ok=1
-    _config_backup=$(mktemp "${VLESS_CONFIG}.migrate.XXXXXX" 2>/dev/null) || return 1
-    _meta_backup=$(mktemp "${VLESS_META}/config.env.migrate.XXXXXX" 2>/dev/null) || {
-        rm -f "$_config_backup"
-        return 1
-    }
-    cp -p "$VLESS_CONFIG" "$_config_backup" && cp -p "$VLESS_META/config.env" "$_meta_backup" || {
-        rm -f "$_config_backup" "$_meta_backup"
-        return 1
-    }
-    service_is_active && _was_active=1 || true
-    if write_config && check_config && \
-        { [ "$_was_active" = "0" ] || { service_restart && wait_for_health; }; }; then
-        CONFIG_SCHEMA="$VLESS_CONFIG_SCHEMA"
-        rm -f "$_config_backup" "$_meta_backup"
-        echo -e "${GREEN}✓ VLESS 配置已安全迁移到 schema ${VLESS_CONFIG_SCHEMA}${PLAIN}"
-        return 0
-    fi
-    cp -p "$_config_backup" "$VLESS_CONFIG" 2>/dev/null || _rollback_ok=0
-    cp -p "$_meta_backup" "$VLESS_META/config.env" 2>/dev/null || _rollback_ok=0
-    [ "$_rollback_ok" = "0" ] || rm -f "$_config_backup" "$_meta_backup"
-    read_config 2>/dev/null || true
-    [ "$_was_active" = "0" ] || { service_restart >/dev/null 2>&1 || true; wait_for_health >/dev/null 2>&1 || true; }
-    if [ "$_rollback_ok" = "1" ]; then
-        echo -e "${RED}VLESS 配置迁移失败，已恢复旧配置${PLAIN}"
-    else
-        echo -e "${RED}VLESS 配置迁移失败且自动恢复不完整，备份保留在 ${_config_backup} 和 ${_meta_backup}${PLAIN}"
-    fi
-    return 1
-}
-
-# 带有界轮询的健康检查：最多等 _attempts 秒，首次立即检查。
-# 避免慢 VPS 冷启动时硬编码 sleep 超时触发误回滚（quirk #8）。
-# 可选第二参数为自定义判定函数名，默认 service_is_healthy。
 wait_for_health() {
     local _attempts="${1:-12}" _check="${2:-service_is_healthy}" _i=0
     while [ "$_i" -lt "$_attempts" ]; do
@@ -1740,26 +1494,11 @@ wait_for_health() {
     return 1
 }
 
-has_free_space_mb() {
-    local _path="$1" _required="$2" _available
-    command -v df >/dev/null 2>&1 || return 0
-    _available=$(df -Pk "$_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }')
-    [ -z "$_available" ] && return 0
-    [ "$_available" -ge $((_required * 1024)) ]
-}
-
-check_download_space() {
-    has_free_space_mb "$(disk_tmp_dir)" 160 && has_free_space_mb "$(dirname "$SING_BOX_BIN")" 48 || {
-        echo -e "${RED}磁盘空间不足：下载并解压 sing-box 至少需要临时分区 160MB、目标分区 48MB${PLAIN}"
-        return 1
-    }
-}
-
 service_is_enabled() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl is-enabled --quiet vless-server 2>/dev/null
+        systemctl is-enabled --quiet proxy-server 2>/dev/null
     elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-update show default 2>/dev/null | grep -qE '(^|[[:space:]])vless-server([[:space:]]|$)'
+        rc-update show default 2>/dev/null | grep -qE '(^|[[:space:]])proxy-server([[:space:]]|$)'
     else
         return 1
     fi
@@ -1767,19 +1506,19 @@ service_is_enabled() {
 
 service_logs() {
     if [ "$INIT_SYS" = "systemd" ]; then
-        journalctl -u vless-server -n 80 --no-pager
+        journalctl -u proxy-server -n 80 --no-pager
     else
-        tail -n 80 /var/log/vless-server.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
+        tail -n 80 /var/log/proxy-server.log 2>/dev/null || echo -e "${YELLOW}暂无日志${PLAIN}"
     fi
 }
 
 # ============================================================
 # 安装 / 修改
 # ============================================================
-configure_vless() {
-    local _default_port _default_sni _target_verified=0
+configure_proxy() {
+    local _default_port
     _default_port=$(generate_random_port) || { echo -e "${RED}无法生成可用随机端口${PLAIN}"; return 1; }
-    echo -e "\n${SKYBLUE}--- 配置 VLESS + REALITY + Vision 协议 ---${PLAIN}"
+    echo -e "\n${SKYBLUE}--- 配置 HTTP/SOCKS Proxy（mixed 入站）---${PLAIN}"
 
     if [ "$NAT_MODE" = "1" ]; then
         read -r -p "请输入本机监听端口 [随机默认 ${_default_port}]: " LISTEN_PORT
@@ -1797,65 +1536,38 @@ configure_vless() {
         echo -e "${GREEN}端口: ${LISTEN_PORT}${PLAIN}"
     fi
 
-    read -r -p "请输入 VLESS UUID [留空自动生成]: " UUID
-    if [ -z "$UUID" ]; then
-        UUID=$(generate_uuid) || { echo -e "${RED}生成 UUID 失败${PLAIN}"; return 1; }
-        echo -e "${GREEN}自动生成 UUID: ${YELLOW}${UUID}${PLAIN}"
+    read -r -p "请设置用户名 [留空自动生成]: " PROXY_USER
+    if [ -z "$PROXY_USER" ]; then
+        PROXY_USER=$(gen_username)
+        echo -e "${GREEN}自动生成用户名: ${YELLOW}${PROXY_USER}${PLAIN}"
     fi
-    validate_uuid "$UUID" || { echo -e "${RED}UUID 格式无效${PLAIN}"; return 1; }
+    validate_username "$PROXY_USER" || { echo -e "${RED}用户名无效（3-64 位，仅字母数字._-）${PLAIN}"; return 1; }
 
-    read -r -p "请输入 REALITY 目标端口 [默认 443]: " HANDSHAKE_PORT
-    [ -z "$HANDSHAKE_PORT" ] && HANDSHAKE_PORT="443"
-    validate_port "$HANDSHAKE_PORT" || { echo -e "${RED}REALITY 目标端口无效${PLAIN}"; return 1; }
-
-    echo -e "${YELLOW}正在按 $(reality_domain_strategy) 策略检测可用 REALITY 目标...${PLAIN}"
-    if _default_sni=$(select_reality_target "$HANDSHAKE_PORT"); then
-        _target_verified=1
-        echo -e "${GREEN}✓ 已找到可用目标: ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
-    else
-        _default_sni=$(random_sni)
-        echo -e "${YELLOW}! 未能自动验证候选目标，请确认 VPS 可访问 ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
+    read -r -p "请设置密码 [留空自动生成]: " PROXY_PASS
+    if [ -z "$PROXY_PASS" ]; then
+        PROXY_PASS=$(gen_password)
+        echo -e "${GREEN}自动生成密码: ${YELLOW}${PROXY_PASS}${PLAIN}"
     fi
-    read -r -p "请输入 REALITY 目标域名/SNI [默认 ${_default_sni}]: " SERVER_NAME
-    [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
-    validate_server_name "$SERVER_NAME" || { echo -e "${RED}REALITY 目标域名格式无效${PLAIN}"; return 1; }
-    if [ "$SERVER_NAME" != "$_default_sni" ] || [ "$_target_verified" != "1" ]; then
-        if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
-            echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}"
-        else
-            echo -e "${YELLOW}! 当前 VPS 无法验证该目标，节点可能握手不稳定或无法连接${PLAIN}"
-        fi
-    fi
+    validate_password "$PROXY_PASS" || { echo -e "${RED}密码无效（至少 8 位，且不能含空格/@:#/? 等）${PLAIN}"; return 1; }
 
-    echo -e "${YELLOW}正在生成 REALITY 密钥对...${PLAIN}"
-    generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return 1; }
-    SHORT_ID=$(generate_short_id) || { echo -e "${RED}生成 REALITY short ID 失败${PLAIN}"; return 1; }
-    echo -e "${GREEN}✓ REALITY 密钥与 short ID 已生成${PLAIN}"
-    echo -e "${DIM}私钥仅写入服务器配置，不会出现在节点输出中。${PLAIN}"
-
-    NODE_NAME="VLESS-$(hostname 2>/dev/null | tr -d '\n\r')"
-    [ "$NODE_NAME" = "VLESS-" ] && NODE_NAME="VLESS-Node"
+    NODE_NAME="Proxy-$(hostname 2>/dev/null | tr -d '\n\r')"
+    [ "$NODE_NAME" = "Proxy-" ] && NODE_NAME="Proxy-Node"
     return 0
 }
 
-install_vless() {
+install_proxy() {
     install_dependencies || { read -r -p "按回车键返回主菜单..." _; return; }
     detect_network
     backup_current_install || { echo -e "${RED}无法创建安装备份，已取消操作${PLAIN}"; read -r -p "按回车键返回主菜单..." _; return; }
-    ensure_vless_bin || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
-    configure_vless || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
+    ensure_singbox || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
+    configure_proxy || { restore_current_install; read -r -p "按回车键返回主菜单..." _; return; }
     write_config || {
-        echo -e "${RED}VLESS 配置写入失败${PLAIN}"
+        echo -e "${RED}Proxy 配置写入失败${PLAIN}"
         restore_current_install
         read -r -p "按回车键返回主菜单..." _
         return
     }
-    write_wrapper || {
-        echo -e "${RED}VLESS 启动 wrapper 写入失败${PLAIN}"
-        restore_current_install
-        read -r -p "按回车键返回主菜单..." _
-        return
-    }
+    write_wrapper
     echo -e "${YELLOW}正在校验 sing-box 配置...${PLAIN}"
     if ! check_config; then
         echo -e "${RED}sing-box 配置校验失败${PLAIN}"
@@ -1864,24 +1576,17 @@ install_vless() {
         read -r -p "按回车键返回主菜单..." _
         return
     fi
-    echo -e "${GREEN}✓ sing-box 配置校验通过${PLAIN}"
+    echo -e "${GREEN}[OK] sing-box 配置校验通过${PLAIN}"
 
     if [ "$INIT_SYS" = "systemd" ]; then
-        write_systemd_service || { restore_current_install; return; }
+        write_systemd_service
     elif [ "$INIT_SYS" = "openrc" ]; then
-        write_openrc_service || { restore_current_install; return; }
+        write_openrc_service
     fi
 
-    if ! service_enable; then
-        echo -e "${RED}VLESS 服务开机启动设置失败${PLAIN}"
-        restore_current_install
-        return
-    fi
-    if ! open_ports "$LISTEN_PORT"; then
-        restore_current_install
-        return
-    fi
-    echo -e "${YELLOW}正在启动 VLESS 服务...${PLAIN}"
+    service_enable || { echo -e "${RED}Proxy 服务开机启动设置失败${PLAIN}"; restore_current_install; return; }
+    open_ports "$LISTEN_PORT" || { restore_current_install; return; }
+    echo -e "${YELLOW}正在启动 HTTP/SOCKS Proxy 服务...${PLAIN}"
     if service_is_active; then
         service_restart || { restore_current_install; return; }
     else
@@ -1889,9 +1594,9 @@ install_vless() {
     fi
 
     if wait_for_health; then
-        echo -e "${GREEN}✓ VLESS 服务端启动成功${PLAIN}"
+        echo -e "${GREEN}[OK] HTTP/SOCKS Proxy 服务端启动成功${PLAIN}"
     else
-        echo -e "${RED}✗ VLESS 启动失败，请查看日志：${PLAIN}"
+        echo -e "${RED}[FAIL] HTTP/SOCKS Proxy 启动失败，请查看日志：${PLAIN}"
         service_logs
         restore_current_install
         echo -e "${YELLOW}已恢复安装前的配置和服务${PLAIN}"
@@ -1901,94 +1606,58 @@ install_vless() {
 
     close_replaced_install_port
     discard_install_backup
+    warn_streaming_egress
     show_config
 }
 
-change_config() {
-    if [ ! -f "$VLESS_CONFIG" ]; then
-        echo -e "${RED}未安装 VLESS${PLAIN}"; sleep 2; return
+change_port() {
+    if [ ! -f "$PROXY_CONFIG" ]; then
+        echo -e "${RED}未安装 HTTP/SOCKS Proxy${PLAIN}"; sleep 2; return
     fi
-    read_config || { echo -e "${RED}VLESS 配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
-    local _old_port="$LISTEN_PORT" _was_active=0 _port _ext _uuid _sni _handshake_port _regen
+    read_config || { echo -e "${RED}配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
+    local _old_port="$LISTEN_PORT" _was_active=0
     service_is_active && _was_active=1 || true
     detect_network
 
-    echo -e "\n${YELLOW}修改 VLESS 配置，留空则保留原值。${PLAIN}"
-    read -r -p "监听端口 [当前 ${LISTEN_PORT}]: " _port
-    if [ -n "$_port" ]; then
+    echo -e "\n${YELLOW}修改监听端口，留空则取消。${PLAIN}"
+    if [ "$NAT_MODE" = "1" ]; then
+        read -r -p "本机监听端口 [当前 ${LISTEN_PORT}]: " _port
+        [ -z "$_port" ] && { echo "已取消。"; sleep 1; return; }
         validate_port "$_port" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }
         LISTEN_PORT="$_port"
+        read -r -p "对外转发端口 [当前 ${EXT_PORT}]: " _ext
+        if [ -n "$_ext" ]; then
+            validate_port "$_ext" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }
+            EXT_PORT="$_ext"
+        else
+            EXT_PORT="$LISTEN_PORT"
+        fi
+    else
+        read -r -p "端口 [当前 ${LISTEN_PORT}]: " _port
+        [ -z "$_port" ] && { echo "已取消。"; sleep 1; return; }
+        validate_port "$_port" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }
+        LISTEN_PORT="$_port"
+        EXT_PORT="$_port"
     fi
 
-    read -r -p "对外端口 [当前 ${EXT_PORT:-$LISTEN_PORT}]: " _ext
-    if [ -n "$_ext" ]; then
-        validate_port "$_ext" || { echo -e "${RED}端口无效${PLAIN}"; sleep 2; return; }
-        EXT_PORT="$_ext"
-    fi
-    [ -z "$EXT_PORT" ] && EXT_PORT="$LISTEN_PORT"
-
-    read -r -p "VLESS UUID [留空保留原 UUID]: " _uuid
-    if [ -n "$_uuid" ]; then
-        validate_uuid "$_uuid" || { echo -e "${RED}UUID 格式无效${PLAIN}"; sleep 2; return; }
-        UUID="$_uuid"
-    fi
-
-    read -r -p "REALITY 目标域名/SNI [当前 ${SERVER_NAME}]: " _sni
-    if [ -n "$_sni" ]; then
-        validate_server_name "$_sni" || { echo -e "${RED}目标域名格式无效${PLAIN}"; sleep 2; return; }
-        SERVER_NAME="$_sni"
-    fi
-
-    read -r -p "REALITY 目标端口 [当前 ${HANDSHAKE_PORT}]: " _handshake_port
-    if [ -n "$_handshake_port" ]; then
-        validate_port "$_handshake_port" || { echo -e "${RED}目标端口无效${PLAIN}"; sleep 2; return; }
-        HANDSHAKE_PORT="$_handshake_port"
-    fi
-    if [ -n "${_sni}${_handshake_port}" ]; then
-        echo -e "${YELLOW}正在验证 REALITY 目标...${PLAIN}"
-        reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT" \
-            && echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}" \
-            || echo -e "${YELLOW}! 当前 VPS 无法验证该目标，保存后可能影响连接稳定性${PLAIN}"
-    fi
-
-    read -r -p "重新生成 REALITY 密钥和 short ID？[y/N]: " _regen
-    case "$_regen" in
-        [yY])
-            generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return; }
-            SHORT_ID=$(generate_short_id) || { echo -e "${RED}生成 short ID 失败${PLAIN}"; return; }
-            ;;
-    esac
-
-    cp -p "$VLESS_CONFIG" "${VLESS_CONFIG}.bak" 2>/dev/null && \
-    cp -p "$VLESS_META/config.env" "$VLESS_META/config.env.bak" 2>/dev/null && \
-    cp -p "$VLESS_META/public_ip" "$VLESS_META/public_ip.bak" 2>/dev/null && \
-    cp -p "$VLESS_META/public_ipv6" "$VLESS_META/public_ipv6.bak" 2>/dev/null || {
-        rm -f "${VLESS_CONFIG}.bak" "$VLESS_META/config.env.bak" \
-            "$VLESS_META/public_ip.bak" "$VLESS_META/public_ipv6.bak"
-        echo -e "${RED}无法创建完整配置备份，已取消修改${PLAIN}"
+    cp -p "$PROXY_CONFIG" "${PROXY_CONFIG}.bak" 2>/dev/null && \
+    cp -p "$PROXY_META/config.env" "$PROXY_META/config.env.bak" 2>/dev/null || {
+        rm -f "${PROXY_CONFIG}.bak" "$PROXY_META/config.env.bak"
+        echo -e "${RED}无法创建配置备份，已取消修改${PLAIN}"
         return
     }
 
     if ! write_config || ! check_config; then
-        mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
-        mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
-        mv -f "$VLESS_META/public_ip.bak" "$VLESS_META/public_ip" 2>/dev/null || true
-        mv -f "$VLESS_META/public_ipv6.bak" "$VLESS_META/public_ipv6" 2>/dev/null || true
+        mv -f "${PROXY_CONFIG}.bak" "$PROXY_CONFIG" 2>/dev/null || true
+        mv -f "$PROXY_META/config.env.bak" "$PROXY_META/config.env" 2>/dev/null || true
         echo -e "${RED}配置无效，已回滚${PLAIN}"
         sleep 2
         return
     fi
-    if [ "$INIT_SYS" = "systemd" ]; then
-        write_systemd_service
-    elif [ "$INIT_SYS" = "openrc" ]; then
-        write_openrc_service
-    fi
-
     if ! open_ports "$LISTEN_PORT"; then
-        mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
-        mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
-        mv -f "$VLESS_META/public_ip.bak" "$VLESS_META/public_ip" 2>/dev/null || true
-        mv -f "$VLESS_META/public_ipv6.bak" "$VLESS_META/public_ipv6" 2>/dev/null || true
+        [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
+        mv -f "${PROXY_CONFIG}.bak" "$PROXY_CONFIG" 2>/dev/null || true
+        mv -f "$PROXY_META/config.env.bak" "$PROXY_META/config.env" 2>/dev/null || true
         read_config || true
         echo -e "${RED}防火墙放行失败，配置已回滚${PLAIN}"
         return
@@ -1996,10 +1665,8 @@ change_config() {
     [ "$_was_active" = "0" ] || service_restart || true
     if [ "$_was_active" = "1" ] && ! wait_for_health; then
         [ "$_old_port" = "$LISTEN_PORT" ] || close_ports "$LISTEN_PORT"
-        mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
-        mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
-        mv -f "$VLESS_META/public_ip.bak" "$VLESS_META/public_ip" 2>/dev/null || true
-        mv -f "$VLESS_META/public_ipv6.bak" "$VLESS_META/public_ipv6" 2>/dev/null || true
+        mv -f "${PROXY_CONFIG}.bak" "$PROXY_CONFIG" 2>/dev/null || true
+        mv -f "$PROXY_META/config.env.bak" "$PROXY_META/config.env" 2>/dev/null || true
         read_config || true
         service_restart || true
         echo -e "${RED}服务重启失败，配置已回滚，请查看日志${PLAIN}"
@@ -2007,36 +1674,121 @@ change_config() {
         return
     fi
     [ "$_old_port" != "$LISTEN_PORT" ] && close_ports "$_old_port"
-    rm -f "${VLESS_CONFIG}.bak" "$VLESS_META/config.env.bak" \
-        "$VLESS_META/public_ip.bak" "$VLESS_META/public_ipv6.bak"
+    rm -f "${PROXY_CONFIG}.bak" "$PROXY_META/config.env.bak"
+    echo -e "${GREEN}[OK] 端口已更新为 ${LISTEN_PORT}${PLAIN}"
+    show_config
+}
+
+change_credentials() {
+    if [ ! -f "$PROXY_CONFIG" ]; then
+        echo -e "${RED}未安装 HTTP/SOCKS Proxy${PLAIN}"; sleep 2; return
+    fi
+    read_config || { echo -e "${RED}配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
+    local _was_active=0
+    service_is_active && _was_active=1 || true
+
+    echo -e "\n${YELLOW}修改用户名/密码，留空则保留原值。${PLAIN}"
+    read -r -p "用户名 [当前 ${PROXY_USER}]: " _user
+    if [ -n "$_user" ]; then
+        validate_username "$_user" || { echo -e "${RED}用户名无效${PLAIN}"; sleep 2; return; }
+        PROXY_USER="$_user"
+    fi
+    read -r -p "密码 [留空保留原密码，输入 auto 自动生成]: " _pass
+    if [ "$_pass" = "auto" ]; then
+        PROXY_PASS=$(gen_password)
+        echo -e "${GREEN}自动生成密码: ${YELLOW}${PROXY_PASS}${PLAIN}"
+    elif [ -n "$_pass" ]; then
+        validate_password "$_pass" || { echo -e "${RED}密码无效${PLAIN}"; sleep 2; return; }
+        PROXY_PASS="$_pass"
+    fi
+
+    cp -p "$PROXY_CONFIG" "${PROXY_CONFIG}.bak" 2>/dev/null && \
+    cp -p "$PROXY_META/config.env" "$PROXY_META/config.env.bak" 2>/dev/null || {
+        rm -f "${PROXY_CONFIG}.bak" "$PROXY_META/config.env.bak"
+        echo -e "${RED}无法创建配置备份，已取消修改${PLAIN}"
+        return
+    }
+    if ! write_config || ! check_config; then
+        mv -f "${PROXY_CONFIG}.bak" "$PROXY_CONFIG" 2>/dev/null || true
+        mv -f "$PROXY_META/config.env.bak" "$PROXY_META/config.env" 2>/dev/null || true
+        echo -e "${RED}配置无效，已回滚${PLAIN}"
+        sleep 2
+        return
+    fi
+    [ "$_was_active" = "0" ] || service_restart || true
+    if [ "$_was_active" = "1" ] && ! wait_for_health; then
+        mv -f "${PROXY_CONFIG}.bak" "$PROXY_CONFIG" 2>/dev/null || true
+        mv -f "$PROXY_META/config.env.bak" "$PROXY_META/config.env" 2>/dev/null || true
+        read_config || true
+        service_restart || true
+        echo -e "${RED}服务重启失败，配置已回滚${PLAIN}"
+        return
+    fi
+    rm -f "${PROXY_CONFIG}.bak" "$PROXY_META/config.env.bak"
+    echo -e "${GREEN}[OK] 凭据已更新${PLAIN}"
     show_config
 }
 
 # ============================================================
-# 展示单个节点（IPv4 或 IPv6）
-# $1=IP  $2=Port  $3=标签(v4/v6)
+# 客户端导出（无 TLS）
 # ============================================================
-export_uri_vless() {
-    render_uri "$1" "$2" "$UUID" "$3" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID"
+export_uri_http() {
+    local _server="$1" _port="$2" _name="${3:-}"
+    local _host _enc_user _enc_pass _enc_name
+    _host=$(format_ipv6_for_uri "$_server")
+    _enc_user=$(uri_encode "$PROXY_USER")
+    _enc_pass=$(uri_encode "$PROXY_PASS")
+    if [ -n "$_name" ]; then
+        _enc_name=$(uri_encode "$_name")
+        printf 'http://%s:%s@%s:%s#%s\n' "$_enc_user" "$_enc_pass" "$_host" "$_port" "$_enc_name"
+    else
+        printf 'http://%s:%s@%s:%s\n' "$_enc_user" "$_enc_pass" "$_host" "$_port"
+    fi
 }
 
-export_mihomo_vless() {
-    local _server="$1" _port="$2" _node="$3" _yaml_server _safe_node _sni
-    _yaml_server=$(format_server_for_yaml "$_server")
-    _safe_node=$(yaml_single_quote_escape "$_node")
-    _sni=$(yaml_single_quote_escape "$SERVER_NAME")
-    printf '%s' "- {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: '${UUID}', network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: '${REALITY_PUBLIC_KEY}', short-id: '${SHORT_ID}'}}"
+export_uri_socks5() {
+    local _server="$1" _port="$2" _name="${3:-}"
+    local _host _enc_user _enc_pass _enc_name
+    _host=$(format_ipv6_for_uri "$_server")
+    _enc_user=$(uri_encode "$PROXY_USER")
+    _enc_pass=$(uri_encode "$PROXY_PASS")
+    if [ -n "$_name" ]; then
+        _enc_name=$(uri_encode "$_name")
+        printf 'socks5://%s:%s@%s:%s#%s\n' "$_enc_user" "$_enc_pass" "$_host" "$_port" "$_enc_name"
+    else
+        printf 'socks5://%s:%s@%s:%s\n' "$_enc_user" "$_enc_pass" "$_host" "$_port"
+    fi
 }
 
-export_mihomo_stream_vless() {
-    local _server="$1" _port="$2" _node="$3" _yaml_server _safe_node _sni
+export_mihomo_http() {
+    local _server="$1" _port="$2" _node="$3" _yaml_server _user _pass _safe_node
     _yaml_server=$(format_server_for_yaml "$_server")
+    _user=$(yaml_single_quote_escape "$PROXY_USER")
+    _pass=$(yaml_single_quote_escape "$PROXY_PASS")
     _safe_node=$(yaml_single_quote_escape "$_node")
-    _sni=$(yaml_single_quote_escape "$SERVER_NAME")
+    printf "%s" "- {name: '${_safe_node}', type: http, server: ${_yaml_server}, port: ${_port}, username: '${_user}', password: '${_pass}'}"
+}
+
+export_mihomo_socks() {
+    local _server="$1" _port="$2" _node="$3" _yaml_server _user _pass _safe_node
+    _yaml_server=$(format_server_for_yaml "$_server")
+    _user=$(yaml_single_quote_escape "$PROXY_USER")
+    _pass=$(yaml_single_quote_escape "$PROXY_PASS")
+    _safe_node=$(yaml_single_quote_escape "$_node")
+    printf "%s" "- {name: '${_safe_node}', type: socks5, server: ${_yaml_server}, port: ${_port}, username: '${_user}', password: '${_pass}', udp: true}"
+}
+
+export_mihomo_stream_snippet() {
+    local _server="$1" _port="$2" _node="$3" _yaml_server _user _pass _safe_node
+    _yaml_server=$(format_server_for_yaml "$_server")
+    _user=$(yaml_single_quote_escape "$PROXY_USER")
+    _pass=$(yaml_single_quote_escape "$PROXY_PASS")
+    _safe_node=$(yaml_single_quote_escape "$_node")
     cat <<SNIP
-# Mihomo 流媒体 DNS 片段（DNS 经节点 detour，降低本地 DNS 泄露导致的 proxy/VPN 误判）
+# Mihomo 流媒体 DNS 片段（推荐 SOCKS5 + 远程 DNS / socks5h）
+# 说明: nameserver 通过 #节点名 detour，DNS 查询走代理，避免本地 DNS 泄露
 proxies:
-  - {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: '${UUID}', network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: '${REALITY_PUBLIC_KEY}', short-id: '${SHORT_ID}'}}
+  - {name: '${_safe_node}', type: socks5, server: ${_yaml_server}, port: ${_port}, username: '${_user}', password: '${_pass}', udp: true}
 
 dns:
   enable: true
@@ -2047,42 +1799,6 @@ dns:
 SNIP
 }
 
-export_loon_vless() {
-    local _server="$1" _port="$2" _node="$3"
-    printf '%s = VLESS, %s, %s, "%s", transport=tcp, flow=xtls-rprx-vision, public-key="%s", short-id=%s, udp=true, over-tls=true, sni=%s, skip-cert-verify=true' \
-        "$_node" "$_server" "$_port" "$UUID" "$REALITY_PUBLIC_KEY" "$SHORT_ID" "$SERVER_NAME"
-}
-
-export_surfboard_vless() {
-    printf 'Surfboard 暂无经官方文档确认的 VLESS + REALITY 配置格式，请使用 URI 或 Mihomo 配置。'
-}
-
-export_shadowrocket_vless() {
-    render_uri "$1" "$2" "$UUID" "$3" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID"
-}
-
-export_quantumultx_vless() {
-    local _server="$1" _port="$2" _node="$3" _host
-    _host=$(format_ipv6_for_uri "$_server")
-    printf 'vless=%s:%s, method=none, password=%s, obfs=over-tls, obfs-host=%s, reality-base64-pubkey=%s, reality-hex-shortid=%s, vless-flow=xtls-rprx-vision, udp-relay=true, tag=%s' \
-        "$_host" "$_port" "$UUID" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID" "$_node"
-}
-
-print_reality_status() {
-    echo -e "${GREEN}REALITY 参数:${PLAIN}"
-    echo "公钥 Public Key: ${REALITY_PUBLIC_KEY}"
-    echo "Short ID: ${SHORT_ID}"
-    echo "目标 SNI: ${SERVER_NAME}"
-    echo "目标端口: ${HANDSHAKE_PORT}"
-    echo "Flow: xtls-rprx-vision"
-    echo -e "${DIM}服务器私钥已隐藏，仅保存在 root 可读配置中。${PLAIN}"
-}
-
-should_show_output() {
-    local _mode="${1:-all}" _section="$2"
-    [ "$_mode" = "all" ] || [ "$_mode" = "$_section" ]
-}
-
 show_node() {
     local _server="$1" _port="$2" _tag="$3" _mode="${4:-all}"
     [ -z "$_server" ] && return
@@ -2091,120 +1807,91 @@ show_node() {
         return 1
     }
 
-    local _ip_type _country _server_name _node _uri _qr_url _png
+    local _ip_type _country _server_name _node_http _node_socks _uri_http _uri_socks _png
     case "$_tag" in
         v6|IPv6|ipv6) _ip_type="IPv6" ;;
         *)            _ip_type="IPv4" ;;
     esac
     _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
     _server_name=$(generate_server_name)
-    _node=$(generate_node_name "$_country" "$_server_name" "VLESS-Reality" "$_ip_type")
+    _node_http=$(generate_node_name "$_country" "$_server_name" "HTTP" "$_ip_type")
+    _node_socks=$(generate_node_name "$_country" "$_server_name" "SOCKS5" "$_ip_type")
+    _uri_http=$(export_uri_http "$_server" "$_port" "$_node_http")
+    _uri_socks=$(export_uri_socks5 "$_server" "$_port" "$_node_socks")
 
-    _uri=$(export_uri_vless "$_server" "$_port" "$_node")
-    _qr_url=$(generate_online_qrcode_url "$_uri")
-
-    echo -e "${YELLOW}节点名称:${PLAIN}"
-    print_copy_block "$_node"
+    echo -e "${YELLOW}节点名称 (SOCKS5 推荐):${PLAIN}"
+    print_copy_block "$_node_socks"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
     if should_show_output "$_mode" "uri"; then
-        echo -e "${GREEN}URI 分享链接:${PLAIN}"
-        print_copy_block "$_uri"
+        echo -e "${GREEN}HTTP URI:${PLAIN}"
+        print_copy_block "$_uri_http"
+        echo -e "${GREEN}SOCKS5 URI:${PLAIN}"
+        print_copy_block "$_uri_socks"
+        echo -e "${YELLOW}警告: SOCKS5 客户端必须使用远程 DNS（socks5h），否则 DNS 可能泄露。${PLAIN}"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
     if should_show_output "$_mode" "mihomo"; then
-        echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
-        print_copy_block "$(export_mihomo_vless "$_server" "$_port" "$_node")"
-        echo -e "${GREEN}Mihomo 流媒体 DNS 片段:${PLAIN}"
-        print_copy_block "$(export_mihomo_stream_vless "$_server" "$_port" "$_node")"
+        echo -e "${GREEN}Mihomo HTTP 单行:${PLAIN}"
+        print_copy_block "$(export_mihomo_http "$_server" "$_port" "$_node_http")"
+        echo -e "${GREEN}Mihomo SOCKS5 单行（推荐）:${PLAIN}"
+        print_copy_block "$(export_mihomo_socks "$_server" "$_port" "$_node_socks")"
+        echo -e "${GREEN}Mihomo 流媒体 DNS 片段（socks5h / redir-host）:${PLAIN}"
+        print_copy_block "$(export_mihomo_stream_snippet "$_server" "$_port" "$_node_socks")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
-    if should_show_output "$_mode" "surfboard"; then
-        echo -e "${GREEN}Surfboard 配置:${PLAIN}"
-        print_copy_block "$(export_surfboard_vless)"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    fi
-
-    if should_show_output "$_mode" "shadowrocket"; then
-        echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
-        print_copy_block "$(export_shadowrocket_vless "$_server" "$_port" "$_node")"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    fi
-
-    if should_show_output "$_mode" "loon"; then
-        echo -e "${GREEN}Loon 配置:${PLAIN}"
-        print_copy_block "$(export_loon_vless "$_server" "$_port" "$_node")"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    fi
-
-    if should_show_output "$_mode" "quantumult"; then
-        echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
-        print_copy_block "$(export_quantumultx_vless "$_server" "$_port" "$_node")"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    fi
-
-    if [ "$_mode" = "all" ]; then
-        print_reality_status
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    fi
-
-    if should_show_output "$_mode" "qrcode"; then
-        echo -e "${GREEN}二维码:${PLAIN}"
-        if generate_terminal_qrcode "$_uri"; then
-            echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
-            _png=$(generate_local_qrcode_png "$_uri" "vless-reality" "$_ip_type" 2>/dev/null || true)
-            [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
-        else
-            echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
+    if should_show_output "$_mode" "qrcode" || [ "$_mode" = "all" ]; then
+        if [ "$_mode" = "all" ] || [ "$_mode" = "qrcode" ]; then
+            echo -e "${GREEN}终端二维码 (SOCKS5 URI):${PLAIN}"
+            if generate_terminal_qrcode "$_uri_socks"; then
+                echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
+                _png=$(generate_local_qrcode_png "$_uri_socks" "socks5" "$_ip_type" 2>/dev/null || true)
+                [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
+            else
+                echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端二维码。${PLAIN}"
+            fi
+            echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
         fi
-        echo -e "${YELLOW}[WARN] 在线二维码会把节点链接提交给第三方服务，不建议公开节点使用。${PLAIN}"
-        print_copy_block "$_qr_url"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 }
 
 show_config() {
     local _mode="${1:-all}"
-    read_config_live || { echo -e "${RED}未找到 VLESS 配置${PLAIN}"; sleep 2; return; }
+    read_config_live || { echo -e "${RED}未找到 HTTP/SOCKS Proxy 配置${PLAIN}"; sleep 2; return; }
 
     local _country _server_name
     _country=$(get_country_code "$PUBLIC_IP" "$PUBLIC_IPV6")
     _server_name=$(generate_server_name)
 
-    echo -e "\n${GREEN}VLESS + REALITY + Vision 配置详情${PLAIN}"
+    echo -e "\n${GREEN}HTTP/SOCKS Proxy 配置详情${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     echo -e "服务器名称: ${YELLOW}${_server_name}${PLAIN}"
     echo -e "国家/地区: ${YELLOW}${_country} / $(get_country_name "$_country")${PLAIN}"
     [ -n "$PUBLIC_IP"   ] && echo -e "IPv4 地址 : ${YELLOW}${PUBLIC_IP}${PLAIN}"
     [ -n "$PUBLIC_IPV6" ] && echo -e "IPv6 地址 : ${YELLOW}${PUBLIC_IPV6}${PLAIN}"
-    warn_streaming_egress
     if [ "$NAT_MODE" = "1" ] && [ "$EXT_PORT" != "$LISTEN_PORT" ]; then
-        echo -e "监听端口 : ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}← 本机监听${PLAIN}"
-        echo -e "对外端口 : ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}← 客户端连接此端口${PLAIN}"
+        echo -e "监听端口 : ${YELLOW}${LISTEN_PORT}${PLAIN}  ${RED}<- 本机监听${PLAIN}"
+        echo -e "对外端口 : ${YELLOW}${EXT_PORT}${PLAIN}  ${RED}<- 客户端连接此端口${PLAIN}"
     else
         echo -e "端口 Port : ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
-    echo -e "用户 UUID : ${YELLOW}${UUID}${PLAIN}"
-    echo -e "伪装 SNI : ${YELLOW}${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
-    echo -e "REALITY 公钥: ${YELLOW}${REALITY_PUBLIC_KEY}${PLAIN}"
-    echo -e "Short ID  : ${YELLOW}${SHORT_ID}${PLAIN}"
-    echo -e "Flow      : ${YELLOW}xtls-rprx-vision${PLAIN}"
-    echo -e "TLS 指纹 : ${YELLOW}chrome${PLAIN}"
-    [ "$NAT_MODE" = "1" ] && echo -e "机器类型 : ${YELLOW}NAT 机器${PLAIN}"
+    echo -e "用户名    : ${YELLOW}${PROXY_USER}${PLAIN}"
+    echo -e "密码      : ${YELLOW}${PROXY_PASS}${PLAIN}"
+    echo -e "协议      : ${YELLOW}HTTP + SOCKS5 (mixed)${PLAIN}"
+    [ -n "$BIND_INTERFACE" ] && echo -e "出站网卡  : ${YELLOW}${BIND_INTERFACE}${PLAIN}"
+    [ "$NAT_MODE" = "1" ] && echo -e "机器类型  : ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    if [ "$_mode" = "all" ]; then
-        print_reality_status
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    fi
+    warn_streaming_egress
 
     if [ -n "$PUBLIC_IP" ]; then
-        echo -e "${YELLOW}▼ IPv4 节点配置${PLAIN}"
+        echo -e "${YELLOW}▼ IPv4 节点配置（流媒体优先）:${PLAIN}"
         show_node "$PUBLIC_IP" "$EXT_PORT" "v4" "$_mode"
     fi
     if [ -n "$PUBLIC_IPV6" ]; then
         echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
+        echo -e "${DIM}提示: 双栈场景流媒体解锁请优先使用上方 IPv4 节点${PLAIN}"
         show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6" "$_mode"
     fi
 
@@ -2255,7 +1942,7 @@ release_upgrade_lock() {
 }
 
 upgrade_core() {
-    acquire_upgrade_lock || { echo -e "${YELLOW}另一个 VLESS 升级任务正在运行，请稍后重试${PLAIN}"; return 1; }
+    acquire_upgrade_lock || { echo -e "${YELLOW}另一个 sing-box 升级任务正在运行，请稍后重试${PLAIN}"; return 1; }
     local _status=0
     _upgrade_core_locked || _status=$?
     release_upgrade_lock
@@ -2263,15 +1950,15 @@ upgrade_core() {
 }
 
 _upgrade_core_locked() {
-    [ -f "$VLESS_CONFIG" ] && [ -x "$SING_BOX_BIN" ] || {
-        echo -e "${RED}VLESS 尚未安装，请先执行安装${PLAIN}"
+    [ -f "$PROXY_CONFIG" ] && [ -x "$SING_BOX_BIN" ] || {
+        echo -e "${RED}HTTP/SOCKS Proxy 尚未安装，请先执行安装${PLAIN}"
         return 1
     }
-    read_config || { echo -e "${RED}VLESS 元数据不完整，无法安全升级${PLAIN}"; return 1; }
-    migrate_vless_config || return 1
+    read_config || { echo -e "${RED}元数据不完整，无法安全升级${PLAIN}"; return 1; }
     get_latest_version || return 1
 
-    local _current_version _latest_version _was_active=0 _shared_was_active=0
+    local _current_version _latest_version _was_active=0
+    local _anytls_was_active=0 _vless_was_active=0
     local _restart_failed=0 _was_managed="$MANAGED_SING_BOX"
     _current_version=$(get_installed_version)
     _latest_version="${LAST_VERSION_TAG#v}"
@@ -2285,8 +1972,9 @@ _upgrade_core_locked() {
         return 1
     }
     service_is_active && _was_active=1 || true
-    shared_anytls_service_is_active && _shared_was_active=1 || true
-    if ! download_vless; then
+    shared_service_is_active anytls-server && _anytls_was_active=1 || true
+    shared_service_is_active vless-server && _vless_was_active=1 || true
+    if ! download_singbox; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         MANAGED_SING_BOX="$_was_managed"
         return 1
@@ -2300,24 +1988,32 @@ _upgrade_core_locked() {
     if [ "$_was_active" = "1" ]; then
         service_restart || _restart_failed=1
     fi
-    if [ "$_shared_was_active" = "1" ]; then
-        shared_anytls_service_restart || _restart_failed=1
+    if [ "$_anytls_was_active" = "1" ]; then
+        shared_service_restart anytls-server /usr/local/bin/anytls-server || _restart_failed=1
+    fi
+    if [ "$_vless_was_active" = "1" ]; then
+        shared_service_restart vless-server /usr/local/bin/vless-server || _restart_failed=1
+    fi
+    if [ "$_was_active" = "1" ] || [ "$_anytls_was_active" = "1" ] || [ "$_vless_was_active" = "1" ]; then
+        sleep 2
     fi
     [ "$_was_active" = "0" ] || wait_for_health || _restart_failed=1
-    [ "$_shared_was_active" = "0" ] || wait_for_health 12 shared_anytls_service_is_active || _restart_failed=1
+    [ "$_anytls_was_active" = "0" ] || shared_service_is_active anytls-server || _restart_failed=1
+    [ "$_vless_was_active" = "0" ] || shared_service_is_active vless-server || _restart_failed=1
     if [ "$_restart_failed" = "1" ]; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         [ "$_was_active" = "0" ] || service_restart || true
-        [ "$_shared_was_active" = "0" ] || shared_anytls_service_restart || true
+        [ "$_anytls_was_active" = "0" ] || shared_service_restart anytls-server /usr/local/bin/anytls-server || true
+        [ "$_vless_was_active" = "0" ] || shared_service_restart vless-server /usr/local/bin/vless-server || true
         echo -e "${RED}升级后共享服务启动失败，已回滚${PLAIN}"
         return 1
     fi
     rm -f "${SING_BOX_BIN}.bak"
-    echo -e "${GREEN}✓ sing-box 已从 ${_current_version:-未知版本} 升级到 ${_latest_version}${PLAIN}"
+    echo -e "${GREEN}[OK] sing-box 已从 ${_current_version:-未知版本} 升级到 ${_latest_version}${PLAIN}"
     return 0
 }
 
-upgrade_vless() {
+upgrade_proxy() {
     if ! install_dependencies; then
         read -r -p "按回车键返回主菜单..." _
         return 1
@@ -2328,9 +2024,9 @@ upgrade_vless() {
     return "$_status"
 }
 
-uninstall_vless() {
-    echo -e "${RED}警告：这将删除 VLESS 服务、配置和定时更新。${PLAIN}"
-    read -r -p "确认卸载 VLESS？[y/N]: " _confirm
+uninstall_proxy() {
+    echo -e "${RED}警告：这将删除 HTTP/SOCKS Proxy 服务、配置和定时更新。${PLAIN}"
+    read -r -p "确认卸载 HTTP/SOCKS Proxy？[y/N]: " _confirm
     case "$_confirm" in
         [yY]) ;;
         *) echo "已取消。"; sleep 1; return ;;
@@ -2342,7 +2038,7 @@ uninstall_vless() {
         _managed_core=1
     fi
     if [ "$MANAGED_SING_BOX" = "1" ]; then
-        mkdir -p "$VLESS_DIR" 2>/dev/null || true
+        mkdir -p "$PROXY_DIR" 2>/dev/null || true
         : > "$SING_BOX_MANAGED_MARKER" 2>/dev/null || true
     fi
     service_stop
@@ -2351,35 +2047,35 @@ uninstall_vless() {
     if command -v crontab >/dev/null 2>&1; then
         crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
     fi
-    rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$VLESS_BIN"
-    rm -f "$VLESS_CONFIG" "$AUTO_UPDATE_LOG"
-    rm -rf "$VLESS_META"
-    if [ -d "$VLESS_DIR" ]; then
-        _other_file=$(find "$VLESS_DIR" -mindepth 1 -maxdepth 1 ! -name '.singbox-tools-managed' -print -quit 2>/dev/null)
+    rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$PROXY_BIN"
+    rm -f "$PROXY_CONFIG" "$AUTO_UPDATE_LOG"
+    rm -rf "$PROXY_META"
+    if [ -d "$PROXY_DIR" ]; then
+        _other_file=$(find "$PROXY_DIR" -mindepth 1 -maxdepth 1 ! -name '.singbox-tools-managed' -print -quit 2>/dev/null)
     fi
     if [ -z "$_other_file" ]; then
         rm -f "$SING_BOX_MANAGED_MARKER"
-        rmdir "$VLESS_DIR" 2>/dev/null || true
+        rmdir "$PROXY_DIR" 2>/dev/null || true
         [ "$_managed_core" = "1" ] && rm -f "$SING_BOX_BIN"
     elif [ "$_managed_core" = "1" ]; then
         echo -e "${YELLOW}检测到 /etc/sing-box 中还有其他文件，已保留共享 sing-box 二进制${PLAIN}"
     fi
-    rm -f /var/run/vless-server.pid
+    rm -f /var/run/proxy-server.pid
     [ "$INIT_SYS" = "systemd" ] && systemctl daemon-reload
-    echo -e "${GREEN}✓ VLESS 已卸载${PLAIN}"
+    echo -e "${GREEN}[OK] HTTP/SOCKS Proxy 已卸载${PLAIN}"
     sleep 2
 }
 
-setup_auto_update() {
+setup_autoupdate() {
     cat > "$AUTO_UPDATE_SCRIPT" <<'AUTOUPDATE_EOF'
 #!/bin/bash
-LOG_FILE=/var/log/vless-autoupdate.log
-TMP_SCRIPT=$(mktemp /tmp/vless-update-XXXXXX.sh) || exit 1
+LOG_FILE=/var/log/proxy-autoupdate.log
+TMP_SCRIPT=$(mktemp /tmp/proxy-update-XXXXXX.sh) || exit 1
 trap 'rm -f "$TMP_SCRIPT"' EXIT INT TERM
 {
   echo "[$(date '+%F %T')] 开始检查 sing-box 更新"
   curl -fsSL --connect-timeout 15 --max-time 60 \
-    https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh -o "$TMP_SCRIPT" || exit 1
+    https://raw.githubusercontent.com/everett7623/hy2/main/proxy.sh -o "$TMP_SCRIPT" || exit 1
   bash -n "$TMP_SCRIPT" || exit 1
   bash "$TMP_SCRIPT" --upgrade-noninteractive
   echo "[$(date '+%F %T')] 更新检查完成"
@@ -2389,319 +2085,96 @@ AUTOUPDATE_EOF
 
     if command -v crontab >/dev/null 2>&1; then
         (crontab -l 2>/dev/null | grep -v "$AUTO_UPDATE_SCRIPT"; echo "27 4 * * 1 $AUTO_UPDATE_SCRIPT") | crontab -
-        echo -e "${GREEN}✓ 已设置每周一 04:27 自动检查 sing-box 更新${PLAIN}"
+        echo -e "${GREEN}[OK] 已设置每周一 04:27 自动检查 sing-box 更新${PLAIN}"
     else
         echo -e "${YELLOW}系统未安装 crontab，请手动安装 cron 后再设置自动升级${PLAIN}"
     fi
     sleep 2
 }
 
-remove_auto_update() {
+remove_autoupdate() {
     if command -v crontab >/dev/null 2>&1; then
         crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
     fi
     rm -f "$AUTO_UPDATE_SCRIPT"
-    echo -e "${GREEN}✓ 已移除 VLESS 自动更新任务${PLAIN}"
+    echo -e "${GREEN}[OK] 已移除 Proxy 自动更新任务${PLAIN}"
     sleep 2
 }
 
-# 在 read_config 失败后，逐字段定位无效原因（不输出密钥原值）。
-_diagnose_read_config_field_error() {
-    local _k _v _bad=""
-    [ -f "$VLESS_META/config.env" ] || return 0
-    while IFS='=' read -r _k _v; do
-        case "$_k" in
-            LISTEN_PORT)      validate_port "$_v"           || { _bad="LISTEN_PORT（值: '${_v}'）"; break; } ;;
-            EXT_PORT)         validate_port "$_v"           || { _bad="EXT_PORT（值: '${_v}'）"; break; } ;;
-            HANDSHAKE_PORT)   validate_port "$_v"           || { _bad="HANDSHAKE_PORT（值: '${_v}'）"; break; } ;;
-            SERVER_NAME)      validate_server_name "$_v"    || { _bad="SERVER_NAME（值: '${_v}'）"; break; } ;;
-            NAT_MODE)   case "$_v" in 0|1) ;; *) _bad="NAT_MODE（值: '${_v}'）"; break ;; esac ;;
-            BIND_FAMILY) case "$_v" in v4|v6) ;; *) _bad="BIND_FAMILY（值: '${_v}'）"; break ;; esac ;;
-            UUID)             validate_uuid "$_v"           || { _bad="UUID（值已隐藏）"; break; } ;;
-            REALITY_PRIVATE_KEY) validate_reality_key "$_v" || { _bad="REALITY_PRIVATE_KEY（值已隐藏）"; break; } ;;
-            REALITY_PUBLIC_KEY)  validate_reality_key "$_v" || { _bad="REALITY_PUBLIC_KEY（值已隐藏）"; break; } ;;
-            SHORT_ID)         validate_short_id "$_v"       || { _bad="SHORT_ID（值已隐藏）"; break; } ;;
-        esac
-    done < "$VLESS_META/config.env"
-    if [ -n "$_bad" ]; then
-        echo -e "  ${RED}✗ 元数据字段校验失败: ${_bad}${PLAIN}"
+enable_bbr() {
+    echo -e "\n${SKYBLUE}--- 一键开启 BBR ---${PLAIN}"
+
+    local _kver _kmaj _kmin
+    _kver=$(uname -r)
+    _kmaj=$(echo "$_kver" | cut -d. -f1)
+    _kmin=$(echo "$_kver" | cut -d. -f2)
+
+    echo -e "  当前内核: ${YELLOW}${_kver}${PLAIN}"
+
+    if [ "$_kmaj" -lt 4 ] || { [ "$_kmaj" -eq 4 ] && [ "$_kmin" -lt 9 ]; }; then
+        echo -e "${RED}内核版本过低（< 4.9），不支持 BBR，请升级内核后重试${PLAIN}"
+        sleep 3; return
+    fi
+
+    local _cur_cc
+    _cur_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    echo -e "  当前拥塞控制: ${YELLOW}${_cur_cc:-未知}${PLAIN}"
+
+    local _cc="bbr"
+    echo -e "${YELLOW}将启用标准 ${_cc} + fq 队列调度...${PLAIN}"
+    modprobe tcp_bbr 2>/dev/null || true
+
+    local _sysctl_conf="/etc/sysctl.d/99-proxy-bbr.conf"
+    cat > "$_sysctl_conf" <<EOF
+# HTTP/SOCKS Proxy 脚本写入 - 标准 BBR 优化
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = ${_cc}
+EOF
+
+    sysctl -p "$_sysctl_conf" >/dev/null 2>&1
+
+    local _result
+    _result=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    if [ "$_result" = "$_cc" ]; then
+        echo -e "${GREEN}[OK] 标准 BBR (${_cc}) 已成功启用${PLAIN}"
+        echo -e "${GREEN}[OK] 队列调度: $(sysctl -n net.core.default_qdisc 2>/dev/null)${PLAIN}"
+        echo -e "${GREEN}[OK] 配置已写入 ${_sysctl_conf}，重启后持续生效${PLAIN}"
     else
-        echo -e "  ${RED}✗ 配置或元数据校验失败（字段无法定位，建议重装）${PLAIN}"
+        echo -e "${RED}[FAIL] BBR 启用失败，请手动检查内核是否支持 tcp_bbr${PLAIN}"
     fi
+    sleep 3
 }
 
-get_default_egress_interface() {
-    get_native_egress_interface
-}
-
-show_vless_network_diagnostics() {
-    local _cc _qdisc _connections _stats _iface _link_stats _tc_stats
-    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
-    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
-    echo -e "  ${DIM}TCP 拥塞控制: ${_cc:-未知} | 默认队列: ${_qdisc:-未知}${PLAIN}"
-
-    if command -v ss >/dev/null 2>&1; then
-        _connections=$(ss -tn state established 2>/dev/null | awk -v port="$LISTEN_PORT" '
-            NR == 1 {
-                for (i = 1; i <= NF; i++) {
-                    if ($i == "Local") { local_column=i; break }
-                }
-                next
-            }
-            local_column > 0 && $local_column ~ ("(^|:|\\])" port "$") { count++ }
-            END { print count + 0 }
-        ')
-        echo -e "  ${DIM}当前 VLESS TCP 已建立连接: ${_connections:-0}${PLAIN}"
-    fi
-
-    if command -v nstat >/dev/null 2>&1; then
-        _stats=$(nstat -az 2>/dev/null | awk '
-            $1 == "TcpRetransSegs"      { retrans=$2 }
-            $1 == "TcpExtTCPTimeouts"   { timeouts=$2 }
-            $1 == "TcpExtTCPSynRetrans" { syn_retrans=$2 }
-            $1 == "IpInDiscards"        { in_discards=$2 }
-            $1 == "IpOutDiscards"       { out_discards=$2 }
-            END {
-                if (retrans == "") retrans=0
-                if (timeouts == "") timeouts=0
-                if (syn_retrans == "") syn_retrans=0
-                if (in_discards == "") in_discards=0
-                if (out_discards == "") out_discards=0
-                printf "%s %s %s %s %s", retrans, timeouts, syn_retrans, in_discards, out_discards
-            }
-        ')
-        set -- $_stats
-        echo -e "  ${DIM}内核累计 TCP: 重传 ${1:-0} | 超时 ${2:-0} | SYN 重传 ${3:-0}${PLAIN}"
-        echo -e "  ${DIM}内核累计 IP 丢弃: 入站 ${4:-0} | 出站 ${5:-0}${PLAIN}"
-    fi
-
-    _iface=$(get_default_egress_interface 2>/dev/null || true)
-    [ -n "$_iface" ] || return 0
-    if command -v ip >/dev/null 2>&1; then
-        _link_stats=$(ip -s link show dev "$_iface" 2>/dev/null | awk '
-            /^[[:space:]]*RX:/ { getline; rx_errors=$3; rx_dropped=$4 }
-            /^[[:space:]]*TX:/ { getline; tx_errors=$3; tx_dropped=$4 }
-            END {
-                if (rx_errors != "" || tx_errors != "")
-                    printf "RX errors=%d dropped=%d | TX errors=%d dropped=%d", rx_errors, rx_dropped, tx_errors, tx_dropped
-            }
-        ')
-        [ -z "$_link_stats" ] || echo -e "  ${DIM}网卡 ${_iface}: ${_link_stats}${PLAIN}"
-    fi
-    if command -v tc >/dev/null 2>&1; then
-        _tc_stats=$(tc -s qdisc show dev "$_iface" 2>/dev/null | awk '
-            NR == 1 && $1 == "qdisc" { qdisc=$2 }
-            {
-                for (i = 1; i <= NF; i++) {
-                    key=$i; gsub(/[^A-Za-z]/, "", key)
-                    if (key == "dropped") {
-                        value=$(i + 1); gsub(/[^0-9]/, "", value); drops += value
-                    }
-                }
-            }
-            END { if (qdisc != "") printf "%s | 累计丢弃 %d", qdisc, drops }
-        ')
-        [ -z "$_tc_stats" ] || echo -e "  ${DIM}活动队列 ${_iface}: ${_tc_stats}${PLAIN}"
-    fi
-}
-
-diagnose_vless() {
-    local _speed _v4_ok _v6_ok _domain_strategy
-    echo -e "\n${GREEN}VLESS 运行诊断${PLAIN}"
+diagnose_proxy() {
+    echo -e "\n${GREEN}HTTP/SOCKS Proxy 运行诊断${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    # --- 配置 / 元数据读取 ---
-    if [ ! -f "$VLESS_CONFIG" ] && [ ! -f "$VLESS_META/config.env" ]; then
-        echo -e "  ${RED}✗ 配置文件与元数据均缺失（安装未完成或已回滚）${PLAIN}"
-        echo -e "  ${DIM}提示: 回滚多由服务启动超时触发，重装可恢复。${PLAIN}"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-        return 1
-    elif [ ! -f "$VLESS_CONFIG" ]; then
-        echo -e "  ${RED}✗ 配置文件缺失: ${VLESS_CONFIG}${PLAIN}"
-        echo -e "  ${DIM}元数据存在，重装可恢复。${PLAIN}"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-        return 1
-    elif [ ! -f "$VLESS_META/config.env" ]; then
-        echo -e "  ${RED}✗ 元数据缺失: ${VLESS_META}/config.env${PLAIN}"
-        echo -e "  ${DIM}配置文件存在，重装可恢复。${PLAIN}"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-        return 1
-    elif ! read_config; then
-        _diagnose_read_config_field_error
+    if ! read_config; then
+        echo -e "  ${RED}[X] 配置或元数据缺失${PLAIN}"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
         return 1
     fi
-
     if check_config >/dev/null 2>&1; then
-        echo -e "  ${GREEN}✓ sing-box 配置有效${PLAIN}"
+        echo -e "  ${GREEN}[OK] sing-box 配置有效${PLAIN}"
     else
-        echo -e "  ${RED}✗ sing-box 配置无效${PLAIN}"
+        echo -e "  ${RED}[X] sing-box 配置无效${PLAIN}"
         check_config 2>&1 | sed 's/^/    /'
     fi
-    _domain_strategy=$(reality_domain_strategy)
-    if grep -q '"domain_resolver"' "$VLESS_CONFIG" 2>/dev/null && \
-        grep -q '"strategy": "'"${_domain_strategy}"'"' "$VLESS_CONFIG" 2>/dev/null; then
-        echo -e "  ${GREEN}✓ REALITY 握手地址族已限制为 ${_domain_strategy}${PLAIN}"
-    else
-        echo -e "  ${YELLOW}! 当前配置未限制 REALITY 握手地址族，修改配置并保存或重装后可补齐${PLAIN}"
-    fi
-    if validate_uuid "$UUID" && validate_reality_key "$REALITY_PRIVATE_KEY" && \
-        validate_reality_key "$REALITY_PUBLIC_KEY" && validate_short_id "$SHORT_ID"; then
-        echo -e "  ${GREEN}✓ UUID 与 REALITY 密钥元数据有效${PLAIN}"
-    else
-        echo -e "  ${RED}✗ UUID 或 REALITY 密钥元数据无效${PLAIN}"
-    fi
-
-    # --- 服务与监听 ---
     if service_is_active; then
-        echo -e "  ${GREEN}✓ VLESS 服务运行中${PLAIN}"
+        echo -e "  ${GREEN}[OK] Proxy 服务运行中${PLAIN}"
     else
-        echo -e "  ${RED}✗ VLESS 服务未运行${PLAIN}"
+        echo -e "  ${RED}[X] Proxy 服务未运行${PLAIN}"
     fi
     if command -v ss >/dev/null 2>&1 && ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE "(^|:|\])${LISTEN_PORT}$"; then
-        echo -e "  ${GREEN}✓ TCP ${LISTEN_PORT} 正在监听${PLAIN}"
+        echo -e "  ${GREEN}[OK] TCP ${LISTEN_PORT} 正在监听${PLAIN}"
     else
         echo -e "  ${YELLOW}! 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
     fi
-    echo -e "  ${DIM}监听地址: ${LISTEN_HOST}:${LISTEN_PORT} | 绑定: ${BIND_FAMILY} | NAT: ${NAT_MODE:-0}${PLAIN}"
-
-    # --- REALITY 握手目标可达性（分 IPv4 / IPv6）---
-    if reality_target_usable_v4 "$SERVER_NAME" "$HANDSHAKE_PORT"; then
-        _v4_ok="${GREEN}✓ 可达${PLAIN}"
-    else
-        _v4_ok="${RED}✗ 不可达${PLAIN}"
-    fi
-    if reality_target_usable_v6 "$SERVER_NAME" "$HANDSHAKE_PORT"; then
-        _v6_ok="${GREEN}✓ 可达${PLAIN}"
-    else
-        _v6_ok="${YELLOW}! 不可达${PLAIN}"
-    fi
-    echo -e "  REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT}  IPv4: ${_v4_ok}  IPv6: ${_v6_ok}"
-    echo -e "  ${DIM}若 IPv4 可达、IPv6 不可达属正常；若两者均不可达，客户端将无法完成握手。${PLAIN}"
-
-    # --- 外部测速源到 VPS 的入站下载与本机网络状态 ---
-    if _speed=$(probe_vps_download_mbps); then
-        echo -e "  ${GREEN}✓ 外部测速源 → VPS 入站下载探测: ${_speed} Mbps${PLAIN}"
-    else
-        echo -e "  ${YELLOW}! 外部测速源 → VPS 入站下载探测失败，可能是入站网络或测速站限制${PLAIN}"
-    fi
-    echo -e "  ${DIM}该探针不覆盖 VPS → 客户端方向，也不等价于代理端到端测速。${PLAIN}"
-    show_vless_network_diagnostics
-    echo -e "  ${DIM}说明: 累计计数需在复现前后对比；持续增长时再检查 MTU、宿主机和运营商路由。${PLAIN}"
+    echo -e "  用户名: ${YELLOW}${PROXY_USER}${PLAIN}"
+    [ -n "$BIND_INTERFACE" ] && echo -e "  出站网卡: ${YELLOW}${BIND_INTERFACE}${PLAIN}"
+    DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
+    [ -z "${PUBLIC_IP:-}" ] && PUBLIC_IP=$(cat "$PROXY_META/public_ip" 2>/dev/null || true)
+    check_egress_ip
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-}
-
-show_bbr_status() {
-    local _cc _qdisc _avail
-    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
-    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
-    _avail=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || true)
-    echo -e "\n${GREEN}BBR / TCP 队列状态${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    echo -e "  拥塞控制算法: ${YELLOW}${_cc:-未知}${PLAIN}"
-    echo -e "  默认队列算法: ${YELLOW}${_qdisc:-未知}${PLAIN}"
-    echo -e "  可用算法列表: ${SKYBLUE}${_avail:-未知}${PLAIN}"
-    if [ "$_cc" = "bbr" ] && [ "$_qdisc" = "fq" ]; then
-        echo -e "  标准 BBR 状态: ${GREEN}已启用 (bbr + fq)${PLAIN}"
-    elif [ "$_cc" = "bbr" ]; then
-        echo -e "  标准 BBR 状态: ${YELLOW}部分启用 (bbr / ${_qdisc:-未知})${PLAIN}"
-    else
-        echo -e "  标准 BBR 状态: ${RED}未启用${PLAIN}"
-    fi
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-}
-
-enable_standard_bbr() {
-    local _kver _kmaj _kmin _old_cc _old_qdisc _cc _qdisc _confirm
-    local _dir _tmp _backup="" _rollback_ok=1
-    echo -e "\n${GREEN}开启标准 BBR + fq${PLAIN}"
-    echo -e "${DIM}仅手动启用，不会在安装 VLESS 时自动修改系统 TCP 参数。${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-
-    _kver=$(uname -r 2>/dev/null || printf '0.0')
-    _kmaj=$(printf '%s' "$_kver" | cut -d. -f1)
-    _kmin=$(printf '%s' "$_kver" | cut -d. -f2)
-    case "$_kmaj" in ''|*[!0-9]*) _kmaj=0 ;; esac
-    case "$_kmin" in ''|*[!0-9]*) _kmin=0 ;; esac
-    echo -e "  当前内核: ${YELLOW}${_kver}${PLAIN}"
-    if [ "$_kmaj" -lt 4 ] || { [ "$_kmaj" -eq 4 ] && [ "$_kmin" -lt 9 ]; }; then
-        echo -e "${RED}内核版本低于 4.9，不支持标准 BBR。${PLAIN}"
-        return 1
-    fi
-
-    _old_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
-    _old_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
-    if [ "$_old_cc" = "bbr" ] && [ "$_old_qdisc" = "fq" ]; then
-        echo -e "${GREEN}标准 BBR + fq 已启用，无需重复设置。${PLAIN}"
-        return 0
-    fi
-
-    read -r -p "确认开启标准 BBR + fq？[y/N]: " _confirm
-    case "$_confirm" in
-        [yY]) ;;
-        *) echo -e "${YELLOW}已取消。${PLAIN}"; return 1 ;;
-    esac
-
-    modprobe tcp_bbr 2>/dev/null || true
-    _dir=$(dirname "$BBR_SYSCTL_CONF")
-    mkdir -p "$_dir" 2>/dev/null || {
-        echo -e "${RED}无法创建 sysctl 配置目录: ${_dir}${PLAIN}"
-        return 1
-    }
-    _tmp=$(mktemp "${BBR_SYSCTL_CONF}.new.XXXXXX" 2>/dev/null) || {
-        echo -e "${RED}无法创建 BBR 临时配置${PLAIN}"
-        return 1
-    }
-    if [ -f "$BBR_SYSCTL_CONF" ]; then
-        _backup=$(mktemp "${BBR_SYSCTL_CONF}.bak.XXXXXX" 2>/dev/null) || {
-            rm -f "$_tmp"
-            echo -e "${RED}无法备份现有 BBR 配置${PLAIN}"
-            return 1
-        }
-        cp -p "$BBR_SYSCTL_CONF" "$_backup" || {
-            rm -f "$_tmp" "$_backup"
-            echo -e "${RED}无法备份现有 BBR 配置${PLAIN}"
-            return 1
-        }
-    fi
-    if ! cat > "$_tmp" <<EOF
-# Sing-box Multi-Protocol Tools - standard BBR tuning
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-EOF
-    then
-        rm -f "$_tmp" "$_backup"
-        echo -e "${RED}无法写入 BBR 配置${PLAIN}"
-        return 1
-    fi
-    chmod 644 "$_tmp" && mv -f "$_tmp" "$BBR_SYSCTL_CONF" || {
-        rm -f "$_tmp" "$_backup"
-        echo -e "${RED}无法安装 BBR 配置${PLAIN}"
-        return 1
-    }
-
-    sysctl -p "$BBR_SYSCTL_CONF" >/dev/null 2>&1 || true
-    _cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)
-    _qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || true)
-    if [ "$_cc" = "bbr" ] && [ "$_qdisc" = "fq" ]; then
-        rm -f "$_backup"
-        echo -e "${GREEN}✓ 标准 BBR + fq 已启用，配置写入 ${BBR_SYSCTL_CONF}${PLAIN}"
-        return 0
-    fi
-
-    if [ -n "$_backup" ] && [ -f "$_backup" ]; then
-        mv -f "$_backup" "$BBR_SYSCTL_CONF" 2>/dev/null || _rollback_ok=0
-    else
-        rm -f "$BBR_SYSCTL_CONF" || _rollback_ok=0
-    fi
-    [ -z "$_old_qdisc" ] || sysctl -w "net.core.default_qdisc=${_old_qdisc}" >/dev/null 2>&1 || _rollback_ok=0
-    [ -z "$_old_cc" ] || sysctl -w "net.ipv4.tcp_congestion_control=${_old_cc}" >/dev/null 2>&1 || _rollback_ok=0
-    if [ "$_rollback_ok" = "1" ]; then
-        echo -e "${RED}BBR + fq 未完整生效，已恢复修改前的配置与实时参数。${PLAIN}"
-    else
-        echo -e "${RED}BBR + fq 未完整生效，且自动恢复不完整，请检查 ${BBR_SYSCTL_CONF} 与当前 sysctl。${PLAIN}"
-    fi
-    return 1
 }
 
 show_system_info() {
@@ -2710,7 +2183,7 @@ show_system_info() {
     echo -e " 主机名: $(hostname 2>/dev/null)"
     echo -e " 内核  : $(uname -r)"
     echo -e " 架构  : $(uname -m)"
-    [ -x "$SING_BOX_BIN" ] && echo -e " 核心  : $("$SING_BOX_BIN" version 2>/dev/null | head -1)"
+    [ -x "$SING_BOX_BIN" ] && echo -e " 核心  : $("$SING_BOX_BIN" version 2>/dev/null | awk 'NR==1 { print; exit }')"
     echo -e " 内存  : $(awk '/MemAvailable/ {printf "%.0f MB available", $2/1024}' /proc/meminfo 2>/dev/null)"
     echo -e " 磁盘  : $(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')"
     echo -e " 负载  : $(uptime 2>/dev/null | awk -F'load average:' '{print $2}' | xargs)"
@@ -2726,15 +2199,15 @@ server_tools_menu() {
             _auto_status="${GREEN}已启用${PLAIN}"
         fi
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  VLESS 工具箱${PLAIN}"
+        echo -e "${GREEN}  HTTP/SOCKS Proxy 工具箱${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 自动更新: ${_auto_status}"
         echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
         echo -e " 1. 查看系统信息"
-        echo -e " 2. 查看 VLESS 日志"
+        echo -e " 2. 查看 Proxy 日志"
         echo -e " 3. 运行状态诊断"
-        echo -e " 4. 查看 BBR / TCP 队列状态"
-        echo -e " 5. 开启标准 BBR + fq"
+        echo -e " 4. 出站 IP 自检"
+        echo -e " 5. 开启 BBR"
         echo -e " 6. 设置每周自动更新"
         echo -e " 7. 移除自动更新"
         echo -e " 0. 返回"
@@ -2742,20 +2215,26 @@ server_tools_menu() {
         case "$choice" in
             1) show_system_info ;;
             2) service_logs; read -r -p "按回车返回..." _tmp ;;
-            3) diagnose_vless; read -r -p "按回车返回..." _tmp ;;
-            4) show_bbr_status; read -r -p "按回车返回..." _tmp ;;
-            5) enable_standard_bbr; read -r -p "按回车返回..." _tmp ;;
-            6) setup_auto_update ;;
-            7) remove_auto_update ;;
+            3) diagnose_proxy; read -r -p "按回车返回..." _tmp ;;
+            4)
+                read_config_live 2>/dev/null || true
+                DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
+                [ -z "${BIND_INTERFACE:-}" ] && BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
+                check_egress_ip
+                read -r -p "按回车返回..." _tmp
+                ;;
+            5) enable_bbr ;;
+            6) setup_autoupdate ;;
+            7) remove_autoupdate ;;
             0|q|quit|exit) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
     done
 }
 
-manage_vless() {
-    if [ ! -f "$VLESS_CONFIG" ] || [ ! -x "$VLESS_BIN" ]; then
-        echo -e "${RED}VLESS 尚未安装，请先执行安装${PLAIN}"
+manage_proxy() {
+    if [ ! -f "$PROXY_CONFIG" ] || [ ! -x "$PROXY_BIN" ]; then
+        echo -e "${RED}HTTP/SOCKS Proxy 尚未安装，请先执行安装${PLAIN}"
         sleep 2
         return
     fi
@@ -2765,43 +2244,43 @@ manage_vless() {
         service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  VLESS 服务管理${PLAIN}"
+        echo -e "${GREEN}  HTTP/SOCKS Proxy 服务管理${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 当前状态: ${STATUS}"
         echo -e " 1. 启动"
         echo -e " 2. 停止"
         echo -e " 3. 重启"
         echo -e " 4. 查看日志"
-        echo -e " 5. 修改配置"
-        echo -e " 6. 运行状态与速度诊断"
+        echo -e " 5. 修改端口"
+        echo -e " 6. 修改用户名/密码"
         echo -e " 0. 返回"
         read -r -p "请输入选项 [0-6]: " choice
         case "$choice" in
             1)
-                if service_start && wait_for_health 6; then
-                    echo -e "${GREEN}✓ VLESS 已启动${PLAIN}"
+                if service_start && sleep 1 && service_is_active; then
+                    echo -e "${GREEN}[OK] Proxy 已启动${PLAIN}"
                 else
-                    echo -e "${RED}✗ 启动失败，请查看日志${PLAIN}"
+                    echo -e "${RED}[FAIL] 启动失败，请查看日志${PLAIN}"
                 fi
                 sleep 1
                 ;;
             2)
                 service_stop
                 sleep 1
-                service_is_active && echo -e "${RED}✗ 服务仍在运行${PLAIN}" || echo -e "${GREEN}✓ VLESS 已停止${PLAIN}"
+                service_is_active && echo -e "${RED}[FAIL] 服务仍在运行${PLAIN}" || echo -e "${GREEN}[OK] Proxy 已停止${PLAIN}"
                 sleep 1
                 ;;
             3)
-                if service_restart && wait_for_health 6; then
-                    echo -e "${GREEN}✓ VLESS 已重启${PLAIN}"
+                if service_restart && sleep 1 && service_is_active; then
+                    echo -e "${GREEN}[OK] Proxy 已重启${PLAIN}"
                 else
-                    echo -e "${RED}✗ 重启失败，请查看日志${PLAIN}"
+                    echo -e "${RED}[FAIL] 重启失败，请查看日志${PLAIN}"
                 fi
                 sleep 1
                 ;;
             4) service_logs; read -r -p "按回车返回..." _tmp ;;
-            5) change_config ;;
-            6) diagnose_vless; read -r -p "按回车返回..." _tmp ;;
+            5) change_port ;;
+            6) change_credentials ;;
             0|q|quit|exit) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -2815,9 +2294,9 @@ main_menu() {
     while true; do
         clear_screen
         local STATUS _ver_line
-        if [ -f "$VLESS_CONFIG" ] && [ -x "$VLESS_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
+        if [ -f "$PROXY_CONFIG" ] && [ -x "$PROXY_BIN" ] && [ -x "$SING_BOX_BIN" ]; then
             service_is_active && STATUS="${GREEN}运行中${PLAIN}" || STATUS="${RED}已停止${PLAIN}"
-        elif [ -e "$VLESS_CONFIG" ] || [ -e "$VLESS_BIN" ]; then
+        elif [ -e "$PROXY_CONFIG" ] || [ -e "$PROXY_BIN" ]; then
             STATUS="${YELLOW}安装不完整${PLAIN}"
         else
             STATUS="${RED}未安装${PLAIN}"
@@ -2828,12 +2307,12 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.24${PLAIN}"
-        echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.24${PLAIN}"
+        echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e "  作者    : ${YELLOW}everettlabs${PLAIN}"
-        echo -e "  实现    : ${YELLOW}sing-box 原生 VLESS 入站${PLAIN}"
+        echo -e "  实现    : ${YELLOW}sing-box 原生 mixed 入站 (HTTP+SOCKS5)${PLAIN}"
         echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
         echo -e "  Seedloc博客 : https://seedloc.com"
         echo -e "  VPSknow网站 : https://vpsknow.com"
@@ -2841,22 +2320,22 @@ main_menu() {
         echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
         echo -e "  当前状态: $STATUS${_ver_line}"
         echo -e "${SKYBLUE}------------------------------------------------${PLAIN}"
-        echo -e " 1. 安装 / 重装 VLESS"
+        echo -e " 1. 安装 / 重装 HTTP/SOCKS Proxy"
         echo -e " 2. 查看节点信息 / 链接"
-        echo -e " 3. 管理 VLESS（启动 / 停止 / 重启 / 日志 / 修改）"
+        echo -e " 3. 管理服务（启动 / 停止 / 重启 / 改端口 / 改凭据）"
         echo -e " 4. 升级 sing-box"
-        echo -e " 5. 卸载 VLESS"
+        echo -e " 5. 卸载 HTTP/SOCKS Proxy"
         echo -e " 6. 服务器工具"
         echo -e " 0. 退出"
         echo -e "${SKYBLUE}================================================${PLAIN}"
 
         read -r -p "请输入选项 [0-6]: " choice
         case "$choice" in
-            1) install_vless ;;
+            1) install_proxy ;;
             2) show_config ;;
-            3) manage_vless ;;
-            4) upgrade_vless ;;
-            5) uninstall_vless ;;
+            3) manage_proxy ;;
+            4) upgrade_proxy ;;
+            5) uninstall_proxy ;;
             6) server_tools_menu ;;
             0|q|quit|exit) exit 0 ;;
             *) echo -e "${RED}无效选项，请输入 0-6${PLAIN}"; sleep 1 ;;
@@ -2875,31 +2354,27 @@ if [ "${1:-}" = "--upgrade-noninteractive" ]; then
 fi
 
 # ============================================================
-# 入口（VLESS_LIB_ONLY=1 时跳过）
+# 入口（PROXY_LIB_ONLY=1 时跳过）
 # ============================================================
-[ "$_VLESS_LIB_ONLY" = "1" ] && return 0
+[ "$_PROXY_LIB_ONLY" = "1" ] && return 0
 
 check_root
 check_sys
 detect_init
 case "${1:-menu}" in
-    install) install_vless ;;
+    install) install_proxy ;;
     info|node|export|all) show_config ;;
     uri|link) show_config uri ;;
     mihomo|clash) show_config mihomo ;;
-    surfboard) show_config surfboard ;;
-    shadowrocket) show_config shadowrocket ;;
-    loon) show_config loon ;;
-    quantumult|quantumultx) show_config quantumult ;;
     qrcode|qr) show_config qrcode ;;
-    manage|service|config) manage_vless ;;
-    diagnose|check|health) diagnose_vless ;;
-    upgrade|update) upgrade_vless ;;
-    uninstall|remove) uninstall_vless ;;
+    manage|service|config) manage_proxy ;;
+    upgrade|update) upgrade_proxy ;;
+    uninstall|remove) uninstall_proxy ;;
+    diagnose) diagnose_proxy ;;
     menu|"") main_menu ;;
     *)
         echo -e "${RED}未知命令: ${1}${PLAIN}"
-        echo "可用命令: install | info | manage | diagnose | upgrade | uninstall"
+        echo "可用命令: install | info | uri | mihomo | manage | upgrade | uninstall | diagnose | menu"
         exit 1
         ;;
 esac

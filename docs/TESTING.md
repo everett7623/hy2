@@ -6,6 +6,8 @@
 
 同一入口还会执行 `tests/validate_vless.sh`。该测试会 source `vless.sh`，验证 UUID、REALITY 密钥与 short ID 校验、IPv6 URI、Mihomo/Loon/Quantumult X 输出、JSON/元数据往返、wrapper、systemd/OpenRC 单元、共享核心配置预检和卸载所有权。
 
+同一入口还会执行 `tests/validate_proxy.sh`。该测试会 source `proxy.sh`，验证端口/用户名/密码校验、mixed 入站 JSON、`bind_interface` 出站、wrapper、systemd/OpenRC 单元名 `proxy-server`，以及在无真实 sing-box 时对 `check_config` 的 mock 行为。
+
 本机已有真实 sing-box 时，可额外校验测试生成的 VLESS JSON：
 
 ```bash

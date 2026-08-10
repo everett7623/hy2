@@ -4,9 +4,9 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh"
+SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.23"
+EXPECTED_VERSION="v2.0.24"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -65,6 +65,13 @@ for script in $SCRIPTS; do
             grep -q '"reality": {' "$script"
             grep -q 'VLESS_LIB_ONLY' "$script"
             ;;
+        proxy.sh)
+            grep -q "# 版本：${EXPECTED_VERSION}" "$script"
+            grep -q "HTTP/SOCKS Proxy Management Script.*${EXPECTED_VERSION}" "$script"
+            grep -q 'github.com/SagerNet/sing-box/releases/download' "$script"
+            grep -q '"type": "mixed"' "$script"
+            grep -q 'PROXY_LIB_ONLY' "$script"
+            ;;
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
             ;;
@@ -76,7 +83,7 @@ for script in $SCRIPTS; do
     fi
 done
 
-for script in hy2.sh ss.sh anytls.sh vless.sh; do
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     tmp=$(mktemp)
     awk '
         /cat > "\$AUTO_UPDATE_SCRIPT" <<'\''AUTOUPDATE_EOF'\''/ {
@@ -104,15 +111,16 @@ grep -q "^> 当前版本：${EXPECTED_VERSION}" README.md
 grep -q "^## ${EXPECTED_VERSION} " CHANGELOG.md
 grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' anytls.sh
 grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' vless.sh
+grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' proxy.sh
 ! grep -q 'upgrade_core || true' anytls.sh vless.sh
 grep -q '^shared_vless_service_restart()' anytls.sh
 grep -q '^shared_anytls_service_restart()' vless.sh
-! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
-! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
-! grep -R -qE '"strategy": "ipv4_only"|"strict_route": true|"ip_version": 6|tls_certificate_public_key_sha256' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
-! grep -R -q 'Path to each client configuration file' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh README.md CHANGELOG.md
-! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh README.md CHANGELOG.md
-! grep -R -qE 'Throne URI|export_throne|render_throne|export_singbox|render_singbox|print_singbox_template_note' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh install.sh
+! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh
+! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh
+! grep -R -qE '"strategy": "ipv4_only"|"strict_route": true|"ip_version": 6|tls_certificate_public_key_sha256' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh
+! grep -R -q 'Path to each client configuration file' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh README.md CHANGELOG.md
+! grep -R -q 'sing-box-examples/tree/main/Tun' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh README.md CHANGELOG.md
+! grep -R -qE 'Throne URI|export_throne|render_throne|export_singbox|render_singbox|print_singbox_template_note' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh install.sh
 ! grep -R -qE 'Sing-box JSON 配置|完整 Sing-box/SFA TUN|Sing-box 输出说明|SFA / SFM / SFI' install.sh
 ! grep -qE 'sing-box core|进程替换运行|无法原地更新|更新 install\.sh 主入口' install.sh
 grep -q '刷新 install.sh 主入口缓存' install.sh
@@ -163,9 +171,9 @@ grep -q '^install_shortcut_command()' install.sh
 grep -q '_tmp=$(make_temp_file)' install.sh
 grep -q 'install_shortcut_command || true' install.sh
 grep -q '快捷命令: .*sb' install.sh
-! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls|vless)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
-! grep -R -qE '(^|[[:space:]])clea$|show_banne$|_numbe$|_manual_add$|_new_ve$|_url_mirro$|_uptime_st$|_tmp_di$|tcp_congestion_control = bb$' hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh
-for script in hy2.sh ss.sh anytls.sh vless.sh euservhy2.sh; do
+! grep -R -qE 'systemctl (start|restart|is-active --quiet) (hysteria|shadowsocks|anytls|vless|proxy)-serve$|--no-page$|write_wrappe$' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh
+! grep -R -qE '(^|[[:space:]])clea$|show_banne$|_numbe$|_manual_add$|_new_ve$|_url_mirro$|_uptime_st$|_tmp_di$|tcp_congestion_control = bb$' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh; do
     grep -q "printf '%s %s | %s | %s | %s'" "$script"
     grep -q '^get_country_flag()' "$script"
     grep -q '^yaml_single_quote_escape()' "$script"
@@ -214,10 +222,10 @@ grep -q 'echo -e "  \[2\] 升级 VLESS 核心"' install.sh
 grep -q '2) run_upgrade_action "VLESS" "$VLESS_URL"' install.sh
 grep -q 'echo -e "  \[1\] 卸载 VLESS"' install.sh
 grep -q '1) run_uninstall_action "VLESS" "$VLESS_URL"' install.sh
-for script in hy2.sh ss.sh anytls.sh vless.sh; do
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q '^generate_random_port()' "$script"
 done
-! grep -qE '默认 (18888|28888|38888|48888)' hy2.sh ss.sh anytls.sh vless.sh
+! grep -qE '默认 (18888|28888|38888|48888)' hy2.sh ss.sh anytls.sh vless.sh proxy.sh
 grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
 grep -q 'vless-server:start) nohup /usr/local/bin/vless-server' install.sh
 grep -q 'vless-server:stop)' install.sh
@@ -241,6 +249,12 @@ grep -q 'qrcode|qr) show_config qrcode' anytls.sh
 grep -q 'install) install_vless' vless.sh
 grep -q 'info|node|export|all) show_config' vless.sh
 grep -q 'qrcode|qr) show_config qrcode' vless.sh
+grep -q 'install) install_proxy' proxy.sh
+grep -q 'info|node|export|all) show_config' proxy.sh
+grep -q 'qrcode|qr) show_config qrcode' proxy.sh
+grep -q 'PROXY_URL="${BASE_URL}/proxy.sh"' install.sh
+grep -q 'HTTP/SOCKS' install.sh
+grep -q 'proxy-server' install.sh
 grep -q 'diagnose|check|health) diagnose_vless' vless.sh
 grep -q '6. 运行状态与速度诊断' vless.sh
 grep -q 'install) do_install' euservhy2.sh
@@ -260,6 +274,7 @@ done
 
 bash tests/validate_anytls.sh
 bash tests/validate_vless.sh
+bash tests/validate_proxy.sh
 bash tests/validate_hy2_network.sh
 bash tests/validate_ss_network.sh
 
