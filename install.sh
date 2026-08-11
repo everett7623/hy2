@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.27
+# 版本：v2.0.28
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -392,7 +392,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.27${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.28${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -418,7 +418,10 @@ show_status_summary() {
 }
 
 select_protocol_and_run() {
-    local _title="$1" _action="${2:-}"
+    local _title="$1" _action="${2:-}" _show_proxy=1 _range="0-6"
+    case "$_action" in
+        mihomo|clash|surfboard|shadowrocket|loon|quantumult|quantumultx) _show_proxy=0; _range="0-5" ;;
+    esac
     while true; do
         show_header
         echo -e "${WHITE}${BOLD}${_title}${PLAIN}"
@@ -427,18 +430,35 @@ select_protocol_and_run() {
         echo -e "  [2] AnyTLS"
         echo -e "  [3] Hysteria2"
         echo -e "  [4] Shadowsocks"
-        echo -e "  [5] HTTP/SOCKS 代理"
-        echo -e "  [6] EUserv IPv6-only HY2"
+        if [ "$_show_proxy" = "1" ]; then
+            echo -e "  [5] HTTP/SOCKS 代理"
+            echo -e "  [6] EUserv IPv6-only HY2"
+        else
+            echo -e "  [5] EUserv IPv6-only HY2"
+            echo -e "  ${DIM}（HTTP/SOCKS 仅支持 URI / 二维码导出）${PLAIN}"
+        fi
         echo -e "  [0] 返回"
         echo ""
-        read -r -p "  请选择协议 [0-6]: " p
+        read -r -p "  请选择协议 [${_range}]: " p
         case "$p" in
             1) run_script "VLESS" "$VLESS_URL" "$_action"; return ;;
             2) run_script "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
             3) run_script "Hysteria2" "$HY2_URL" "$_action"; return ;;
             4) run_script "Shadowsocks" "$SS_URL" "$_action"; return ;;
-            5) run_script "HTTP/SOCKS" "$PROXY_URL" "$_action"; return ;;
-            6) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
+            5)
+                if [ "$_show_proxy" = "1" ]; then
+                    run_script "HTTP/SOCKS" "$PROXY_URL" "$_action"
+                else
+                    run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"
+                fi
+                return
+                ;;
+            6)
+                if [ "$_show_proxy" = "1" ]; then
+                    run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return
+                fi
+                echo -e "${RED}无效选项${PLAIN}"; sleep 1
+                ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -467,6 +487,8 @@ export_config_menu() {
         echo -e "  [6] Quantumult X 配置"
         echo -e "  [7] 全部输出"
         echo -e "  [0] 返回"
+        echo ""
+        echo -e "  ${DIM}提示: HTTP/SOCKS 仅支持 [1] URI 与二维码菜单；选 [2]-[6] 时不会列出该协议。${PLAIN}"
         echo ""
         read -r -p "  请选择导出格式 [0-7]: " fmt
         case "$fmt" in
@@ -747,7 +769,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.27" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.28" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 

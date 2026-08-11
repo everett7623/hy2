@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.28 (2026-08-11)
+
+- VLESS diagnose now treats REALITY handshake targets unreachable under the active address-family strategy as critical, and can auto re-select a reachable target.
+- VLESS config edit accepts `auto` to re-pick REALITY SNI; Mihomo export adds `packet-encoding: xudp` for Vision UDP.
+- Strengthen VLESS dual-stack / DNS client tips; hide HTTP/SOCKS from non-URI export formats in `install.sh`.
+- HTTP/SOCKS diagnose adds local HTTP proxy egress smoke check; remove obsolete `AGENTS.md` from architecture tree.
+
+---
+
 ## v2.0.27 (2026-08-11)
 
 - HTTP/SOCKS client export keeps only HTTP URI, SOCKS5 URI, and SOCKS5 terminal QR code; remove Mihomo single-line exports for this protocol.

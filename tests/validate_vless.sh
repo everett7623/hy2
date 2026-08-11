@@ -146,6 +146,7 @@ mihomo=$(export_mihomo_vless 192.0.2.1 8443 "VLESS Test")
 echo "$mihomo" | grep -q "type: vless"
 echo "$mihomo" | grep -q "uuid: '$TEST_UUID'"
 echo "$mihomo" | grep -q "flow: xtls-rprx-vision"
+echo "$mihomo" | grep -q "packet-encoding: xudp"
 echo "$mihomo" | grep -q "public-key: '$TEST_PUBLIC_KEY'"
 echo "$mihomo" | grep -q "short-id: '$TEST_SHORT_ID'"
 loon=$(export_loon_vless 192.0.2.1 8443 "VLESS Test")

@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.27
+# 版本：v2.0.28
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -624,9 +624,10 @@ warn_streaming_egress() {
         echo -e "${RED}        流媒体（如 Netflix）可能提示 proxy/VPN；已尽量绑定原生网卡出站。${PLAIN}"
     fi
     if [ -n "${PUBLIC_IP:-}" ] && [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点，并确保客户端 DNS 走代理。${PLAIN}"
-    elif [ -n "${PUBLIC_IP:-}" ] || [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo -e "${YELLOW}提示: 流媒体请确保客户端 DNS 走代理。${PLAIN}"
+        echo -e "${YELLOW}提示: 流媒体/解锁请优先使用 IPv4 节点；IPv6 节点不等于更好解锁。${PLAIN}"
+    fi
+    if [ -n "${PUBLIC_IP:-}" ] || [ -n "${PUBLIC_IPV6:-}" ]; then
+        echo -e "${YELLOW}提示: 客户端 DNS 须经本节点（Mihomo nameserver 使用 #节点名 detour，或开启 fake-ip）。${PLAIN}"
     fi
     if [ -n "${BIND_INTERFACE:-}" ]; then
         echo -e "出站网卡 : ${GREEN}${BIND_INTERFACE}${PLAIN}"
@@ -1998,8 +1999,18 @@ change_config() {
         UUID="$_uuid"
     fi
 
-    read -r -p "REALITY 目标域名/SNI [当前 ${SERVER_NAME}]: " _sni
-    if [ -n "$_sni" ]; then
+    read -r -p "REALITY 目标域名/SNI [当前 ${SERVER_NAME}，输入 auto 自动重选]: " _sni
+    if [ "$_sni" = "auto" ] || [ "$_sni" = "AUTO" ]; then
+        echo -e "${YELLOW}正在按 $(reality_domain_strategy) 策略重选 REALITY 目标...${PLAIN}"
+        if _sni=$(select_reality_target "$HANDSHAKE_PORT"); then
+            SERVER_NAME="$_sni"
+            echo -e "${GREEN}✓ 已选择 REALITY 目标: ${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
+        else
+            echo -e "${RED}自动重选失败，已保留原目标 ${SERVER_NAME}${PLAIN}"
+            sleep 2
+            return
+        fi
+    elif [ -n "$_sni" ]; then
         validate_server_name "$_sni" || { echo -e "${RED}目标域名格式无效${PLAIN}"; sleep 2; return; }
         SERVER_NAME="$_sni"
     fi
@@ -2009,7 +2020,7 @@ change_config() {
         validate_port "$_handshake_port" || { echo -e "${RED}目标端口无效${PLAIN}"; sleep 2; return; }
         HANDSHAKE_PORT="$_handshake_port"
     fi
-    if [ -n "${_sni}${_handshake_port}" ]; then
+    if [ -n "${_sni}${_handshake_port}" ] && [ "$_sni" != "auto" ] && [ "$_sni" != "AUTO" ]; then
         echo -e "${YELLOW}正在验证 REALITY 目标...${PLAIN}"
         reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT" \
             && echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}" \
@@ -2090,7 +2101,7 @@ export_mihomo_vless() {
     _yaml_server=$(format_server_for_yaml "$_server")
     _safe_node=$(yaml_single_quote_escape "$_node")
     _sni=$(yaml_single_quote_escape "$SERVER_NAME")
-    printf '%s' "- {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: '${UUID}', network: tcp, udp: true, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: '${REALITY_PUBLIC_KEY}', short-id: '${SHORT_ID}'}}"
+    printf '%s' "- {name: '${_safe_node}', type: vless, server: ${_yaml_server}, port: ${_port}, uuid: '${UUID}', network: tcp, udp: true, packet-encoding: xudp, tls: true, servername: '${_sni}', flow: xtls-rprx-vision, client-fingerprint: chrome, reality-opts: {public-key: '${REALITY_PUBLIC_KEY}', short-id: '${SHORT_ID}'}}"
 }
 
 export_loon_vless() {
@@ -2619,19 +2630,53 @@ diagnose_vless() {
     fi
     echo -e "  ${DIM}监听地址: ${LISTEN_HOST}:${LISTEN_PORT} | 绑定: ${BIND_FAMILY} | NAT: ${NAT_MODE:-0}${PLAIN}"
 
-    # --- REALITY 握手目标可达性（分 IPv4 / IPv6）---
+    # --- REALITY 握手目标可达性（按当前地址族策略判定）---
+    local _v4_reachable=0 _v6_reachable=0 _handshake_critical=0 _confirm _new_sni _was_active=0
     if reality_target_usable_v4 "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         _v4_ok="${GREEN}✓ 可达${PLAIN}"
+        _v4_reachable=1
     else
         _v4_ok="${RED}✗ 不可达${PLAIN}"
     fi
     if reality_target_usable_v6 "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         _v6_ok="${GREEN}✓ 可达${PLAIN}"
+        _v6_reachable=1
     else
         _v6_ok="${YELLOW}! 不可达${PLAIN}"
     fi
     echo -e "  REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT}  IPv4: ${_v4_ok}  IPv6: ${_v6_ok}"
-    echo -e "  ${DIM}若 IPv4 可达、IPv6 不可达属正常；若两者均不可达，客户端将无法完成握手。${PLAIN}"
+    echo -e "  ${DIM}当前握手策略: ${_domain_strategy}${PLAIN}"
+    case "$_domain_strategy" in
+        ipv4_only) [ "$_v4_reachable" = "0" ] && _handshake_critical=1 ;;
+        ipv6_only) [ "$_v6_reachable" = "0" ] && _handshake_critical=1 ;;
+        *)
+            [ "$_v4_reachable" = "0" ] && [ "$_v6_reachable" = "0" ] && _handshake_critical=1
+            ;;
+    esac
+    if [ "$_handshake_critical" = "1" ]; then
+        echo -e "  ${RED}✗ 关键: 在 ${_domain_strategy} 策略下，当前 REALITY 目标对握手地址族不可达，客户端将无法完成握手。${PLAIN}"
+        echo -e "  ${DIM}建议: 更换 SNI/端口，或下方选择自动重选可达目标。${PLAIN}"
+        read -r -p "是否自动重选 REALITY 目标并写回配置？[y/N]: " _confirm
+        case "$_confirm" in
+            [yY])
+                echo -e "${YELLOW}正在按 ${_domain_strategy} 策略重选 REALITY 目标...${PLAIN}"
+                if _new_sni=$(select_reality_target "$HANDSHAKE_PORT"); then
+                    SERVER_NAME="$_new_sni"
+                    service_is_active && _was_active=1 || true
+                    if write_config && check_config; then
+                        [ "$_was_active" = "0" ] || service_restart || true
+                        echo -e "  ${GREEN}✓ 已更新 REALITY 目标为 ${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
+                    else
+                        echo -e "  ${RED}✗ 写回配置失败，请手动修改配置${PLAIN}"
+                    fi
+                else
+                    echo -e "  ${RED}✗ 自动重选失败，请手动指定可达域名${PLAIN}"
+                fi
+                ;;
+        esac
+    else
+        echo -e "  ${DIM}若策略地址族可达即可；另一地址族不可达通常不影响握手。${PLAIN}"
+    fi
 
     # --- 外部测速源到 VPS 的入站下载与本机网络状态 ---
     if _speed=$(probe_vps_download_mbps); then
@@ -2882,7 +2927,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.27${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.28${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

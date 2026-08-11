@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.27（2026-08-11） · 本次更新：HTTP/SOCKS 仅保留 HTTP URI、SOCKS5 URI 与 SOCKS 二维码，移除 Mihomo 单行导出。
+> 当前版本：v2.0.28（2026-08-11） · 本次更新：VLESS REALITY 诊断按地址族策略判定并支持重选目标；Mihomo 增加 xudp；导出菜单隐藏 HTTP/SOCKS 非 URI 格式。
 
 ## 目录
 

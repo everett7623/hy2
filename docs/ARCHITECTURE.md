@@ -141,7 +141,6 @@ sing-box-multi-protocol-tools/  # 仓库 slug 仍为 hy2，raw URL 不变
 ├── CONTRIBUTING.md     # 贡献与开发流程
 ├── README.md           # 项目说明
 ├── CLAUDE.md           # AI 开发助手统一指引（适用于 Claude、Cursor、Copilot、Windsurf 等）
-├── AGENTS.md           # AI Agent 指引（已废弃，内容已合并到 CLAUDE.md）
 ├── .cursorrules        # Cursor 配置文件（引用 CLAUDE.md）
 ├── .windsurfrules      # Windsurf 配置文件（引用 CLAUDE.md）
 ├── .github/copilot-instructions.md  # GitHub Copilot 配置（引用 CLAUDE.md）

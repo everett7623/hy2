@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.27
+# 版本：v2.0.28
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -2160,6 +2160,22 @@ diagnose_proxy() {
     DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
     [ -z "${PUBLIC_IP:-}" ] && PUBLIC_IP=$(cat "$PROXY_META/public_ip" 2>/dev/null || true)
     check_egress_ip
+
+    # 本机 HTTP 代理连通自检（仅当服务已监听）
+    if service_is_active && command -v curl >/dev/null 2>&1; then
+        local _probe_ip=""
+        _probe_ip=$(curl -sS --connect-timeout 4 --max-time 8 \
+            -x "http://${PROXY_USER}:${PROXY_PASS}@127.0.0.1:${LISTEN_PORT}" \
+            https://api.ipify.org 2>/dev/null | tr -d '[:space:]') || true
+        if is_valid_ipv4 "$_probe_ip"; then
+            echo -e "  ${GREEN}[OK] 本机 HTTP 代理探测成功，出口 ${_probe_ip}${PLAIN}"
+            if [ -n "${PUBLIC_IP:-}" ] && [ "$_probe_ip" != "$PUBLIC_IP" ]; then
+                echo -e "  ${RED}[WARN] 代理出口 (${_probe_ip}) 与节点 IP (${PUBLIC_IP}) 不一致${PLAIN}"
+            fi
+        else
+            echo -e "  ${YELLOW}! 本机 HTTP 代理探测失败（可检查鉴权或出站）${PLAIN}"
+        fi
+    fi
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 }
 
@@ -2306,7 +2322,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.27${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.28${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.27"
+EXPECTED_VERSION="v2.0.28"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -64,6 +64,7 @@ for script in $SCRIPTS; do
             grep -q '"flow": "xtls-rprx-vision"' "$script"
             grep -q '"reality": {' "$script"
             grep -q 'VLESS_LIB_ONLY' "$script"
+            grep -q 'packet-encoding: xudp' "$script"
             ;;
         proxy.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
