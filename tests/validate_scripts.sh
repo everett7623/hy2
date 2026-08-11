@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.25"
+EXPECTED_VERSION="v2.0.27"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -71,6 +71,9 @@ for script in $SCRIPTS; do
             grep -q 'github.com/SagerNet/sing-box/releases/download' "$script"
             grep -q '"type": "mixed"' "$script"
             grep -q 'PROXY_LIB_ONLY' "$script"
+            grep -q 'export_uri_http()' "$script"
+            grep -q 'export_uri_socks5()' "$script"
+            ! grep -q 'export_mihomo_http\|export_mihomo_socks\|Mihomo HTTP 单行' "$script"
             ;;
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
@@ -115,6 +118,11 @@ grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrad
 ! grep -q 'upgrade_core || true' anytls.sh vless.sh
 grep -q '^shared_vless_service_restart()' anytls.sh
 grep -q '^shared_anytls_service_restart()' vless.sh
+grep -q '^shared_proxy_service_restart()' anytls.sh
+grep -q '^shared_proxy_service_restart()' vless.sh
+grep -q '^ensure_outbound_bind()' anytls.sh
+grep -q '^ensure_outbound_bind()' vless.sh
+grep -q '^ensure_outbound_bind()' proxy.sh
 ! grep -R -q 'Keep "tag": "proxy"' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh
 ! grep -R -qE '"(tag|detour|final)": "\$\{(_tag|_safe_tag|safe_node)\}"' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh
 ! grep -R -qE '"strategy": "ipv4_only"|"strict_route": true|"ip_version": 6|tls_certificate_public_key_sha256' hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh

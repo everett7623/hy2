@@ -107,7 +107,8 @@ LISTEN_PORT=""
 - `vless.sh` 使用 sing-box >= 1.12.0 原生 VLESS 入站，默认组合为 TCP + REALITY + `xtls-rprx-vision`；Shell 生成 UUID、REALITY 密钥、short ID、JSON 及 `vless-server` wrapper。
 - `proxy.sh` 使用 sing-box >= 1.12.0 原生 `mixed` 入站（同端口 HTTP + SOCKS5），生成用户名/密码、JSON、`proxy-server` wrapper；出站为 `direct`，检测到原生网卡时写入 `bind_interface`。
 - VLESS 安装会在当前 VPS 上筛选可达的 REALITY 握手目标；诊断中的 Cloudflare 小文件下载仅作为 VPS 当次网络状态参考，不等价于客户端经 VLESS 的端到端测速。
-- VLESS、AnyTLS 与 HTTP/SOCKS 共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
+- VLESS、AnyTLS 与 HTTP/SOCKS 共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；替换后须重启升级前处于运行中的全部托管消费者（AnyTLS、VLESS、`proxy-server`）；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
+- AnyTLS/VLESS/HTTP/SOCKS 通过 `ensure_outbound_bind` 在安装、升级与工具菜单中刷新/愈合 `bind_interface`，避免网卡改名或 WARP 切换后出站仍绑旧接口。
 
 ## 本地验证清单
 

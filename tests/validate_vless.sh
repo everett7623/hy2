@@ -550,8 +550,11 @@ grep -q 'sing-box version 1.13.14' "$SING_BOX_BIN"
 check_config() { return 0; }
 shared_anytls_service_is_active() { return 0; }
 shared_anytls_service_restart() { : > "$tmp/shared-anytls-restarted"; }
+shared_proxy_service_is_active() { return 0; }
+shared_proxy_service_restart() { : > "$tmp/shared-proxy-restarted"; }
 upgrade_core >/dev/null
 [ -f "$tmp/shared-anytls-restarted" ]
+[ -f "$tmp/shared-proxy-restarted" ]
 grep -q 'sing-box version 1.13.15' "$SING_BOX_BIN"
 
 get_country_code() { printf 'UN'; }

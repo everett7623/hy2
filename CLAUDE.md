@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.25 (2026-08-10)
+v2.0.27 (2026-08-11)
 
 ## Project overview
 
@@ -135,13 +135,13 @@ Each protocol script generates different client config formats. Use the protocol
 
 | Format | HY2 | SS | AnyTLS | VLESS | Proxy |
 |--------|-----|----|---------| ------|-------|
-| URI | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ | ✅ |
+| URI | ✅ | ✅ | ✅ | ✅ | HTTP + SOCKS5 |
+| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ | — |
 | Surfboard | ✅ | ✅ | ✅ | — | — |
 | Shadowrocket | ✅ | ✅ | ✅ | ✅ URI only | URI |
 | Loon | ✅ | ✅ | ✅ | ✅ | — |
 | Quantumult X | — | ✅ | — | ✅ | — |
-| Terminal QR code | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Terminal QR code | ✅ | ✅ | ✅ | ✅ | SOCKS5 only |
 
 "✅" indicates the script provides that format or compatible URI — it does NOT guarantee support across all historical client versions. Throne and Sing-box/SFA client JSON exports are not currently provided.
 

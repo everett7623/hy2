@@ -4,6 +4,21 @@
 
 ---
 
+## v2.0.27 (2026-08-11)
+
+- HTTP/SOCKS client export keeps only HTTP URI, SOCKS5 URI, and SOCKS5 terminal QR code; remove Mihomo single-line exports for this protocol.
+
+---
+
+## v2.0.26 (2026-08-11)
+
+- Shared sing-box upgrades from AnyTLS/VLESS now also restart an active `proxy-server` peer so HTTP/SOCKS reloads the new core.
+- Add `ensure_outbound_bind` refresh/heal for AnyTLS, VLESS, and HTTP/SOCKS when the native egress interface changes or `bind_interface` is missing from JSON.
+- Reorder `install.sh` protocol menus so HTTP/SOCKS is `[5]` and EUserv is `[6]`.
+- HTTP/SOCKS CLI accepts unsupported client export formats gracefully with a fallback message instead of failing hard.
+
+---
+
 ## v2.0.25 (2026-08-10)
 
 - Remove Mihomo streaming DNS snippet exports from protocol client output; keep single-line Mihomo proxy entries and server-side native egress binding.

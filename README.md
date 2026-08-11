@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.25（2026-08-10） · 本次更新：移除客户端导出中的 Mihomo 流媒体 DNS 片段，保留节点单行配置与服务端出站绑定。
+> 当前版本：v2.0.27（2026-08-11） · 本次更新：HTTP/SOCKS 仅保留 HTTP URI、SOCKS5 URI 与 SOCKS 二维码，移除 Mihomo 单行导出。
 
 ## 目录
 
@@ -117,15 +117,19 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 
 | 客户端/平台 | Hysteria 2 | Shadowsocks | AnyTLS | VLESS REALITY | HTTP/SOCKS |
 | --- | :---: | :---: | :---: | :---: | :---: |
-| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ | ✅ |
+| URI | ✅ | ✅ | ✅ | ✅ | HTTP + SOCKS5 |
+| Mihomo / Clash Meta | ✅ | ✅ | ✅ | ✅ | — |
 | Shadowrocket | ✅ | ✅ | ✅ | ✅ URI | URI |
 | Loon | ✅ | ✅ | ✅ | ✅ | — |
 | Surfboard | ✅ | ✅ | ✅ | 暂无已确认格式 | — |
 | Quantumult X | 暂不推荐 | ✅ | 暂不推荐 | ✅ | — |
+| 终端二维码 | ✅ | ✅ | ✅ | ✅ | SOCKS5 |
 | v2rayN / NekoBox | ✅ | ✅ | 视客户端支持 | ✅ URI | URI |
 | Stash | ✅ | ✅ | 视客户端支持 | 视客户端版本 | 视客户端支持 |
 
 “✅”表示脚本提供对应格式或兼容 URI，不代表所有历史客户端版本均支持。升级客户端后仍无法导入时，优先使用 URI 或 Mihomo 配置，并核对协议、UUID/密码、SNI、公钥、short ID、端口和传输类型。
+
+HTTP/SOCKS 仅导出 HTTP URI、SOCKS5 URI 与 SOCKS5 终端二维码，不提供 Mihomo 单行配置。
 
 当前保留的导出入口包括 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 和二维码；具体可用格式取决于协议。Throne 与 Sing-box/SFA 客户端 JSON 导出暂未提供。
 

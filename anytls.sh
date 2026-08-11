@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.0.25
+# 版本：v2.0.27
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-08-10
+# 更新日期: 2026-08-11
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -1536,11 +1536,15 @@ close_replaced_install_port() {
 read_config_live() {
     read_config || return 1
     local _warp_active=0
+    WARP_ACTIVE=0
+    DEFAULT_EGRESS_IPV4=""
     if detect_warp; then
         _warp_active=1
+        WARP_ACTIVE=1
         local _native_ipv4 _default_ipv4
         _native_ipv4=$(get_native_public_ipv4 2>/dev/null || true)
         _default_ipv4=$(get_default_public_ipv4 2>/dev/null || true)
+        DEFAULT_EGRESS_IPV4="$_default_ipv4"
         if is_valid_ipv4 "$_native_ipv4"; then
             PUBLIC_IP="$_native_ipv4"
             printf '%s' "$PUBLIC_IP" > "$ANYTLS_META/public_ip"
@@ -1548,11 +1552,14 @@ read_config_live() {
             PUBLIC_IP=""
             : > "$ANYTLS_META/public_ip"
         fi
+    else
+        DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
     fi
     if [ -z "${PUBLIC_IP:-}" ] && [ -z "${PUBLIC_IPV6:-}" ]; then
         [ "$_warp_active" = "1" ] || PUBLIC_IP=$(get_default_public_ipv4 2>/dev/null || true)
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]') || true
     fi
+    ensure_outbound_bind memory || true
 }
 
 # ============================================================
@@ -1693,6 +1700,68 @@ shared_vless_service_restart() {
         nohup /usr/local/bin/vless-server >/var/log/vless-server.log 2>&1 &
         echo $! > /var/run/vless-server.pid
     fi
+}
+
+shared_proxy_service_is_active() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl is-active --quiet proxy-server 2>/dev/null
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service proxy-server status 2>/dev/null | grep -q "started"
+    else
+        [ -f /var/run/proxy-server.pid ] && kill -0 "$(cat /var/run/proxy-server.pid)" 2>/dev/null
+    fi
+}
+
+shared_proxy_service_restart() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl restart proxy-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service proxy-server restart
+    else
+        [ -x /usr/local/bin/proxy-server ] || return 1
+        if [ -f /var/run/proxy-server.pid ]; then
+            kill "$(cat /var/run/proxy-server.pid)" 2>/dev/null || true
+            rm -f /var/run/proxy-server.pid
+        fi
+        nohup /usr/local/bin/proxy-server >/var/log/proxy-server.log 2>&1 &
+        echo $! > /var/run/proxy-server.pid
+    fi
+}
+
+# 刷新/回写出站网卡绑定：网卡改名、WARP 切换或旧配置缺 bind_interface 时愈合。
+# $1=rewrite 时写回 JSON；否则只更新内存中的 BIND_INTERFACE。
+ensure_outbound_bind() {
+    local _mode="${1:-memory}" _iface="" _need_rewrite=0 _json_has_bind=0
+    _iface=$(get_native_egress_interface 2>/dev/null || true)
+    if [ -n "$BIND_INTERFACE" ] && command -v ip >/dev/null 2>&1; then
+        if ! ip link show "$BIND_INTERFACE" >/dev/null 2>&1; then
+            BIND_INTERFACE=""
+            _need_rewrite=1
+        fi
+    fi
+    if [ -n "$_iface" ]; then
+        if [ -z "$BIND_INTERFACE" ] || [ "$BIND_INTERFACE" != "$_iface" ]; then
+            BIND_INTERFACE="$_iface"
+            _need_rewrite=1
+        fi
+    fi
+    if [ -f "$ANYTLS_CONFIG" ] && grep -q '"bind_interface"' "$ANYTLS_CONFIG" 2>/dev/null; then
+        _json_has_bind=1
+    fi
+    if [ -n "$BIND_INTERFACE" ] && [ "$_json_has_bind" = "0" ]; then
+        _need_rewrite=1
+    fi
+    if [ -z "$BIND_INTERFACE" ] && [ "$_json_has_bind" = "1" ]; then
+        _need_rewrite=1
+    fi
+    [ "$_mode" = "rewrite" ] || return 0
+    [ "$_need_rewrite" = "1" ] || return 0
+    if write_config && check_config; then
+        echo -e "${GREEN}已刷新出站网卡绑定: ${BIND_INTERFACE:-未绑定}${PLAIN}"
+        return 0
+    fi
+    echo -e "${RED}刷新出站网卡绑定失败${PLAIN}"
+    return 1
 }
 
 service_is_healthy() {
@@ -2247,9 +2316,10 @@ _upgrade_core_locked() {
         return 1
     }
     read_config || { echo -e "${RED}AnyTLS 元数据不完整，无法安全升级${PLAIN}"; return 1; }
+    ensure_outbound_bind rewrite || true
     get_latest_version || return 1
 
-    local _current_version _latest_version _was_active=0 _shared_was_active=0
+    local _current_version _latest_version _was_active=0 _shared_was_active=0 _proxy_was_active=0
     local _restart_failed=0 _was_managed="$MANAGED_SING_BOX"
     _current_version=$(get_installed_version)
     _latest_version="${LAST_VERSION_TAG#v}"
@@ -2264,6 +2334,7 @@ _upgrade_core_locked() {
     }
     service_is_active && _was_active=1 || true
     shared_vless_service_is_active && _shared_was_active=1 || true
+    shared_proxy_service_is_active && _proxy_was_active=1 || true
     if ! download_anytls; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         MANAGED_SING_BOX="$_was_managed"
@@ -2281,15 +2352,20 @@ _upgrade_core_locked() {
     if [ "$_shared_was_active" = "1" ]; then
         shared_vless_service_restart || _restart_failed=1
     fi
-    if [ "$_was_active" = "1" ] || [ "$_shared_was_active" = "1" ]; then
+    if [ "$_proxy_was_active" = "1" ]; then
+        shared_proxy_service_restart || _restart_failed=1
+    fi
+    if [ "$_was_active" = "1" ] || [ "$_shared_was_active" = "1" ] || [ "$_proxy_was_active" = "1" ]; then
         sleep 2
     fi
     [ "$_was_active" = "0" ] || wait_for_health || _restart_failed=1
     [ "$_shared_was_active" = "0" ] || shared_vless_service_is_active || _restart_failed=1
+    [ "$_proxy_was_active" = "0" ] || shared_proxy_service_is_active || _restart_failed=1
     if [ "$_restart_failed" = "1" ]; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         [ "$_was_active" = "0" ] || service_restart || true
         [ "$_shared_was_active" = "0" ] || shared_vless_service_restart || true
+        [ "$_proxy_was_active" = "0" ] || shared_proxy_service_restart || true
         echo -e "${RED}升级后共享服务启动失败，已回滚${PLAIN}"
         return 1
     fi
@@ -2539,7 +2615,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.25${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.27${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

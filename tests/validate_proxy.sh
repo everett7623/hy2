@@ -175,6 +175,22 @@ ss() { printf '%s\n' 'State Recv-Q Send-Q Local Address:Port' 'LISTEN 0 128 0.0.
 ! service_is_healthy
 unset -f ss service_is_active
 
+# ensure_outbound_bind：memory 模式更新 BIND_INTERFACE；rewrite 在缺 bind 时回写 JSON。
+LISTEN_PORT=1080; EXT_PORT=1080; PROXY_USER=proxyuser; PROXY_PASS=Abcdef12
+NAT_MODE=0; BIND_FAMILY=v4; LISTEN_HOST=::; MANAGED_SING_BOX=1
+BIND_INTERFACE=""; PUBLIC_IP=""; PUBLIC_IPV6=""
+get_native_egress_interface() { return 1; }
+write_config
+! grep -q 'bind_interface' "$PROXY_CONFIG"
+get_native_egress_interface() { printf 'eth0'; }
+ensure_outbound_bind memory
+[ "$BIND_INTERFACE" = "eth0" ]
+! grep -q 'bind_interface' "$PROXY_CONFIG"
+check_config() { return 0; }
+ensure_outbound_bind rewrite >/dev/null
+grep -q '"bind_interface": "eth0"' "$PROXY_CONFIG"
+unset -f check_config get_native_egress_interface
+
 printf '\177ELFtest' > "$tmp/server"
 validate_elf "$tmp/server"
 printf 'html' > "$tmp/bad"

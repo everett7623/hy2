@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.25
+# 版本：v2.0.27
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-08-10
+# 更新日期: 2026-08-11
 #====================================================================================
 
 # ============================================================
@@ -392,7 +392,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.25${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.27${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -427,8 +427,8 @@ select_protocol_and_run() {
         echo -e "  [2] AnyTLS"
         echo -e "  [3] Hysteria2"
         echo -e "  [4] Shadowsocks"
-        echo -e "  [5] EUserv IPv6-only HY2"
-        echo -e "  [6] HTTP/SOCKS 代理"
+        echo -e "  [5] HTTP/SOCKS 代理"
+        echo -e "  [6] EUserv IPv6-only HY2"
         echo -e "  [0] 返回"
         echo ""
         read -r -p "  请选择协议 [0-6]: " p
@@ -437,8 +437,8 @@ select_protocol_and_run() {
             2) run_script "AnyTLS" "$ANYTLS_URL" "$_action"; return ;;
             3) run_script "Hysteria2" "$HY2_URL" "$_action"; return ;;
             4) run_script "Shadowsocks" "$SS_URL" "$_action"; return ;;
-            5) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
-            6) run_script "HTTP/SOCKS" "$PROXY_URL" "$_action"; return ;;
+            5) run_script "HTTP/SOCKS" "$PROXY_URL" "$_action"; return ;;
+            6) run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -560,8 +560,8 @@ service_management_menu() {
         echo -e "  [2] AnyTLS 服务管理"
         echo -e "  [3] Hysteria2 服务管理"
         echo -e "  [4] Shadowsocks 服务管理"
-        echo -e "  [5] EUserv HY2 服务管理"
-        echo -e "  [6] HTTP/SOCKS 服务管理"
+        echo -e "  [5] HTTP/SOCKS 服务管理"
+        echo -e "  [6] EUserv HY2 服务管理"
         echo -e "  [7] 查看所有服务状态"
         echo -e "  [8] 查看监听端口"
         echo -e "  [9] 查看最近日志"
@@ -573,8 +573,8 @@ service_management_menu() {
             2) protocol_service_menu "AnyTLS" "anytls-server" "/var/run/anytls-server.pid" "/var/log/anytls-server.log" "AnyTLS" "$ANYTLS_URL" ;;
             3) protocol_service_menu "Hysteria2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "Hysteria2" "$HY2_URL" ;;
             4) protocol_service_menu "Shadowsocks" "shadowsocks-server" "/var/run/ssserver.pid" "/var/log/ssserver.log" "Shadowsocks" "$SS_URL" ;;
-            5) protocol_service_menu "EUserv HY2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "EUserv IPv6 HY2" "$EUSERV_URL" ;;
-            6) protocol_service_menu "HTTP/SOCKS" "proxy-server" "/var/run/proxy-server.pid" "/var/log/proxy-server.log" "HTTP/SOCKS" "$PROXY_URL" ;;
+            5) protocol_service_menu "HTTP/SOCKS" "proxy-server" "/var/run/proxy-server.pid" "/var/log/proxy-server.log" "HTTP/SOCKS" "$PROXY_URL" ;;
+            6) protocol_service_menu "EUserv HY2" "hysteria-server" "/var/run/hysteria.pid" "/var/log/hysteria.log" "EUserv IPv6 HY2" "$EUSERV_URL" ;;
             7) show_all_services; pause_return ;;
             8) list_listening_ports; pause_return ;;
             9)
@@ -747,7 +747,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.25" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.27" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -974,8 +974,8 @@ uninstall_menu() {
         echo -e "  [2] 卸载 AnyTLS"
         echo -e "  [3] 卸载 Hysteria2"
         echo -e "  [4] 卸载 Shadowsocks"
-        echo -e "  [5] 卸载 EUserv HY2"
-        echo -e "  [6] 卸载 HTTP/SOCKS"
+        echo -e "  [5] 卸载 HTTP/SOCKS"
+        echo -e "  [6] 卸载 EUserv HY2"
         echo -e "  [7] 卸载全部协议"
         echo -e "  [8] 删除所有配置"
         echo -e "  [9] 删除所有备份"
@@ -987,8 +987,8 @@ uninstall_menu() {
             2) run_uninstall_action "AnyTLS" "$ANYTLS_URL" ;;
             3) run_uninstall_action "Hysteria2" "$HY2_URL" ;;
             4) run_uninstall_action "Shadowsocks" "$SS_URL" ;;
-            5) run_uninstall_action "EUserv IPv6 HY2" "$EUSERV_URL" ;;
-            6) run_uninstall_action "HTTP/SOCKS" "$PROXY_URL" ;;
+            5) run_uninstall_action "HTTP/SOCKS" "$PROXY_URL" ;;
+            6) run_uninstall_action "EUserv IPv6 HY2" "$EUSERV_URL" ;;
             7) uninstall_all_protocols ;;
             8)
                 echo -e "${RED}这会删除 /etc/sing-box、/etc/hysteria、/etc/shadowsocks-rust 和相关服务文件。${PLAIN}"

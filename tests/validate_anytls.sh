@@ -426,7 +426,7 @@ get_latest_version() { LAST_VERSION_TAG=v1.13.14; return 0; }
 upgrade_output=$(upgrade_core)
 echo "$upgrade_output" | grep -q '已是最新版本 1.13.14'
 
-# 替换共享核心后，原本运行中的 VLESS 也必须重启并加载同一新版本。
+# 替换共享核心后，原本运行中的 VLESS 与 HTTP/SOCKS 也必须重启并加载同一新版本。
 get_latest_version() { LAST_VERSION_TAG=v1.13.15; return 0; }
 download_anytls() {
     printf '#!/bin/sh\necho "sing-box version 1.13.15"\n' > "$SING_BOX_BIN"
@@ -436,8 +436,11 @@ download_anytls() {
 service_is_healthy() { return 0; }
 shared_vless_service_is_active() { return 0; }
 shared_vless_service_restart() { : > "$tmp/shared-vless-restarted"; }
+shared_proxy_service_is_active() { return 0; }
+shared_proxy_service_restart() { : > "$tmp/shared-proxy-restarted"; }
 upgrade_core >/dev/null
 [ -f "$tmp/shared-vless-restarted" ]
+[ -f "$tmp/shared-proxy-restarted" ]
 grep -q 'sing-box version 1.13.15' "$SING_BOX_BIN"
 
 # 卸载只能删除 AnyTLS 产物，存在其他 sing-box 配置时必须保留目录与核心。

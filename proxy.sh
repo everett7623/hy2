@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.25
+# 版本：v2.0.27
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-08-10
+# 更新日期: 2026-08-11
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -1325,7 +1325,7 @@ read_config_live() {
         WARP_ACTIVE=0
         DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
     fi
-    [ -z "${BIND_INTERFACE:-}" ] && BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
+    ensure_outbound_bind memory || true
     if [ -z "${PUBLIC_IP:-}" ] && [ -z "${PUBLIC_IPV6:-}" ]; then
         [ "$_warp_active" = "1" ] || PUBLIC_IP=$(get_default_public_ipv4 2>/dev/null || true)
         PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]') || true
@@ -1472,6 +1472,42 @@ shared_service_restart() {
         nohup "$_bin" >"/var/log/${_name}.log" 2>&1 &
         echo $! > "/var/run/${_name}.pid"
     fi
+}
+
+# 刷新/回写出站网卡绑定：网卡改名、WARP 切换或旧配置缺 bind_interface 时愈合。
+# $1=rewrite 时写回 JSON；否则只更新内存中的 BIND_INTERFACE。
+ensure_outbound_bind() {
+    local _mode="${1:-memory}" _iface="" _need_rewrite=0 _json_has_bind=0
+    _iface=$(get_native_egress_interface 2>/dev/null || true)
+    if [ -n "$BIND_INTERFACE" ] && command -v ip >/dev/null 2>&1; then
+        if ! ip link show "$BIND_INTERFACE" >/dev/null 2>&1; then
+            BIND_INTERFACE=""
+            _need_rewrite=1
+        fi
+    fi
+    if [ -n "$_iface" ]; then
+        if [ -z "$BIND_INTERFACE" ] || [ "$BIND_INTERFACE" != "$_iface" ]; then
+            BIND_INTERFACE="$_iface"
+            _need_rewrite=1
+        fi
+    fi
+    if [ -f "$PROXY_CONFIG" ] && grep -q '"bind_interface"' "$PROXY_CONFIG" 2>/dev/null; then
+        _json_has_bind=1
+    fi
+    if [ -n "$BIND_INTERFACE" ] && [ "$_json_has_bind" = "0" ]; then
+        _need_rewrite=1
+    fi
+    if [ -z "$BIND_INTERFACE" ] && [ "$_json_has_bind" = "1" ]; then
+        _need_rewrite=1
+    fi
+    [ "$_mode" = "rewrite" ] || return 0
+    [ "$_need_rewrite" = "1" ] || return 0
+    if write_config && check_config; then
+        echo -e "${GREEN}已刷新出站网卡绑定: ${BIND_INTERFACE:-未绑定}${PLAIN}"
+        return 0
+    fi
+    echo -e "${RED}刷新出站网卡绑定失败${PLAIN}"
+    return 1
 }
 
 service_is_healthy() {
@@ -1760,24 +1796,6 @@ export_uri_socks5() {
     fi
 }
 
-export_mihomo_http() {
-    local _server="$1" _port="$2" _node="$3" _yaml_server _user _pass _safe_node
-    _yaml_server=$(format_server_for_yaml "$_server")
-    _user=$(yaml_single_quote_escape "$PROXY_USER")
-    _pass=$(yaml_single_quote_escape "$PROXY_PASS")
-    _safe_node=$(yaml_single_quote_escape "$_node")
-    printf "%s" "- {name: '${_safe_node}', type: http, server: ${_yaml_server}, port: ${_port}, username: '${_user}', password: '${_pass}'}"
-}
-
-export_mihomo_socks() {
-    local _server="$1" _port="$2" _node="$3" _yaml_server _user _pass _safe_node
-    _yaml_server=$(format_server_for_yaml "$_server")
-    _user=$(yaml_single_quote_escape "$PROXY_USER")
-    _pass=$(yaml_single_quote_escape "$PROXY_PASS")
-    _safe_node=$(yaml_single_quote_escape "$_node")
-    printf "%s" "- {name: '${_safe_node}', type: socks5, server: ${_yaml_server}, port: ${_port}, username: '${_user}', password: '${_pass}', udp: true}"
-}
-
 show_node() {
     local _server="$1" _port="$2" _tag="$3" _mode="${4:-all}"
     [ -z "$_server" ] && return
@@ -1811,26 +1829,16 @@ show_node() {
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
-    if should_show_output "$_mode" "mihomo"; then
-        echo -e "${GREEN}Mihomo HTTP 单行:${PLAIN}"
-        print_copy_block "$(export_mihomo_http "$_server" "$_port" "$_node_http")"
-        echo -e "${GREEN}Mihomo SOCKS5 单行（推荐）:${PLAIN}"
-        print_copy_block "$(export_mihomo_socks "$_server" "$_port" "$_node_socks")"
-        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
-    fi
-
-    if should_show_output "$_mode" "qrcode" || [ "$_mode" = "all" ]; then
-        if [ "$_mode" = "all" ] || [ "$_mode" = "qrcode" ]; then
-            echo -e "${GREEN}终端二维码 (SOCKS5 URI):${PLAIN}"
-            if generate_terminal_qrcode "$_uri_socks"; then
-                echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
-                _png=$(generate_local_qrcode_png "$_uri_socks" "socks5" "$_ip_type" 2>/dev/null || true)
-                [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
-            else
-                echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端二维码。${PLAIN}"
-            fi
-            echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    if should_show_output "$_mode" "qrcode"; then
+        echo -e "${GREEN}终端二维码 (SOCKS5 URI):${PLAIN}"
+        if generate_terminal_qrcode "$_uri_socks"; then
+            echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
+            _png=$(generate_local_qrcode_png "$_uri_socks" "socks5" "$_ip_type" 2>/dev/null || true)
+            [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
+        else
+            echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端二维码。${PLAIN}"
         fi
+        echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 }
 
@@ -1932,6 +1940,7 @@ _upgrade_core_locked() {
         return 1
     }
     read_config || { echo -e "${RED}元数据不完整，无法安全升级${PLAIN}"; return 1; }
+    ensure_outbound_bind rewrite || true
     get_latest_version || return 1
 
     local _current_version _latest_version _was_active=0
@@ -2187,8 +2196,9 @@ server_tools_menu() {
         echo -e " 5. 开启 BBR"
         echo -e " 6. 设置每周自动更新"
         echo -e " 7. 移除自动更新"
+        echo -e " 8. 刷新出站绑定"
         echo -e " 0. 返回"
-        read -r -p "请输入选项 [0-7]: " choice
+        read -r -p "请输入选项 [0-8]: " choice
         case "$choice" in
             1) show_system_info ;;
             2) service_logs; read -r -p "按回车返回..." _tmp ;;
@@ -2196,13 +2206,25 @@ server_tools_menu() {
             4)
                 read_config_live 2>/dev/null || true
                 DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
-                [ -z "${BIND_INTERFACE:-}" ] && BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
                 check_egress_ip
                 read -r -p "按回车返回..." _tmp
                 ;;
             5) enable_bbr ;;
             6) setup_autoupdate ;;
             7) remove_autoupdate ;;
+            8)
+                if ! read_config; then
+                    echo -e "${RED}未找到 HTTP/SOCKS Proxy 配置${PLAIN}"
+                    sleep 2
+                    continue
+                fi
+                if ensure_outbound_bind rewrite; then
+                    if service_is_active; then
+                        service_restart || echo -e "${YELLOW}配置已刷新，但服务重启失败，请手动重启${PLAIN}"
+                    fi
+                fi
+                read -r -p "按回车返回..." _tmp
+                ;;
             0|q|quit|exit) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -2284,7 +2306,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.25${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.27${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
@@ -2342,7 +2364,10 @@ case "${1:-menu}" in
     install) install_proxy ;;
     info|node|export|all) show_config ;;
     uri|link) show_config uri ;;
-    mihomo|clash) show_config mihomo ;;
+    mihomo|clash|surfboard|shadowrocket|loon|quantumult|quantumultx)
+        echo -e "${YELLOW}HTTP/SOCKS 仅提供 HTTP URI、SOCKS5 URI 与 SOCKS 二维码。${PLAIN}"
+        show_config uri
+        ;;
     qrcode|qr) show_config qrcode ;;
     manage|service|config) manage_proxy ;;
     upgrade|update) upgrade_proxy ;;
@@ -2351,7 +2376,7 @@ case "${1:-menu}" in
     menu|"") main_menu ;;
     *)
         echo -e "${RED}未知命令: ${1}${PLAIN}"
-        echo "可用命令: install | info | uri | mihomo | manage | upgrade | uninstall | diagnose | menu"
+        echo "可用命令: install | info | uri | qrcode | manage | upgrade | uninstall | diagnose | menu"
         exit 1
         ;;
 esac
