@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.30"
+EXPECTED_VERSION="v2.0.31"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md

@@ -59,7 +59,7 @@ reality_target_usable_v4() { [ "$1" = 'www.apple.com' ]; }
 [ "$(BIND_FAMILY=v4 reality_domain_strategy)" = 'ipv4_only' ]
 [ "$(BIND_FAMILY=v6 reality_domain_strategy)" = 'ipv6_only' ]
 
-# SNI 来源 1 保留大厂候选自动探测，来源 2 仅接受格式合法且 TLS 可达的邻居域名。
+# SNI 来源 1 保留大厂候选自动探测，来源 2 接受格式合法且 TLS 可达的自定义域名。
 (
 select_reality_target() { printf 'www.apple.com'; }
 SERVER_NAME=""
@@ -84,6 +84,7 @@ unreachable.example
 neighbor.example
 EOF
 [ "$SERVER_NAME" = 'neighbor.example' ]
+grep -Fq '2. 自定义 SNI（手动输入并验证，可用 bgp.tools 辅助筛选）' vless.sh
 _lookup_output=$(show_bgp_tools_lookup_links)
 printf '%s\n' "$_lookup_output" | grep -q 'https://bgp.tools/prefix/192.0.2.0/24'
 printf '%s\n' "$_lookup_output" | grep -q 'https://bgp.tools/search?q=2001:db8::10'

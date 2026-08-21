@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.30
+# 版本：v2.0.31
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -481,7 +481,7 @@ choose_reality_target() {
     while true; do
         echo -e "\n${YELLOW}请选择 REALITY SNI 来源：${PLAIN}"
         echo "  1. 随机大厂 SNI（自动探测可达性）"
-        echo "  2. bgp.tools 邻居 SNI（手动筛选后验证）"
+        echo "  2. 自定义 SNI（手动输入并验证，可用 bgp.tools 辅助筛选）"
         read -r -p "请选择 [1-2，默认 1]: " _choice
         case "${_choice:-1}" in
             1)
@@ -498,7 +498,7 @@ choose_reality_target() {
             2)
                 show_bgp_tools_lookup_links
                 while true; do
-                    read -r -p "请输入筛选后的邻居域名 [留空返回]: " _candidate
+                    read -r -p "请输入自定义 SNI 域名 [留空返回]: " _candidate
                     [ -z "$_candidate" ] && break
                     if ! validate_server_name "$_candidate"; then
                         echo -e "${RED}域名格式无效，请输入纯域名（不含协议、路径或端口）${PLAIN}"
@@ -507,7 +507,7 @@ choose_reality_target() {
                     echo -e "${YELLOW}正在验证 ${_candidate}:${_port} 的 TLS 1.3 与当前地址族可达性...${PLAIN}"
                     if reality_target_usable_for_family "$_candidate" "$_port"; then
                         SERVER_NAME="$_candidate"
-                        echo -e "${GREEN}✓ 邻居 SNI 验证通过: ${SERVER_NAME}:${_port}${PLAIN}"
+                        echo -e "${GREEN}✓ 自定义 SNI 验证通过: ${SERVER_NAME}:${_port}${PLAIN}"
                         return 0
                     fi
                     echo -e "${RED}验证失败：目标不支持 TLS 1.3，或当前 VPS 无法按 $(reality_domain_strategy) 访问${PLAIN}"
@@ -3001,7 +3001,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.30${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.31${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

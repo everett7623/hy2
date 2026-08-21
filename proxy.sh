@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.30
+# 版本：v2.0.31
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -2322,7 +2322,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.30${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.31${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
