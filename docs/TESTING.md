@@ -98,7 +98,7 @@ bash tests/validate_scripts.sh
 - sing-box JSON 使用原生 `vless` 入站、TCP、REALITY 和 `xtls-rprx-vision`，并通过 `sing-box check`。
 - URI、Mihomo、Shadowrocket、Loon 与 Quantumult X 输出包含一致的公钥、short ID、SNI 和 flow；Surfboard 输出明确兼容性提示。
 - NAT、IPv4、IPv6 与双栈节点地址和端口正确；REALITY 目标域名及端口可达。
-- REALITY SNI 来源默认选择随机大厂候选，候选不使用 `.cn`、GitHub 或 Bing；选择 `bgp.tools` 邻居域名时应显示当前公网 IP 查询链接，拒绝格式无效、TLS 1.3 不可用或当前地址族不可达的域名。
+- REALITY SNI 来源默认选择随机大厂候选，候选不使用 `.cn`、GitHub 或 Bing；选择 `bgp.tools` 邻居域名时应优先显示 WHOIS 解析出的 Prefix DNS 页面，WHOIS 失败时显示搜索页回退，并拒绝格式无效、TLS 1.3 不可用或当前地址族不可达的域名。
 - 运行诊断分别报告 REALITY 目标可达性与 VPS 下载探针结果，不把 Speedtest 单站失败直接判定为 VLESS 故障。
 - `vless.sh diagnose` 与服务管理菜单中的诊断入口应产生相同检查结果，且不修改配置、服务或防火墙。
 - 配置修改、重装、升级或服务启动失败时恢复旧配置、核心和服务状态。

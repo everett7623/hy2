@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.29（2026-08-21） · 本次更新：VLESS REALITY SNI 支持随机大厂与 bgp.tools 邻居域名两种选择，并验证 TLS 1.3 与当前地址族可达性。
+> 当前版本：v2.0.30（2026-08-21） · 本次更新：修正 bgp.tools 邻居 SNI 流程，优先直达 BGP Prefix 的 DNS 页面，并保留搜索页回退。
 
 ## 目录
 
@@ -112,7 +112,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 安装时可选择两种 SNI 来源：
 
 1. 随机大厂 SNI：从 Microsoft、Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung 和 Cloudflare 中随机选择首选目标，再从当前 VPS 并行验证 HTTPS/TLS 可达性。
-2. `bgp.tools` 邻居 SNI：脚本根据检测到的 VPS 公网 IP 输出查询链接，用户在页面筛选正常 HTTPS 站点并粘贴域名；脚本验证域名格式、TLS 1.3 和当前 IPv4/IPv6 地址族可达性后才采用。
+2. `bgp.tools` 邻居 SNI：脚本先通过 WHOIS 查询 VPS 的 BGP Prefix，并尽量直接输出该 Prefix 的 DNS 页面；如果查询失败则输出搜索页。用户在 DNS 标签中筛选正常 HTTPS 站点并粘贴域名，脚本验证域名格式、TLS 1.3 和当前 IPv4/IPv6 地址族可达性后才采用。
 
 脚本不会自动抓取 `bgp.tools` 页面，也不会直接采用可能无效的机房默认 PTR。邻居域名不可达或不支持 TLS 1.3 时必须重新选择。
 

@@ -82,7 +82,7 @@ LISTEN_PORT=""
 | mktemp -d | 下载解压用临时目录而非临时文件，避免空文件回退 |
 | IPv6 过滤 | EUserv 场景需 `_get_real_ipv6()` 排除 WARP/tunnel 网卡 |
 | 安装端口 | 常规协议生成 `10000-65535` 随机默认值，并尽量避开本机已监听端口；用户输入仍优先 |
-| REALITY 目标 | VLESS 可选随机大厂或 `bgp.tools` 邻居 SNI；邻居域名由用户筛选，写入前验证格式、TLS 1.3 和当前地址族可达性 |
+| REALITY 目标 | VLESS 可选随机大厂或 `bgp.tools` 邻居 SNI；通过 WHOIS 解析 Prefix 直达 DNS 页面，失败时回退搜索页；邻居域名由用户筛选，写入前验证格式、TLS 1.3 和当前地址族可达性 |
 
 ## 执行与发布模型
 
@@ -106,7 +106,7 @@ LISTEN_PORT=""
 - `anytls.sh` 使用 sing-box >= 1.12.0 原生 AnyTLS 入站；证书支持自签、已有文件和 sing-box >= 1.14.0 ACME Certificate Provider。ACME 仅在满足核心版本时开放，已有证书保留原始路径且不复制私钥。
 - `vless.sh` 使用 sing-box >= 1.12.0 原生 VLESS 入站，默认组合为 TCP + REALITY + `xtls-rprx-vision`；Shell 生成 UUID、REALITY 密钥、short ID、JSON 及 `vless-server` wrapper。
 - `proxy.sh` 使用 sing-box >= 1.12.0 原生 `mixed` 入站（同端口 HTTP + SOCKS5），生成用户名/密码、JSON、`proxy-server` wrapper；出站为 `direct`，检测到原生网卡时写入 `bind_interface`。
-- VLESS 安装提供随机大厂与 `bgp.tools` 邻居域名两种 SNI 来源。脚本只输出公网 IP 查询链接，不抓取 `bgp.tools` HTML；邻居域名由用户筛选并粘贴，且必须通过当前地址族下的 TLS 1.3 可达性验证。诊断中的 Cloudflare 小文件下载仅作为 VPS 当次网络状态参考，不等价于客户端经 VLESS 的端到端测速。
+- VLESS 安装提供随机大厂与 `bgp.tools` 邻居域名两种 SNI 来源。脚本通过 WHOIS TCP 43 查询 BGP Prefix，并尽量输出对应 DNS 页面，不抓取 `bgp.tools` HTML；WHOIS 失败时保留搜索页回退。邻居域名由用户筛选并粘贴，且必须通过当前地址族下的 TLS 1.3 可达性验证。诊断中的 Cloudflare 小文件下载仅作为 VPS 当次网络状态参考，不等价于客户端经 VLESS 的端到端测速。
 - VLESS、AnyTLS 与 HTTP/SOCKS 共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；替换后须重启升级前处于运行中的全部托管消费者（AnyTLS、VLESS、`proxy-server`）；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
 - AnyTLS/VLESS/HTTP/SOCKS 通过 `ensure_outbound_bind` 在安装、升级与工具菜单中刷新/愈合 `bind_interface`，避免网卡改名或 WARP 切换后出站仍绑旧接口。
 

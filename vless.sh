@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.29
+# 版本：v2.0.30
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -427,21 +427,52 @@ select_reality_target() {
     return 1
 }
 
+get_bgp_tools_prefix() {
+    local _ip="$1" _response _prefix
+    command -v timeout >/dev/null 2>&1 || return 1
+    case "$_ip" in
+        *[!A-Za-z0-9:.]*) return 1 ;;
+    esac
+    [ -n "$_ip" ] || return 1
+    _response=$(timeout 8 bash -c '
+        _ip="$1"
+        exec 3<>/dev/tcp/bgp.tools/43 || exit 1
+        printf " -v %s\\r\\n" "$_ip" >&3
+        cat <&3
+    ' _ "$_ip" 2>/dev/null || true)
+    _prefix=$(printf '%s\n' "$_response" | awk -F'|' '
+        {
+            value=$3
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            if (value ~ /^[0-9A-Fa-f:.]+\/[0-9]+$/) { print value; exit }
+        }
+    ')
+    [ -n "$_prefix" ] && printf '%s' "$_prefix"
+}
+
 show_bgp_tools_lookup_links() {
-    local _shown=0
-    echo -e "${SKYBLUE}请在浏览器打开 bgp.tools，查看 DNS 数据并筛选正常 HTTPS 站点：${PLAIN}"
-    if [ -n "${PUBLIC_IP:-}" ]; then
-        echo "  IPv4: https://bgp.tools/search?q=${PUBLIC_IP}"
+    local _shown=0 _ip _prefix _label
+    echo -e "${SKYBLUE}请打开下方 bgp.tools DNS 页面，进入页面后点击 DNS 标签：${PLAIN}"
+    for _label in IPv4 IPv6; do
+        if [ "$_label" = "IPv4" ]; then
+            _ip="${PUBLIC_IP:-}"
+        else
+            _ip="${PUBLIC_IPV6:-}"
+        fi
+        [ -n "$_ip" ] || continue
+        _prefix=$(get_bgp_tools_prefix "$_ip" 2>/dev/null || true)
+        if [ -n "$_prefix" ]; then
+            echo "  ${_label} DNS: https://bgp.tools/prefix/${_prefix}"
+        else
+            echo "  ${_label} 查询: https://bgp.tools/search?q=${_ip}"
+            echo "    未能自动解析 Prefix，请打开结果中的 Prefix 链接，再点击 DNS 标签"
+        fi
         _shown=1
-    fi
-    if [ -n "${PUBLIC_IPV6:-}" ]; then
-        echo "  IPv6: https://bgp.tools/search?q=${PUBLIC_IPV6}"
-        _shown=1
-    fi
+    done
     if [ "$_shown" = "0" ]; then
         echo -e "${YELLOW}! 未检测到公网 IP，请手动在 https://bgp.tools 查询 VPS IP${PLAIN}"
     fi
-    echo -e "${DIM}脚本不会抓取 bgp.tools；请勿直接使用机房默认 PTR，优先选择可正常访问的业务域名。${PLAIN}"
+    echo -e "${DIM}DNS 表通常展示 PTR/反向解析；请筛选正常业务域名，去掉末尾句点后再粘贴。脚本不会抓取网页或直接采用默认 PTR。${PLAIN}"
 }
 
 choose_reality_target() {
@@ -2970,7 +3001,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.29${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.30${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
