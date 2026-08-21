@@ -59,6 +59,33 @@ reality_target_usable_v4() { [ "$1" = 'www.apple.com' ]; }
 [ "$(BIND_FAMILY=v4 reality_domain_strategy)" = 'ipv4_only' ]
 [ "$(BIND_FAMILY=v6 reality_domain_strategy)" = 'ipv6_only' ]
 
+# SNI 来源 1 保留大厂候选自动探测，来源 2 仅接受格式合法且 TLS 可达的邻居域名。
+(
+select_reality_target() { printf 'www.apple.com'; }
+SERVER_NAME=""
+choose_reality_target 443 >/dev/null <<'EOF'
+1
+EOF
+[ "$SERVER_NAME" = 'www.apple.com' ]
+)
+(
+PUBLIC_IP=192.0.2.10
+PUBLIC_IPV6=2001:db8::10
+BIND_FAMILY=v4
+reality_target_usable_for_family() { [ "$1" = 'neighbor.example' ] && [ "$2" = '443' ]; }
+SERVER_NAME=""
+choose_reality_target 443 >/dev/null <<'EOF'
+2
+https://bad.example/path
+unreachable.example
+neighbor.example
+EOF
+[ "$SERVER_NAME" = 'neighbor.example' ]
+_lookup_output=$(show_bgp_tools_lookup_links)
+printf '%s\n' "$_lookup_output" | grep -q 'https://bgp.tools/search?q=192.0.2.10'
+printf '%s\n' "$_lookup_output" | grep -q 'https://bgp.tools/search?q=2001:db8::10'
+)
+
 [ "$(detect_arch x86_64)" = amd64 ]
 [ "$(detect_arch aarch64)" = arm64 ]
 [ "$(detect_arch armv7l)" = armv7 ]

@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.28（2026-08-11） · 本次更新：VLESS REALITY 诊断按地址族策略判定并支持重选目标；Mihomo 增加 xudp；导出菜单隐藏 HTTP/SOCKS 非 URI 格式。
+> 当前版本：v2.0.29（2026-08-21） · 本次更新：VLESS REALITY SNI 支持随机大厂与 bgp.tools 邻居域名两种选择，并验证 TLS 1.3 与当前地址族可达性。
 
 ## 目录
 
@@ -109,7 +109,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 ### VLESS REALITY 目标策略
 
-脚本会从 Microsoft、Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung 和 Cloudflare 中随机选择首选目标，再从当前 VPS 并行验证 HTTPS/TLS 可达性并使用首个可用目标。
+安装时可选择两种 SNI 来源：
+
+1. 随机大厂 SNI：从 Microsoft、Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung 和 Cloudflare 中随机选择首选目标，再从当前 VPS 并行验证 HTTPS/TLS 可达性。
+2. `bgp.tools` 邻居 SNI：脚本根据检测到的 VPS 公网 IP 输出查询链接，用户在页面筛选正常 HTTPS 站点并粘贴域名；脚本验证域名格式、TLS 1.3 和当前 IPv4/IPv6 地址族可达性后才采用。
+
+脚本不会自动抓取 `bgp.tools` 页面，也不会直接采用可能无效的机房默认 PTR。邻居域名不可达或不支持 TLS 1.3 时必须重新选择。
 
 REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用户可以在安装或配置修改时手动指定其他有效域名与端口。
 

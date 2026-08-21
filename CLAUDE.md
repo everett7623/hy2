@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.28 (2026-08-11)
+v2.0.29 (2026-08-21)
 
 ## Project overview
 
@@ -86,7 +86,7 @@ The generated value is only the interactive default. Users can still enter an ex
 
 ## VLESS REALITY target selection
 
-During installation, `vless.sh` randomly selects a preferred target from: Microsoft, Apple, Amazon, AMD, Mozilla, NVIDIA, Samsung, Cloudflare. It then validates HTTPS/TLS reachability from the current VPS in parallel and uses the first available target.
+During installation, `vless.sh` offers two SNI sources. The default keeps the existing random Microsoft, Apple, Amazon, AMD, Mozilla, NVIDIA, Samsung, and Cloudflare candidate pool with parallel reachability probes. The optional `bgp.tools` flow prints lookup links for the detected public IP, accepts a user-screened neighboring domain, and requires valid syntax plus TLS 1.3 reachability over the active address-family strategy before accepting it. Do not scrape `bgp.tools` HTML or trust datacenter-default PTR names automatically.
 
 REALITY targets are only used for handshake camouflage — they do NOT carry client download traffic after the handshake. Users can manually specify alternative valid domains and ports during installation or config modification.
 

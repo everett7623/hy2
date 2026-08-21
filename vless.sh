@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.28
+# 版本：v2.0.29
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-08-11
+# 更新日期: 2026-08-21
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -425,6 +425,68 @@ select_reality_target() {
     rm -f "$_tmp"/result-* 2>/dev/null
     rmdir "$_tmp" 2>/dev/null || true
     return 1
+}
+
+show_bgp_tools_lookup_links() {
+    local _shown=0
+    echo -e "${SKYBLUE}请在浏览器打开 bgp.tools，查看 DNS 数据并筛选正常 HTTPS 站点：${PLAIN}"
+    if [ -n "${PUBLIC_IP:-}" ]; then
+        echo "  IPv4: https://bgp.tools/search?q=${PUBLIC_IP}"
+        _shown=1
+    fi
+    if [ -n "${PUBLIC_IPV6:-}" ]; then
+        echo "  IPv6: https://bgp.tools/search?q=${PUBLIC_IPV6}"
+        _shown=1
+    fi
+    if [ "$_shown" = "0" ]; then
+        echo -e "${YELLOW}! 未检测到公网 IP，请手动在 https://bgp.tools 查询 VPS IP${PLAIN}"
+    fi
+    echo -e "${DIM}脚本不会抓取 bgp.tools；请勿直接使用机房默认 PTR，优先选择可正常访问的业务域名。${PLAIN}"
+}
+
+choose_reality_target() {
+    local _port="${1:-443}" _choice _candidate
+    validate_port "$_port" || return 1
+    while true; do
+        echo -e "\n${YELLOW}请选择 REALITY SNI 来源：${PLAIN}"
+        echo "  1. 随机大厂 SNI（自动探测可达性）"
+        echo "  2. bgp.tools 邻居 SNI（手动筛选后验证）"
+        read -r -p "请选择 [1-2，默认 1]: " _choice
+        case "${_choice:-1}" in
+            1)
+                echo -e "${YELLOW}正在按 $(reality_domain_strategy) 策略检测可用大厂 SNI...${PLAIN}"
+                if _candidate=$(select_reality_target "$_port"); then
+                    SERVER_NAME="$_candidate"
+                    echo -e "${GREEN}✓ 已找到可用目标: ${SERVER_NAME}:${_port}${PLAIN}"
+                    return 0
+                fi
+                SERVER_NAME=$(random_sni)
+                echo -e "${YELLOW}! 未能自动验证候选目标，请确认 VPS 可访问 ${SERVER_NAME}:${_port}${PLAIN}"
+                return 0
+                ;;
+            2)
+                show_bgp_tools_lookup_links
+                while true; do
+                    read -r -p "请输入筛选后的邻居域名 [留空返回]: " _candidate
+                    [ -z "$_candidate" ] && break
+                    if ! validate_server_name "$_candidate"; then
+                        echo -e "${RED}域名格式无效，请输入纯域名（不含协议、路径或端口）${PLAIN}"
+                        continue
+                    fi
+                    echo -e "${YELLOW}正在验证 ${_candidate}:${_port} 的 TLS 1.3 与当前地址族可达性...${PLAIN}"
+                    if reality_target_usable_for_family "$_candidate" "$_port"; then
+                        SERVER_NAME="$_candidate"
+                        echo -e "${GREEN}✓ 邻居 SNI 验证通过: ${SERVER_NAME}:${_port}${PLAIN}"
+                        return 0
+                    fi
+                    echo -e "${RED}验证失败：目标不支持 TLS 1.3，或当前 VPS 无法按 $(reality_domain_strategy) 访问${PLAIN}"
+                done
+                ;;
+            *)
+                echo -e "${RED}无效选项，请输入 1 或 2${PLAIN}"
+                ;;
+        esac
+    done
 }
 
 probe_vps_download_mbps() {
@@ -1843,7 +1905,7 @@ service_logs() {
 # 安装 / 修改
 # ============================================================
 configure_vless() {
-    local _default_port _default_sni _target_verified=0
+    local _default_port
     _default_port=$(generate_random_port) || { echo -e "${RED}无法生成可用随机端口${PLAIN}"; return 1; }
     echo -e "\n${SKYBLUE}--- 配置 VLESS + REALITY + Vision 协议 ---${PLAIN}"
 
@@ -1874,24 +1936,7 @@ configure_vless() {
     [ -z "$HANDSHAKE_PORT" ] && HANDSHAKE_PORT="443"
     validate_port "$HANDSHAKE_PORT" || { echo -e "${RED}REALITY 目标端口无效${PLAIN}"; return 1; }
 
-    echo -e "${YELLOW}正在按 $(reality_domain_strategy) 策略检测可用 REALITY 目标...${PLAIN}"
-    if _default_sni=$(select_reality_target "$HANDSHAKE_PORT"); then
-        _target_verified=1
-        echo -e "${GREEN}✓ 已找到可用目标: ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
-    else
-        _default_sni=$(random_sni)
-        echo -e "${YELLOW}! 未能自动验证候选目标，请确认 VPS 可访问 ${_default_sni}:${HANDSHAKE_PORT}${PLAIN}"
-    fi
-    read -r -p "请输入 REALITY 目标域名/SNI [默认 ${_default_sni}]: " SERVER_NAME
-    [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
-    validate_server_name "$SERVER_NAME" || { echo -e "${RED}REALITY 目标域名格式无效${PLAIN}"; return 1; }
-    if [ "$SERVER_NAME" != "$_default_sni" ] || [ "$_target_verified" != "1" ]; then
-        if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
-            echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}"
-        else
-            echo -e "${YELLOW}! 当前 VPS 无法验证该目标，节点可能握手不稳定或无法连接${PLAIN}"
-        fi
-    fi
+    choose_reality_target "$HANDSHAKE_PORT" || return 1
 
     echo -e "${YELLOW}正在生成 REALITY 密钥对...${PLAIN}"
     generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return 1; }
@@ -2001,12 +2046,10 @@ change_config() {
 
     read -r -p "REALITY 目标域名/SNI [当前 ${SERVER_NAME}，输入 auto 自动重选]: " _sni
     if [ "$_sni" = "auto" ] || [ "$_sni" = "AUTO" ]; then
-        echo -e "${YELLOW}正在按 $(reality_domain_strategy) 策略重选 REALITY 目标...${PLAIN}"
-        if _sni=$(select_reality_target "$HANDSHAKE_PORT"); then
+        _sni="$SERVER_NAME"
+        if ! choose_reality_target "$HANDSHAKE_PORT"; then
             SERVER_NAME="$_sni"
-            echo -e "${GREEN}✓ 已选择 REALITY 目标: ${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
-        else
-            echo -e "${RED}自动重选失败，已保留原目标 ${SERVER_NAME}${PLAIN}"
+            echo -e "${RED}重新选择失败，已保留原目标 ${SERVER_NAME}${PLAIN}"
             sleep 2
             return
         fi
@@ -2927,7 +2970,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.28${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.29${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

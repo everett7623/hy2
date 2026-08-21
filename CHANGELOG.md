@@ -4,6 +4,13 @@
 
 ---
 
+## v2.0.29 (2026-08-21)
+
+- VLESS REALITY 安装与 `auto` 重选新增两种 SNI 来源：保留随机大厂候选，并增加 `bgp.tools` 邻居域名辅助流程。
+- 邻居方案只输出当前公网 IP 查询链接，不抓取网页；用户粘贴的域名必须通过格式、TLS 1.3 和当前地址族可达性验证。
+
+---
+
 ## v2.0.28 (2026-08-11)
 
 - VLESS diagnose now treats REALITY handshake targets unreachable under the active address-family strategy as critical, and can auto re-select a reachable target.
