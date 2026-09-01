@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.32
+# 版本：v2.0.33
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-08-28
+# 更新日期: 2026-09-01
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -657,11 +657,33 @@ is_valid_ipv4() {
     '
 }
 
+# 校验 IPv6 字面量语法。只做“含冒号且全为十六进制”会放行 ::、:、1:2:3:4:5:6:7:8:9
+# 这类非法值，而外网探测结果会直接进入分享链接，因此需要完整的分组与 :: 规则校验。
 is_valid_ipv6() {
     case "$1" in
-        *:*) echo "$1" | grep -qE '^[0-9A-Fa-f:]+$' ;;
+        *:*) ;;
         *) return 1 ;;
     esac
+    printf '%s' "$1" | awk '
+        {
+            s = $0
+            if (s !~ /^[0-9A-Fa-f:]+$/) exit 1
+            if (s ~ /:::/) exit 1
+            if (gsub(/::/, "::") > 1) exit 1
+            if (s ~ /^:[^:]/ || s ~ /[^:]:$/) exit 1
+            n = split(s, g, ":")
+            groups = 0
+            for (i = 1; i <= n; i++) {
+                if (g[i] == "") continue
+                if (length(g[i]) > 4) exit 1
+                groups++
+            }
+            if (groups == 0) exit 1
+            if (s ~ /::/) { if (groups > 7) exit 1 }
+            else if (groups != 8) exit 1
+            exit 0
+        }
+    '
 }
 
 get_native_egress_interface() {
@@ -3032,7 +3054,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.32${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.33${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

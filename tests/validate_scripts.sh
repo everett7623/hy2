@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.32"
+EXPECTED_VERSION="v2.0.33"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -284,6 +284,14 @@ grep -q '无法备份当前配置，已取消修改' euservhy2.sh
 [ "$(grep -c '回滚失败：备份' euservhy2.sh)" -eq 2 ]
 ! grep -qE '^    cp "\$HY2_BIN" "\$\{HY2_BIN\}\.bak" 2>/dev/null$' euservhy2.sh
 ! grep -qE '^ +mv "\$\{HY2_BIN\}\.bak" "\$HY2_BIN"$' euservhy2.sh
+# 五个协议脚本的 is_valid_ipv6 必须是完整语法校验，不能退回“含冒号即通过”的宽松写法。
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
+    grep -q '^is_valid_ipv6()' "$script"
+    ! grep -qF "*:*) echo \"\$1\" | grep -qE '^[0-9A-Fa-f:]+\$' ;;" "$script"
+    grep -q 'if (s ~ /:::/) exit 1' "$script"
+    grep -q 'if (gsub(/::/, "::") > 1) exit 1' "$script"
+    grep -q 'if (groups == 0) exit 1' "$script"
+done
 grep -q 'vless-server:start) nohup /usr/local/bin/vless-server' install.sh
 grep -q 'vless-server:stop)' install.sh
 grep -q 'etc/systemd/system/vless-server.service' install.sh

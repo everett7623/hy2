@@ -743,4 +743,26 @@ validate_elf "$tmp/server"
 printf 'html' > "$tmp/bad"
 ! validate_elf "$tmp/bad"
 
+# is_valid_ipv6 必须拒绝结构非法的字面量：旧实现只检查“含冒号且全为十六进制”，
+# 会放行 ::、:、超长分组等值，而外网探测结果会直接进入分享链接。
+! is_valid_ipv6 '::'
+! is_valid_ipv6 ':'
+! is_valid_ipv6 '::::'
+! is_valid_ipv6 '2001:db8:::1'
+! is_valid_ipv6 '1:2:3:4:5:6:7:8:9'
+! is_valid_ipv6 '1:2:3:4:5:6:7'
+! is_valid_ipv6 '12345::1'
+! is_valid_ipv6 'gggg::1'
+! is_valid_ipv6 '1:2:'
+! is_valid_ipv6 ':1:2'
+! is_valid_ipv6 ''
+! is_valid_ipv6 '1.2.3.4'
+is_valid_ipv6 '::1'
+is_valid_ipv6 '2001:db8::1'
+is_valid_ipv6 '1:2:3:4:5:6:7:8'
+is_valid_ipv6 'fe80::1'
+is_valid_ipv6 'abcd::'
+is_valid_ipv6 '2606:4700:4700::1111'
+is_valid_ipv6 '2001:0db8:0000:0000:0000:0000:0000:0001'
+
 echo "VLESS behavior validation passed."
