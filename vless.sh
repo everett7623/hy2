@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.31
+# 版本：v2.0.32
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-08-21
+# 更新日期: 2026-08-28
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -216,7 +216,7 @@ install_dependencies() {
     esac
 
     local _missing=0
-    for _cmd in curl tar openssl ip; do
+    for _cmd in curl tar openssl ip ss; do
         if ! command -v "$_cmd" >/dev/null 2>&1; then
             echo -e "${RED}致命错误: 缺少组件 [ $_cmd ]，请手动安装后重试${PLAIN}"
             _missing=1
@@ -2052,8 +2052,11 @@ change_config() {
     fi
     read_config || { echo -e "${RED}VLESS 配置或元数据损坏，无法安全修改${PLAIN}"; sleep 2; return; }
     local _old_port="$LISTEN_PORT" _was_active=0 _port _ext _uuid _sni _handshake_port _regen
+    local _old_sni="$SERVER_NAME" _old_handshake="$HANDSHAKE_PORT" _sni_via_menu=0
     service_is_active && _was_active=1 || true
     detect_network
+    _old_sni="$SERVER_NAME"
+    _old_handshake="$HANDSHAKE_PORT"
 
     echo -e "\n${YELLOW}修改 VLESS 配置，留空则保留原值。${PLAIN}"
     read -r -p "监听端口 [当前 ${LISTEN_PORT}]: " _port
@@ -2075,26 +2078,27 @@ change_config() {
         UUID="$_uuid"
     fi
 
-    read -r -p "REALITY 目标域名/SNI [当前 ${SERVER_NAME}，输入 auto 自动重选]: " _sni
-    if [ "$_sni" = "auto" ] || [ "$_sni" = "AUTO" ]; then
-        _sni="$SERVER_NAME"
-        if ! choose_reality_target "$HANDSHAKE_PORT"; then
-            SERVER_NAME="$_sni"
-            echo -e "${RED}重新选择失败，已保留原目标 ${SERVER_NAME}${PLAIN}"
-            sleep 2
-            return
-        fi
-    elif [ -n "$_sni" ]; then
-        validate_server_name "$_sni" || { echo -e "${RED}目标域名格式无效${PLAIN}"; sleep 2; return; }
-        SERVER_NAME="$_sni"
-    fi
-
     read -r -p "REALITY 目标端口 [当前 ${HANDSHAKE_PORT}]: " _handshake_port
     if [ -n "$_handshake_port" ]; then
         validate_port "$_handshake_port" || { echo -e "${RED}目标端口无效${PLAIN}"; sleep 2; return; }
         HANDSHAKE_PORT="$_handshake_port"
     fi
-    if [ -n "${_sni}${_handshake_port}" ] && [ "$_sni" != "auto" ] && [ "$_sni" != "AUTO" ]; then
+
+    read -r -p "REALITY 目标域名/SNI [当前 ${SERVER_NAME}，输入 auto 重选]: " _sni
+    if [ "$_sni" = "auto" ] || [ "$_sni" = "AUTO" ]; then
+        if ! choose_reality_target "$HANDSHAKE_PORT"; then
+            SERVER_NAME="$_old_sni"
+            echo -e "${RED}重新选择失败，已保留原目标 ${SERVER_NAME}${PLAIN}"
+            sleep 2
+            return
+        fi
+        _sni_via_menu=1
+    elif [ -n "$_sni" ]; then
+        validate_server_name "$_sni" || { echo -e "${RED}目标域名格式无效${PLAIN}"; sleep 2; return; }
+        SERVER_NAME="$_sni"
+    fi
+    if [ "$_sni_via_menu" = "0" ] && \
+        { [ "$SERVER_NAME" != "$_old_sni" ] || [ "$HANDSHAKE_PORT" != "$_old_handshake" ]; }; then
         echo -e "${YELLOW}正在验证 REALITY 目标...${PLAIN}"
         reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT" \
             && echo -e "${GREEN}✓ REALITY 目标 HTTPS/TLS 可达${PLAIN}" \
@@ -2362,7 +2366,10 @@ acquire_upgrade_lock() {
     fi
     if ! mkdir "$_lock_dir" 2>/dev/null; then
         _owner=$(cat "$_lock_dir/pid" 2>/dev/null || true)
-        if [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; then
+        # 无 pid 说明持有者在写 pid 前就被杀死；锁目录超过 5 分钟未更新才判定为陈旧并回收，
+        # 避免抢走正处于"已建目录、尚未写 pid"这一瞬间的正常持有者。
+        if { [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; } || \
+            { [ -z "$_owner" ] && [ -z "$(find "$_lock_dir" -maxdepth 0 -mmin -5 2>/dev/null)" ]; }; then
             rm -rf "$_lock_dir"
             mkdir "$_lock_dir" 2>/dev/null || return 1
         else
@@ -2705,7 +2712,7 @@ diagnose_vless() {
     echo -e "  ${DIM}监听地址: ${LISTEN_HOST}:${LISTEN_PORT} | 绑定: ${BIND_FAMILY} | NAT: ${NAT_MODE:-0}${PLAIN}"
 
     # --- REALITY 握手目标可达性（按当前地址族策略判定）---
-    local _v4_reachable=0 _v6_reachable=0 _handshake_critical=0 _confirm _new_sni _was_active=0
+    local _v4_reachable=0 _v6_reachable=0 _handshake_critical=0 _confirm _was_active=0 _old_sni
     if reality_target_usable_v4 "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         _v4_ok="${GREEN}✓ 可达${PLAIN}"
         _v4_reachable=1
@@ -2729,22 +2736,46 @@ diagnose_vless() {
     esac
     if [ "$_handshake_critical" = "1" ]; then
         echo -e "  ${RED}✗ 关键: 在 ${_domain_strategy} 策略下，当前 REALITY 目标对握手地址族不可达，客户端将无法完成握手。${PLAIN}"
-        echo -e "  ${DIM}建议: 更换 SNI/端口，或下方选择自动重选可达目标。${PLAIN}"
-        read -r -p "是否自动重选 REALITY 目标并写回配置？[y/N]: " _confirm
+        echo -e "  ${DIM}建议: 可重选大厂 SNI，或改用自定义 SNI。${PLAIN}"
+        read -r -p "是否重选 REALITY 目标并写回配置？[y/N]: " _confirm
         case "$_confirm" in
             [yY])
+                _old_sni="$SERVER_NAME"
                 echo -e "${YELLOW}正在按 ${_domain_strategy} 策略重选 REALITY 目标...${PLAIN}"
-                if _new_sni=$(select_reality_target "$HANDSHAKE_PORT"); then
-                    SERVER_NAME="$_new_sni"
-                    service_is_active && _was_active=1 || true
-                    if write_config && check_config; then
-                        [ "$_was_active" = "0" ] || service_restart || true
-                        echo -e "  ${GREEN}✓ 已更新 REALITY 目标为 ${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
-                    else
-                        echo -e "  ${RED}✗ 写回配置失败，请手动修改配置${PLAIN}"
-                    fi
+                if ! choose_reality_target "$HANDSHAKE_PORT"; then
+                    SERVER_NAME="$_old_sni"
+                    echo -e "  ${RED}✗ 重新选择失败，已保留原目标 ${SERVER_NAME}${PLAIN}"
+                elif ! reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+                    echo -e "  ${RED}✗ 新目标在 ${_domain_strategy} 下仍不可达，已取消写回，保留 ${_old_sni}${PLAIN}"
+                    SERVER_NAME="$_old_sni"
                 else
-                    echo -e "  ${RED}✗ 自动重选失败，请手动指定可达域名${PLAIN}"
+                    service_is_active && _was_active=1 || true
+                    if cp -p "$VLESS_CONFIG" "${VLESS_CONFIG}.bak" 2>/dev/null && \
+                        cp -p "$VLESS_META/config.env" "$VLESS_META/config.env.bak" 2>/dev/null; then
+                        if write_config && check_config; then
+                            [ "$_was_active" = "0" ] || service_restart || true
+                            if [ "$_was_active" = "1" ] && ! wait_for_health; then
+                                mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
+                                mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
+                                SERVER_NAME="$_old_sni"
+                                read_config || true
+                                service_restart || true
+                                echo -e "  ${RED}✗ 服务重启失败，配置已回滚${PLAIN}"
+                            else
+                                rm -f "${VLESS_CONFIG}.bak" "$VLESS_META/config.env.bak"
+                                echo -e "  ${GREEN}✓ 已更新 REALITY 目标为 ${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
+                            fi
+                        else
+                            mv -f "${VLESS_CONFIG}.bak" "$VLESS_CONFIG" 2>/dev/null || true
+                            mv -f "$VLESS_META/config.env.bak" "$VLESS_META/config.env" 2>/dev/null || true
+                            SERVER_NAME="$_old_sni"
+                            echo -e "  ${RED}✗ 写回配置失败，已回滚${PLAIN}"
+                        fi
+                    else
+                        rm -f "${VLESS_CONFIG}.bak" "$VLESS_META/config.env.bak"
+                        SERVER_NAME="$_old_sni"
+                        echo -e "  ${RED}✗ 无法创建配置备份，已取消写回${PLAIN}"
+                    fi
                 fi
                 ;;
         esac
@@ -3001,7 +3032,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.31${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.32${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

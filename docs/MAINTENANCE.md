@@ -9,7 +9,7 @@
 - `/etc/sing-box` 与 `/usr/local/bin/sing-box` 由 AnyTLS、VLESS 或其他服务共享。协议卸载只能删除自身产物；`.singbox-tools-managed` 用于延续项目安装核心的所有权。
 - AnyTLS/VLESS 下载候选核心后，必须先用候选二进制校验 `/etc/sing-box/*.json`，全部通过后才可原子替换共享核心。
 - AnyTLS/VLESS 使用第三方下载镜像时，必须先从 GitHub 官方 Release API 获取对应资产 SHA-256 摘要并校验；无法取得可信摘要时只允许官方 GitHub 资产 URL。
-- AnyTLS/VLESS 核心升级共用 `/var/lock/sing-box-tools-upgrade.lock`；自动任务应错峰，避免并发替换共享二进制。
+- AnyTLS/VLESS/HTTP/SOCKS 核心升级共用 `/var/lock/sing-box-tools-upgrade.lock`；自动任务分别在每周一 04:17、04:27、04:37 执行，避免并发替换共享二进制。
 - 核心替换成功后，升级入口会重启替换前处于运行状态的 AnyTLS/VLESS 服务；任一共享服务启动失败时恢复旧核心并重启原服务。
 - 自动测试不替代真实 VPS 的服务启动、防火墙和客户端连通性验证。
 
@@ -48,10 +48,12 @@
 - `/usr/local/bin/ss-autoupdate.sh`
 - `/usr/local/bin/anytls-autoupdate.sh`
 - `/usr/local/bin/vless-autoupdate.sh`
+- `/usr/local/bin/proxy-autoupdate.sh`
 - `/var/log/hy2-autoupdate.log`
 - `/var/log/ss-autoupdate.log`
 - `/var/log/anytls-autoupdate.log`
 - `/var/log/vless-autoupdate.log`
+- `/var/log/proxy-autoupdate.log`
 - `/etc/sysctl.d/99-hysteria-bbr.conf`
 - `/etc/sysctl.d/99-ss-bbr.conf`
 - `/etc/sysctl.d/99-euserv-bbr.conf`

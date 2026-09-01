@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：everettlabs
-# 版本：v2.0.31
+# 版本：v2.0.32
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-08-21
+# 更新日期: 2026-08-28
 #
 # 支持系统: 完美兼容 Debian, Ubuntu, CentOS, Rocky, Alma, Alpine, Arch 等
 # 支持环境: 标准 VPS / NAT 机器 / 极简系统环境 / GLIBC 免疫
@@ -930,7 +930,10 @@ acquire_upgrade_lock() {
     fi
     if ! mkdir "$_lock_dir" 2>/dev/null; then
         _owner=$(cat "$_lock_dir/pid" 2>/dev/null || true)
-        if [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; then
+        # 无 pid 说明持有者在写 pid 前就被杀死；锁目录超过 5 分钟未更新才判定为陈旧并回收，
+        # 避免抢走正处于"已建目录、尚未写 pid"这一瞬间的正常持有者。
+        if { [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; } || \
+            { [ -z "$_owner" ] && [ -z "$(find "$_lock_dir" -maxdepth 0 -mmin -5 2>/dev/null)" ]; }; then
             rm -rf "$_lock_dir"
             mkdir "$_lock_dir" 2>/dev/null || return 1
         else
@@ -1684,7 +1687,12 @@ acquire_lock() {
     fi
     if ! mkdir "$_dir" 2>/dev/null; then
         _owner=$(cat "$_dir/pid" 2>/dev/null || true)
-        [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null || return 1
+        # 无 pid 说明持有者在写 pid 前就被杀死；锁目录超过 5 分钟未更新才判定为陈旧并回收，
+        # 避免抢走正处于"已建目录、尚未写 pid"这一瞬间的正常持有者。
+        if { [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; } || \
+            { [ -z "$_owner" ] && [ -n "$(find "$_dir" -maxdepth 0 -mmin -5 2>/dev/null)" ]; }; then
+            return 1
+        fi
         rm -rf "$_dir"; mkdir "$_dir" 2>/dev/null || return 1
     fi
     printf '%s' "$$" > "$_dir/pid"
@@ -1992,7 +2000,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.31${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.32${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

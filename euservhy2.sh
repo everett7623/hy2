@@ -3,8 +3,8 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.31
-#  更新时间: 2026-08-21
+#  版本: v2.0.32
+#  更新时间: 2026-08-28
 # ============================================================
 
 # ============================================================
@@ -67,7 +67,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.31"
+SCRIPT_VERSION="2.0.32"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -256,7 +256,18 @@ check_warp_status() {
 enable_nat64_dns() {
     [[ $DNS_PATCHED -eq 1 ]] && return
     step "临时启用 NAT64 DNS（用于访问 IPv4 资源）..."
-    cp /etc/resolv.conf /etc/resolv.conf.hy2bak 2>/dev/null || true
+    # 必须先确保可回滚再改 resolv.conf：备份失败却照样覆盖的话，restore_dns
+    # 找不到备份就不会恢复，机器会永久停留在 NAT64 DNS 上。
+    rm -f /etc/resolv.conf.hy2bak /etc/resolv.conf.hy2absent
+    if [ -e /etc/resolv.conf ]; then
+        cp /etc/resolv.conf /etc/resolv.conf.hy2bak 2>/dev/null || {
+            warn "无法备份 /etc/resolv.conf，已跳过 NAT64 DNS 切换以免 DNS 无法恢复"
+            return
+        }
+    else
+        # 原本就没有 resolv.conf，标记下来，恢复时删除我们创建的文件。
+        : > /etc/resolv.conf.hy2absent
+    fi
     cat > /etc/resolv.conf <<EOF
 # euservhy2.sh NAT64 临时配置，安装后自动恢复
 nameserver ${NAT64_DNS1}
@@ -271,13 +282,18 @@ EOF
 }
 
 restore_dns() {
-    if [[ $DNS_PATCHED -eq 1 ]] && [[ -f /etc/resolv.conf.hy2bak ]]; then
-        cp /etc/resolv.conf.hy2bak /etc/resolv.conf
-        DNS_PATCHED=0
-        # 清除 trap，避免重复触发
-        trap - EXIT INT TERM
-        success "DNS 已恢复原始配置"
+    [[ $DNS_PATCHED -eq 1 ]] || return
+    if [ -f /etc/resolv.conf.hy2bak ]; then
+        cp /etc/resolv.conf.hy2bak /etc/resolv.conf 2>/dev/null || true
+        rm -f /etc/resolv.conf.hy2bak
+    elif [ -f /etc/resolv.conf.hy2absent ]; then
+        # 切换前本就没有 resolv.conf，删掉我们建的那份，回到原始状态。
+        rm -f /etc/resolv.conf /etc/resolv.conf.hy2absent
     fi
+    DNS_PATCHED=0
+    # 清除 trap，避免重复触发
+    trap - EXIT INT TERM
+    success "DNS 已恢复原始配置"
 }
 
 # ============================================================
@@ -1038,8 +1054,16 @@ modify_config() {
         read -rp "  按 Enter 返回..." _
         return
     }
-    cp "${HY2_CONFIG_DIR}/config.yaml" "$config_backup"
-    cp "${HY2_CONFIG_DIR}/node.conf" "$node_backup"
+    # mktemp 已经建出空文件，备份 cp 若失败就会留下空“备份”，
+    # 回滚时反而会用空文件覆盖掉正常配置，因此必须校验备份非空。
+    if ! cp "${HY2_CONFIG_DIR}/config.yaml" "$config_backup" 2>/dev/null || \
+        ! cp "${HY2_CONFIG_DIR}/node.conf" "$node_backup" 2>/dev/null || \
+        [ ! -s "$config_backup" ] || [ ! -s "$node_backup" ]; then
+        rm -f "$config_backup" "$node_backup"
+        error "无法备份当前配置，已取消修改（未做任何改动）"
+        read -rp "  按 Enter 返回..." _
+        return
+    fi
 
     echo -e "  当前端口: ${CYAN}${NODE_PORT}${NC}"
     echo -ne "  新端口 ${DIM}[留空保持]${NC}: "
@@ -1175,7 +1199,13 @@ do_upgrade() {
     trap __upgrade_recover EXIT INT TERM
 
     systemctl stop hysteria-server 2>/dev/null
-    cp "$HY2_BIN" "${HY2_BIN}.bak" 2>/dev/null
+    # 备份失败就没有回滚路径了，必须在覆盖二进制之前中止，并把刚停掉的服务拉回来。
+    if ! cp "$HY2_BIN" "${HY2_BIN}.bak" 2>/dev/null; then
+        trap - EXIT INT TERM
+        systemctl start hysteria-server 2>/dev/null || true
+        error "无法备份现有二进制，已取消升级（未做任何改动）"
+        read -rp "  按 Enter 返回..." _; return
+    fi
     info "旧版本已备份至 ${HY2_BIN}.bak"
 
     if install_hysteria2_binary; then
@@ -1189,17 +1219,23 @@ do_upgrade() {
             rm -f "${HY2_BIN}.bak"
         else
             error "升级后服务启动失败，回滚中..."
-            mv "${HY2_BIN}.bak" "$HY2_BIN"
-            systemctl start hysteria-server
-            warn "已回滚至旧版本 ${cur_ver}"
+            if mv "${HY2_BIN}.bak" "$HY2_BIN" 2>/dev/null; then
+                systemctl start hysteria-server
+                warn "已回滚至旧版本 ${cur_ver}"
+            else
+                error "回滚失败：备份 ${HY2_BIN}.bak 不可用，请手动恢复二进制"
+            fi
         fi
     else
         restore_dns
         trap __upgrade_recover EXIT INT TERM  # re-set: restore_dns 内部会清除 trap
         error "下载失败，回滚中..."
-        mv "${HY2_BIN}.bak" "$HY2_BIN"
-        systemctl start hysteria-server
-        warn "已回滚至旧版本 ${cur_ver}"
+        if mv "${HY2_BIN}.bak" "$HY2_BIN" 2>/dev/null; then
+            systemctl start hysteria-server
+            warn "已回滚至旧版本 ${cur_ver}"
+        else
+            error "回滚失败：备份 ${HY2_BIN}.bak 不可用，请手动恢复二进制"
+        fi
     fi
 
     # 升级完成（成功或已回滚），清除中断保护

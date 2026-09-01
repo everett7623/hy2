@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.31
+# 版本：v2.0.32
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-08-21
+# 更新日期: 2026-08-28
 #====================================================================================
 
 # ============================================================
@@ -136,12 +136,14 @@ make_tmp() {
 
 if command -v curl >/dev/null 2>&1 && make_tmp && curl -fsSL --connect-timeout 15 --max-time 60 "$INSTALL_URL" -o "$_tmp" 2>/dev/null && [ -s "$_tmp" ] && bash -n "$_tmp" 2>/dev/null; then
     cp "$_tmp" "$CACHE_FILE" 2>/dev/null && chmod +x "$CACHE_FILE" 2>/dev/null || true
-    exec bash "$_tmp" "$@"
+    bash "$_tmp" "$@"
+    exit $?
 fi
 
 if [ -s "$CACHE_FILE" ] && bash -n "$CACHE_FILE" 2>/dev/null; then
     echo "[WARN] 远程主入口不可用，使用本地缓存: $CACHE_FILE"
-    exec bash "$CACHE_FILE" "$@"
+    bash "$CACHE_FILE" "$@"
+    exit $?
 fi
 
 echo "[ERROR] 无法加载 Sing-box Multi-Protocol Tools，请检查网络或重新运行:"
@@ -392,7 +394,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.31${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.32${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -769,7 +771,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.31" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.32" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 

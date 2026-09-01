@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.31（2026-08-21） · 本次更新：将 VLESS REALITY 第二种 SNI 来源明确命名为自定义 SNI，bgp.tools 仅作为可选筛选辅助。
+> 当前版本：v2.0.32（2026-08-28） · 本次更新：错开 HTTP/SOCKS 与 VLESS 的共享核心自动更新时间；VLESS 诊断重选改为双 SNI 来源并在写回前备份回滚；AnyTLS 与 HTTP/SOCKS 补齐死 IPv6 判定，VLESS 依赖校验补上 ss；修复升级锁永久死锁、EUserv NAT64 DNS 无法恢复与升级回滚谎报，以及 sb 临时文件泄漏。
 
 ## 目录
 

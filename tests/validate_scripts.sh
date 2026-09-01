@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash"
-EXPECTED_VERSION="v2.0.31"
+EXPECTED_VERSION="v2.0.32"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -235,7 +235,55 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q '^generate_random_port()' "$script"
 done
 ! grep -qE '默认 (18888|28888|38888|48888)' hy2.sh ss.sh anytls.sh vless.sh proxy.sh
+grep -q '17 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' anytls.sh
 grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
+grep -q '37 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
+! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
+grep -q '每周一 04:37' proxy.sh
+grep -q '是否重选 REALITY 目标并写回配置' vless.sh
+grep -q 'choose_reality_target "$HANDSHAKE_PORT"' vless.sh
+! grep -q 'select_reality_target "$HANDSHAKE_PORT"' vless.sh
+awk '
+    /REALITY 目标端口/ { port_seen=1 }
+    /REALITY 目标域名\/SNI/ {
+        if (!port_seen) {
+            print "VLESS SNI prompt appears before handshake port" > "/dev/stderr"
+            exit 1
+        }
+        port_seen=0
+    }
+' vless.sh
+# service_is_healthy 硬依赖 ss：缺 ss 时健康检查恒失败，会把正常安装/升级误判为失败并回滚。
+# 因此五个脚本的两处依赖列表都必须把 ss 列为致命缺失项。
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
+    grep -q 'command -v ss >/dev/null 2>&1 || return 1' "$script"
+    [ "$(grep -c 'for _cmd in .* ss; do' "$script")" -eq 2 ]
+done
+# 死 IPv6（接口有全局地址但无默认路由且外网不可达）必须按纯 IPv4 处理，
+# 否则出站/握手拨号解析到 AAAA 后拨向死路由，连接全部超时。
+for script in anytls.sh vless.sh proxy.sh; do
+    grep -q '^has_default_ipv6_route()' "$script"
+    grep -q 'if \[ -n "\$_real_ipv6" \] && { \[ "\$_ipv6_reachable" = "1" \] || has_default_ipv6_route; }; then' "$script"
+    ! grep -q 'if is_valid_ipv6 "\$_ip"; then PUBLIC_IPV6="\$_ip"; HAS_IPV6=1; break; fi' "$script"
+done
+# mkdir 兜底锁（无 flock 的系统）：持有者若在写 pid 前被杀，锁目录会没有 pid 文件。
+# 旧逻辑对这种目录永远拒绝回收，升级会被静默跳过；必须按目录 mtime 判定陈旧后回收。
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
+    grep -q 'maxdepth 0 -mmin -5' "$script"
+    ! grep -q '\[ -n "$_owner" \] && ! kill -0 "$_owner" 2>/dev/null || return 1' "$script"
+done
+[ "$(grep -c 'maxdepth 0 -mmin -5' hy2.sh)" -eq 2 ]
+[ "$(grep -c 'maxdepth 0 -mmin -5' ss.sh)" -eq 2 ]
+# NAT64 DNS 切换必须可回滚：备份失败却照样覆盖 resolv.conf 会导致 DNS 永久停留在 NAT64。
+! grep -q 'cp /etc/resolv.conf /etc/resolv.conf.hy2bak 2>/dev/null || true' euservhy2.sh
+grep -q 'resolv.conf.hy2absent' euservhy2.sh
+grep -q '已跳过 NAT64 DNS 切换' euservhy2.sh
+# euservhy2.sh 升级/改配置：备份失败必须中止，回滚失败不得谎报“已回滚”。
+grep -q '无法备份现有二进制，已取消升级' euservhy2.sh
+grep -q '无法备份当前配置，已取消修改' euservhy2.sh
+[ "$(grep -c '回滚失败：备份' euservhy2.sh)" -eq 2 ]
+! grep -qE '^    cp "\$HY2_BIN" "\$\{HY2_BIN\}\.bak" 2>/dev/null$' euservhy2.sh
+! grep -qE '^ +mv "\$\{HY2_BIN\}\.bak" "\$HY2_BIN"$' euservhy2.sh
 grep -q 'vless-server:start) nohup /usr/local/bin/vless-server' install.sh
 grep -q 'vless-server:stop)' install.sh
 grep -q 'etc/systemd/system/vless-server.service' install.sh
@@ -305,8 +353,14 @@ fi
 
 bash -n "$tmp"
 grep -q 'CACHE_FILE="${CACHE_DIR}/install.sh"' "$tmp"
-grep -q 'exec bash "$_tmp" "$@"' "$tmp"
-grep -q 'exec bash "$CACHE_FILE" "$@"' "$tmp"
+# exec 会替换掉当前进程，EXIT trap 不再触发，$_tmp 会每次运行都残留在 /tmp；
+# 必须以子进程运行并透传退出码，让 cleanup 正常清理临时文件。
+! grep -q 'exec bash "$_tmp" "$@"' "$tmp"
+! grep -q 'exec bash "$CACHE_FILE" "$@"' "$tmp"
+grep -q 'bash "$_tmp" "$@"' "$tmp"
+grep -q 'bash "$CACHE_FILE" "$@"' "$tmp"
+grep -q 'trap cleanup EXIT INT TERM' "$tmp"
+[ "$(grep -c '^    exit \$?$' "$tmp")" -eq 2 ]
 rm -f "$tmp"
 
 echo "Static script validation passed."

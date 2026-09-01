@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.31
+# 版本：v2.0.32
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-08-21
+# 更新日期: 2026-08-28
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -519,6 +519,14 @@ warn_streaming_egress() {
     check_egress_ip
 }
 
+# 是否存在默认 IPv6 路由。用于区分"分到 IPv6 地址但路由已死"的廉价 VPS：
+# 这类机器接口上有全局 IPv6，但既连不通外网又无默认路由，必须按纯 IPv4 处理，
+# 否则 sing-box 出站拨号会解析到 AAAA 并拨向死 IPv6，导致连接全部超时。
+has_default_ipv6_route() {
+    command -v ip >/dev/null 2>&1 || return 1
+    ip -6 route show default 2>/dev/null | grep -q .
+}
+
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
     NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; DEFAULT_EGRESS_IPV4=""; WARP_ACTIVE=0; BIND_INTERFACE=""; BIND_FAMILY="v4"; LISTEN_HOST="::"
@@ -528,9 +536,10 @@ detect_network() {
     DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
     BIND_INTERFACE=$(get_native_egress_interface 2>/dev/null || true)
 
+    local _ipv6_probe="" _ipv6_reachable=0
     for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
         _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
-        if is_valid_ipv6 "$_ip"; then PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break; fi
+        if is_valid_ipv6 "$_ip"; then _ipv6_probe="$_ip"; _ipv6_reachable=1; break; fi
     done
 
     if command -v ip >/dev/null 2>&1; then
@@ -542,13 +551,19 @@ detect_network() {
                 if (addr !~ /^fe80:/ && addr !~ /^f[cd][0-9a-f][0-9a-f]:/ && addr !~ /^2606:4700:/) { print addr; exit }
             }
         ')
-        if [ -n "$_real_ipv6" ]; then
+        # 接口有全局 IPv6 时，仅当"外网可达"或"存在默认 IPv6 路由"才认定可用；
+        # 否则是死 IPv6（有地址无路由），按纯 IPv4 处理，避免出站拨号走死路由超时。
+        if [ -n "$_real_ipv6" ] && { [ "$_ipv6_reachable" = "1" ] || has_default_ipv6_route; }; then
             HAS_IPV6=1
             PUBLIC_IPV6="$_real_ipv6"
         else
             HAS_IPV6=0
             PUBLIC_IPV6=""
         fi
+    else
+        # 无 ip 命令时只能依赖外网探测结果。
+        HAS_IPV6="$_ipv6_reachable"
+        PUBLIC_IPV6="$_ipv6_probe"
     fi
 
     _ip=$(get_native_public_ipv4 2>/dev/null || true)
@@ -1905,7 +1920,10 @@ acquire_upgrade_lock() {
     fi
     if ! mkdir "$_lock_dir" 2>/dev/null; then
         _owner=$(cat "$_lock_dir/pid" 2>/dev/null || true)
-        if [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; then
+        # 无 pid 说明持有者在写 pid 前就被杀死；锁目录超过 5 分钟未更新才判定为陈旧并回收，
+        # 避免抢走正处于"已建目录、尚未写 pid"这一瞬间的正常持有者。
+        if { [ -n "$_owner" ] && ! kill -0 "$_owner" 2>/dev/null; } || \
+            { [ -z "$_owner" ] && [ -z "$(find "$_lock_dir" -maxdepth 0 -mmin -5 2>/dev/null)" ]; }; then
             rm -rf "$_lock_dir"
             mkdir "$_lock_dir" 2>/dev/null || return 1
         else
@@ -2070,8 +2088,8 @@ AUTOUPDATE_EOF
     chmod +x "$AUTO_UPDATE_SCRIPT"
 
     if command -v crontab >/dev/null 2>&1; then
-        (crontab -l 2>/dev/null | grep -v "$AUTO_UPDATE_SCRIPT"; echo "27 4 * * 1 $AUTO_UPDATE_SCRIPT") | crontab -
-        echo -e "${GREEN}[OK] 已设置每周一 04:27 自动检查 sing-box 更新${PLAIN}"
+        (crontab -l 2>/dev/null | grep -v "$AUTO_UPDATE_SCRIPT"; echo "37 4 * * 1 $AUTO_UPDATE_SCRIPT") | crontab -
+        echo -e "${GREEN}[OK] 已设置每周一 04:37 自动检查 sing-box 更新${PLAIN}"
     else
         echo -e "${YELLOW}系统未安装 crontab，请手动安装 cron 后再设置自动升级${PLAIN}"
     fi
@@ -2322,7 +2340,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.31${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.32${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

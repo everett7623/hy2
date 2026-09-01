@@ -469,6 +469,107 @@ $out
 EOF
 )
 
+# 诊断握手不可达时走双 SNI 来源，写回前备份，失败则回滚。
+(
+_diag_dir="$tmp/diagnose-reselect"
+mkdir -p "$_diag_dir/meta"
+VLESS_CONFIG="$_diag_dir/vless.json"
+VLESS_META="$_diag_dir/meta"
+read_config() { return 0; }
+check_config() { return 0; }
+service_is_active() { return 1; }
+wait_for_health() { return 0; }
+probe_vps_download_mbps() { return 1; }
+ss() { return 1; }
+sysctl() { return 1; }
+nstat() { return 1; }
+ip() { return 1; }
+tc() { return 1; }
+reality_target_usable_v4() { return 1; }
+reality_target_usable_v6() { return 1; }
+reality_target_usable_for_family() { [ "$1" = 'neighbor.example' ]; }
+choose_reality_target() { SERVER_NAME='neighbor.example'; return 0; }
+write_config() { printf '%s' "$SERVER_NAME" > "$_diag_dir/wrote-sni"; return 0; }
+printf 'old-json\n' > "$VLESS_CONFIG"
+printf 'old-meta\n' > "$VLESS_META/config.env"
+SERVER_NAME=unreachable.example
+HANDSHAKE_PORT=443
+BIND_FAMILY=v4
+LISTEN_PORT=8443
+out=$(printf 'y\n' | diagnose_vless)
+grep -q '已更新 REALITY 目标为 neighbor.example:443' <<EOF
+$out
+EOF
+[ "$(cat "$_diag_dir/wrote-sni")" = 'neighbor.example' ]
+[ ! -f "${VLESS_CONFIG}.bak" ]
+[ ! -f "$VLESS_META/config.env.bak" ]
+)
+
+(
+_diag_dir="$tmp/diagnose-skip"
+mkdir -p "$_diag_dir/meta"
+VLESS_CONFIG="$_diag_dir/vless.json"
+VLESS_META="$_diag_dir/meta"
+read_config() { return 0; }
+check_config() { return 0; }
+service_is_active() { return 1; }
+probe_vps_download_mbps() { return 1; }
+ss() { return 1; }
+sysctl() { return 1; }
+nstat() { return 1; }
+ip() { return 1; }
+tc() { return 1; }
+reality_target_usable_v4() { return 1; }
+reality_target_usable_v6() { return 1; }
+reality_target_usable_for_family() { return 1; }
+choose_reality_target() { SERVER_NAME='random.example'; return 0; }
+write_config() { printf 'should-not-write' > "$_diag_dir/wrote-sni"; return 0; }
+printf 'old-json\n' > "$VLESS_CONFIG"
+printf 'old-meta\n' > "$VLESS_META/config.env"
+SERVER_NAME=unreachable.example
+HANDSHAKE_PORT=443
+BIND_FAMILY=v4
+LISTEN_PORT=8443
+out=$(printf 'y\n' | diagnose_vless)
+grep -q '仍不可达，已取消写回' <<EOF
+$out
+EOF
+[ ! -f "$_diag_dir/wrote-sni" ]
+[ "$SERVER_NAME" = 'unreachable.example' ]
+)
+
+(
+_diag_dir="$tmp/diagnose-rollback"
+mkdir -p "$_diag_dir/meta"
+VLESS_CONFIG="$_diag_dir/vless.json"
+VLESS_META="$_diag_dir/meta"
+read_config() { return 0; }
+check_config() { return 0; }
+service_is_active() { return 1; }
+probe_vps_download_mbps() { return 1; }
+ss() { return 1; }
+sysctl() { return 1; }
+nstat() { return 1; }
+ip() { return 1; }
+tc() { return 1; }
+reality_target_usable_v4() { return 1; }
+reality_target_usable_v6() { return 1; }
+reality_target_usable_for_family() { [ "$1" = 'neighbor.example' ]; }
+choose_reality_target() { SERVER_NAME='neighbor.example'; return 0; }
+write_config() { printf 'new-json\n' > "$VLESS_CONFIG"; return 1; }
+printf 'old-json\n' > "$VLESS_CONFIG"
+printf 'old-meta\n' > "$VLESS_META/config.env"
+SERVER_NAME=unreachable.example
+HANDSHAKE_PORT=443
+BIND_FAMILY=v4
+LISTEN_PORT=8443
+out=$(printf 'y\n' | diagnose_vless)
+grep -q '写回配置失败，已回滚' <<EOF
+$out
+EOF
+[ "$(cat "$VLESS_CONFIG")" = 'old-json' ]
+)
+
 # wait_for_health：第三次才成功时应正常返回，且恰好尝试了三次。
 (
 _attempt=0

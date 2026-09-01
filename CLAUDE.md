@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.31 (2026-08-21)
+v2.0.32 (2026-08-28)
 
 ## Project overview
 
@@ -90,7 +90,7 @@ During installation, `vless.sh` offers two SNI sources. The default keeps the ex
 
 REALITY targets are only used for handshake camouflage — they do NOT carry client download traffic after the handshake. Users can manually specify alternative valid domains and ports during installation or config modification.
 
-The script also provides a read-only diagnostic entry point:
+The script also provides a diagnostic entry point. When the current REALITY target is unreachable under the active address-family strategy, it can interactively re-select a big-tech or custom SNI and write it back with backup/rollback:
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh) diagnose
 ```
@@ -179,6 +179,10 @@ Each protocol script generates different client config formats. Use the protocol
 | HTTP/SOCKS config | `/etc/sing-box/proxy.json` |
 | HTTP/SOCKS metadata | `/etc/sing-box/proxy-meta/` |
 | Shared sing-box ownership marker | `/etc/sing-box/.singbox-tools-managed` |
+| Hysteria 2 auto-update script | `/usr/local/bin/hy2-autoupdate.sh` |
+| AnyTLS auto-update script | `/usr/local/bin/anytls-autoupdate.sh` |
+| VLESS auto-update script | `/usr/local/bin/vless-autoupdate.sh` |
+| HTTP/SOCKS auto-update script | `/usr/local/bin/proxy-autoupdate.sh` |
 | Hysteria 2 systemd service | `/etc/systemd/system/hysteria-server.service` |
 | AnyTLS systemd service | `/etc/systemd/system/anytls-server.service` |
 | VLESS systemd service | `/etc/systemd/system/vless-server.service` |
