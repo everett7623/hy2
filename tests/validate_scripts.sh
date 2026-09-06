@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh"
-EXPECTED_VERSION="v2.0.35"
+EXPECTED_VERSION="v2.0.36"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -259,6 +259,26 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q 'command -v ss >/dev/null 2>&1 || return 1' "$script"
     [ "$(grep -c 'for _cmd in .* ss; do' "$script")" -eq 2 ]
 done
+# 公网 IP 探测站不能全部依赖 DNS，也不能全部落在同一个 CDN 之后：
+# 旧表的 ipify / ip.gs / icanhazip 同在 Cloudflare 且都要解析域名，
+# 一次 DNS 故障或单点阻断就会让全部探测一起失败。
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh install.sh; do
+    grep -q '^extract_probe_ip()' "$script"
+    grep -q 'https://1.1.1.1/cdn-cgi/trace' "$script"
+    grep -q 'https://\[2606:4700:4700::1111\]/cdn-cgi/trace' "$script"
+    grep -q 'checkip.amazonaws.com' "$script"
+    ! grep -q 'for _url in "https://api.ipify.org" "https://ip.gs"' "$script"
+done
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
+    grep -q '^get_default_public_ipv6()' "$script"
+    grep -q 'for _url in \$IPV4_PROBE_URLS; do' "$script"
+    grep -q 'for _url in \$IPV6_PROBE_URLS; do' "$script"
+    # 单端点无回退的探测会重新引入同一类故障。
+    ! grep -q 'curl -s6 --max-time 6 https://api6.ipify.org' "$script"
+done
+grep -q '^probe_public_ip()' install.sh
+! grep -q 'curl -4 -s --max-time 3 ip.sb' install.sh
+
 # 公网 IP 探测站不可达时，不得直接判定“本机没有 IPv4”。五个协议脚本都必须保留
 # “本机原生全局 IPv4 + 默认 IPv4 路由”兜底，否则双栈机被误判为纯 IPv6，
 # 节点只下发 IPv6 地址，IPv4 客户端全部连不上。

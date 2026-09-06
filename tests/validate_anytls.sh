@@ -575,4 +575,59 @@ detect_network >/dev/null 2>&1
 [ "$BIND_FAMILY" = "v6" ]
 )
 
+
+# ---------------------------------------------------------------------------
+# 公网 IP 探测：响应解析与多站点回退
+# ---------------------------------------------------------------------------
+# 探测站响应有两种形态：纯地址，以及 Cloudflare trace 的 key=value 多行文本。
+[ "$(printf '203.0.113.5\n' | extract_probe_ip)" = '203.0.113.5' ]
+[ "$(printf '  203.0.113.5  \r\n' | extract_probe_ip)" = '203.0.113.5' ]
+[ "$(printf 'fl=abc\nh=1.1.1.1\nip=203.0.113.5\nts=1\n' | extract_probe_ip)" = '203.0.113.5' ]
+[ "$(printf 'fl=abc\nip=2001:db8::5\nts=1\n' | extract_probe_ip)" = '2001:db8::5' ]
+[ -z "$(printf '' | extract_probe_ip)" ]
+# HTML 错误页不得被当成地址，必须留给 is_valid_* 拦截。
+! is_valid_ipv4 "$(printf '<html>\n<body>x</body>\n' | extract_probe_ip)"
+
+# 探测站清单必须含免 DNS 的字面量地址端点：DNS 故障时仍能取到公网地址。
+case "$IPV4_PROBE_URLS" in *'https://1.1.1.1/cdn-cgi/trace'*) ;; *) exit 1 ;; esac
+case "$IPV6_PROBE_URLS" in *'https://[2606:4700:4700::1111]/cdn-cgi/trace'*) ;; *) exit 1 ;; esac
+# 清单不能全部落在同一个 CDN 之后，否则单点故障会让所有探测一起失败。
+case "$IPV4_PROBE_URLS" in *'checkip.amazonaws.com'*) ;; *) exit 1 ;; esac
+
+# 前面的站点全部失败时必须继续尝试后面的站点，而不是直接放弃。
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+IPV4_PROBE_URLS="https://probe-a.invalid https://probe-b.invalid https://probe-c.invalid"
+probe_log=$(mktemp)
+curl() {
+    echo x >> "$probe_log"
+    case " $* " in *' https://probe-c.invalid '*) printf '203.0.113.9' ;; *) return 1 ;; esac
+}
+[ "$(get_default_public_ipv4)" = '203.0.113.9' ]
+[ "$(wc -l < "$probe_log")" -eq 3 ]
+rm -f "$probe_log"
+)
+
+# 全部站点失败时返回非零，由调用方走本机路由兜底。
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+IPV4_PROBE_URLS="https://probe-a.invalid https://probe-b.invalid"
+curl() { return 1; }
+! get_default_public_ipv4
+)
+
+# IPv6 探测同样支持多站点回退，且只接受合法 IPv6 字面量。
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+IPV6_PROBE_URLS="https://probe-a.invalid https://probe-b.invalid"
+curl() { case " $* " in *' https://probe-b.invalid '*) printf 'fl=x\nip=2001:db8::9\n' ;; *) return 1 ;; esac; }
+[ "$(get_default_public_ipv6)" = '2001:db8::9' ]
+)
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+IPV6_PROBE_URLS="https://probe-a.invalid"
+curl() { printf 'upstream error'; }
+! get_default_public_ipv6
+)
+
 echo "AnyTLS behavior validation passed."

@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.35
+# 版本：v2.0.36
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -320,11 +320,42 @@ get_bbr_status() {
     fi
 }
 
+# 公网 IP 探测站。混合不同 ASN，并各放一个免 DNS 的字面量地址端点：
+# 单一 CDN 被阻断或 DNS 故障时，菜单顶部的 IP 状态不再整片显示"无"。
+IPV4_PROBE_URLS="${IPV4_PROBE_URLS:-https://api.ipify.org https://1.1.1.1/cdn-cgi/trace https://checkip.amazonaws.com https://ip.sb https://ipv4.icanhazip.com}"
+IPV6_PROBE_URLS="${IPV6_PROBE_URLS:-https://api6.ipify.org https://[2606:4700:4700::1111]/cdn-cgi/trace https://ipv6.icanhazip.com}"
+
+# 探测响应可能是纯地址，也可能是 Cloudflare trace 的 key=value 多行文本。
+extract_probe_ip() {
+    awk '
+        /^ip=/ { sub(/^ip=/, ""); print; found = 1; exit }
+        NR == 1 && $0 !~ /=/ { first = $0 }
+        END { if (!found && first != "") print first }
+    ' | tr -d ' \t\r\n'
+}
+
+probe_public_ip() {
+    local _family="$1" _ip _url _urls
+    case "$_family" in
+        6) _urls="$IPV6_PROBE_URLS" ;;
+        *) _urls="$IPV4_PROBE_URLS" ;;
+    esac
+    for _url in $_urls; do
+        _ip=$(curl -"$_family" -s --connect-timeout 3 --max-time 5 "$_url" 2>/dev/null | extract_probe_ip)
+        case "$_ip" in
+            "") continue ;;
+            *[!0-9A-Fa-f.:]*) continue ;;
+            *) printf '%s' "$_ip"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
 get_status() {
     local _ver _ipv6 _country
-    NET_IPV4=$(curl -4 -s --max-time 3 ip.sb 2>/dev/null | tr -d '[:space:]')
+    NET_IPV4=$(probe_public_ip 4 2>/dev/null || true)
     _ipv6=$(get_real_ipv6 2>/dev/null || true)
-    [ -z "$_ipv6" ] && _ipv6=$(curl -6 -s --max-time 3 api6.ipify.org 2>/dev/null | tr -d '[:space:]')
+    [ -z "$_ipv6" ] && _ipv6=$(probe_public_ip 6 2>/dev/null || true)
     NET_IPV6="${_ipv6:-无}"
     NET_IPV4="${NET_IPV4:-无}"
     OS_INFO=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)
@@ -394,7 +425,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.35${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.36${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -771,7 +802,7 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.35" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.36" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 

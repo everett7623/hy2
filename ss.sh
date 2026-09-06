@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：everettlabs
-# 版本：v2.0.35
+# 版本：v2.0.36
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -181,6 +181,21 @@ detect_warp() {
     command -v warp-cli >/dev/null 2>&1 && warp-cli status 2>/dev/null | grep -qiE 'connected|已连接'
 }
 
+# 公网 IP 探测站。混合不同 ASN，并各放一个免 DNS 的字面量地址端点：
+# 原表三个站点同在 Cloudflare 之后且全部依赖 DNS，会一起失败，
+# 导致有公网 IPv4 的机器退化到本机路由兜底甚至被误判。
+IPV4_PROBE_URLS="${IPV4_PROBE_URLS:-https://api.ipify.org https://1.1.1.1/cdn-cgi/trace https://checkip.amazonaws.com https://ip.gs https://ipv4.icanhazip.com}"
+IPV6_PROBE_URLS="${IPV6_PROBE_URLS:-https://api6.ipify.org https://[2606:4700:4700::1111]/cdn-cgi/trace https://ipv6.icanhazip.com}"
+
+# 探测响应可能是纯地址，也可能是 Cloudflare trace 的 key=value 多行文本。
+extract_probe_ip() {
+    awk '
+        /^ip=/ { sub(/^ip=/, ""); print; found = 1; exit }
+        NR == 1 && $0 !~ /=/ { first = $0 }
+        END { if (!found && first != "") print first }
+    ' | tr -d ' \t\r\n'
+}
+
 get_native_public_ipv4() {
     command -v ip >/dev/null 2>&1 || return 1
     local _iface _local_ip _ip _url
@@ -188,17 +203,29 @@ get_native_public_ipv4() {
     [ -n "$_iface" ] || return 1
     _local_ip=$(ip -4 addr show dev "$_iface" scope global 2>/dev/null | awk '/inet / { sub(/\/.*/, "", $2); print $2; exit }')
     [ -n "$_local_ip" ] || return 1
-    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --interface "$_local_ip" --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+    for _url in $IPV4_PROBE_URLS; do
+        _ip=$(curl -s4 --interface "$_local_ip" --connect-timeout 3 --max-time 5 "$_url" 2>/dev/null | extract_probe_ip)
         is_valid_ipv4 "$_ip" && { printf '%s' "$_ip"; return 0; }
+    done
+    return 1
+}
+
+get_default_public_ipv6() {
+    local _ip _url
+    for _url in $IPV6_PROBE_URLS; do
+        _ip=$(curl -s6 --connect-timeout 3 --max-time 5 "$_url" 2>/dev/null | extract_probe_ip)
+        if is_valid_ipv6 "$_ip"; then
+            printf '%s' "$_ip"
+            return 0
+        fi
     done
     return 1
 }
 
 get_default_public_ipv4() {
     local _ip _url
-    for _url in "https://api.ipify.org" "https://ip.gs" "https://ipv4.icanhazip.com"; do
-        _ip=$(curl -s4 --connect-timeout 3 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+    for _url in $IPV4_PROBE_URLS; do
+        _ip=$(curl -s4 --connect-timeout 3 --max-time 5 "$_url" 2>/dev/null | extract_probe_ip)
         is_valid_ipv4 "$_ip" && { printf '%s' "$_ip"; return 0; }
     done
     return 1
@@ -256,8 +283,8 @@ detect_network() {
     DEFAULT_EGRESS_IPV4=$(get_default_public_ipv4 2>/dev/null || true)
 
     # IPv6 优先探测
-    for _url in "https://api6.ipify.org" "https://ipv6.icanhazip.com"; do
-        _ip=$(curl -s6 --max-time 6 "$_url" 2>/dev/null | tr -d '[:space:]')
+    for _url in $IPV6_PROBE_URLS; do
+        _ip=$(curl -s6 --connect-timeout 3 --max-time 5 "$_url" 2>/dev/null | extract_probe_ip)
         if is_valid_ipv6 "$_ip"; then
             PUBLIC_IPV6="$_ip"; HAS_IPV6=1; break
         fi
@@ -1414,7 +1441,7 @@ read_config_vars() {
     # IP 兜底
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         detect_warp || PUBLIC_IP=$(get_default_public_ipv4 2>/dev/null || true)
-        PUBLIC_IPV6=$(curl -s6 --max-time 6 https://api6.ipify.org 2>/dev/null | tr -d '[:space:]')
+        PUBLIC_IPV6=$(get_default_public_ipv6 2>/dev/null || true)
     fi
 }
 
@@ -2074,7 +2101,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.35${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.36${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

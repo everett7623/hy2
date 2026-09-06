@@ -4,6 +4,19 @@
 
 ---
 
+## v2.0.36 (2026-09-07)
+
+- 强化公网 IP 探测，从源头减少 v2.0.35 兜底逻辑被触发的概率。原探测表 `api.ipify.org`、`ip.gs`、`ipv4.icanhazip.com` 三站同在 Cloudflare 之后且全部依赖 DNS 解析，并非独立信源：一次 DNS 故障或单点阻断即导致全部探测失败，机器 IP 检测随之失准。
+- 探测清单改为跨 ASN 组合，并各加入一个免 DNS 的字面量地址端点（IPv4 `https://1.1.1.1/cdn-cgi/trace`、IPv6 `https://[2606:4700:4700::1111]/cdn-cgi/trace`）与 AWS `checkip.amazonaws.com`。DNS 完全不可用时仍能取到公网地址。
+- 新增 `extract_probe_ip()`，同时支持纯地址响应与 Cloudflare trace 的 `key=value` 多行响应；HTML 错误页不会被当作地址，仍由 `is_valid_ipv4` / `is_valid_ipv6` 拦截。
+- 新增 `get_default_public_ipv6()`，节点元数据刷新路径由单端点无回退改为多站点回退，与 IPv4 侧对齐。
+- `install.sh` 主菜单顶部的 IP 状态改用同一套多站点探测，不再因单站不可达而整片显示「无」。
+- `proxy.sh` 的本机 HTTP 代理自检改为遍历探测清单，避免单站故障被误报成代理不通。
+- 单次请求超时从 `--max-time 6` 收紧到 5 秒，抵消站点数量增加带来的最坏耗时。
+- 测试：新增 `extract_probe_ip` 响应解析、多站点回退计数、全失败返回非零、探测清单必须含免 DNS 端点与跨 ASN 站点等用例，并加入对应回归锁断言。
+
+---
+
 ## v2.0.35 (2026-09-07)
 
 - 修复公网 IP 探测站不可达时，双栈 VPS 被误判为「纯 IPv6」的缺陷。此前 `hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh`、`proxy.sh` 的 IPv4 判定完全依赖 `api.ipify.org` 等外部探测站，探测失败即认定本机没有 IPv4；而 IPv6 判定已经支持「本机地址 + 默认路由」兜底，两侧不对称导致有公网 IPv4 的机器只下发 IPv6 节点，IPv4 客户端全部连不上。

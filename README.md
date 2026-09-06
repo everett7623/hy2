@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.35（2026-09-07） · 本次更新：修复公网 IP 探测站不可达时把双栈机误判为纯 IPv6 的缺陷，节点不再只下发 IPv6 地址。
+> 当前版本：v2.0.36（2026-09-07） · 本次更新：公网 IP 探测站改为多 ASN + 免 DNS 端点，避免单点故障导致 IP 检测失败。
 
 ## 目录
 
