@@ -316,4 +316,60 @@ EOF
 [ "$IPV6_ONLY" = "1" ]
 )
 
+
+# ---------------------------------------------------------------------------
+# 版本获取：格式校验与多级回退
+# ---------------------------------------------------------------------------
+[ "$(normalize_ss_tag v1.23.1)" = 'v1.23.1' ]
+[ "$(normalize_ss_tag 1.23.1)" = 'v1.23.1' ]
+[ "$(normalize_ss_tag 'https://github.com/shadowsocks/shadowsocks-rust/releases/tag/v1.23.1')" = 'v1.23.1' ]
+# 重定向兜底失败时 curl 会输出原始请求 URL；它必须被拒绝，
+# 否则会被拼进下载 URL 和压缩包文件名。
+! normalize_ss_tag 'https://github.com/shadowsocks/shadowsocks-rust/releases/latest'
+! normalize_ss_tag ''
+! normalize_ss_tag vlatest
+! normalize_ss_tag v1.23
+
+# API 可用时直接采用。
+(
+curl() { case " $* " in *' https://api.github.com/'*) printf '{"tag_name": "v1.23.1"}' ;; *) return 1 ;; esac; }
+get_latest_version >/dev/null
+[ "$LAST_VERSION" = 'v1.23.1' ]
+)
+
+# API 限频 + github.com 不可达时，必须继续走镜像重定向而不是直接失败。
+(
+curl() {
+    case " $* " in
+        *' https://api.github.com/'*) return 1 ;;
+        *' https://github.com/shadowsocks/shadowsocks-rust/releases/latest '*) printf 'https://github.com/shadowsocks/shadowsocks-rust/releases/latest' ;;
+        *' https://kkgithub.com/shadowsocks/shadowsocks-rust/releases/latest '*) printf 'https://kkgithub.com/shadowsocks/shadowsocks-rust/releases/tag/v1.23.2' ;;
+        *) return 1 ;;
+    esac
+}
+get_latest_version >/dev/null
+[ "$LAST_VERSION" = 'v1.23.2' ]
+)
+
+# 重定向层全部只回原始 URL 时，落到 HTML 抓取层。
+(
+curl() {
+    case " $* " in
+        *' https://api.github.com/'*) return 1 ;;
+        *'/releases/latest '*) printf 'https://github.com/shadowsocks/shadowsocks-rust/releases/latest' ;;
+        *' https://github.com/shadowsocks/shadowsocks-rust/releases '*) printf '<a href="/shadowsocks/shadowsocks-rust/releases/tag/v1.23.3">x</a>' ;;
+        *) return 1 ;;
+    esac
+}
+get_latest_version >/dev/null
+[ "$LAST_VERSION" = 'v1.23.3' ]
+)
+
+# 全部来源失败必须返回非零且不残留脏值。
+(
+curl() { return 1; }
+! get_latest_version >/dev/null 2>&1
+[ -z "$LAST_VERSION" ]
+)
+
 echo 'Shadowsocks network validation passed.'

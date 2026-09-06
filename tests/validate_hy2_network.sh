@@ -307,4 +307,65 @@ detect_network >/dev/null 2>&1
 [ "$IPV6_ONLY" = "1" ]
 )
 
+
+# ---------------------------------------------------------------------------
+# 版本获取：格式校验与多级回退
+# ---------------------------------------------------------------------------
+normalize_hy2_tag app/v2.6.1 >/dev/null
+[ "$(normalize_hy2_tag app/v2.6.1)" = 'app/v2.6.1' ]
+[ "$(normalize_hy2_tag v2.6.1)" = 'app/v2.6.1' ]
+[ "$(normalize_hy2_tag 2.6.1)" = 'app/v2.6.1' ]
+[ "$(normalize_hy2_tag 'https://github.com/apernet/hysteria/releases/tag/app/v2.6.1')" = 'app/v2.6.1' ]
+# 重定向兜底失败时 curl 会输出原始请求 URL；它必须被拒绝，
+# 否则会拼进下载 URL，并让二进制版本校验必然失败、连官方镜像也用不了。
+! normalize_hy2_tag 'https://github.com/apernet/hysteria/releases/latest'
+! normalize_hy2_tag ''
+! normalize_hy2_tag app/vlatest
+! normalize_hy2_tag v2.6
+
+# API 可用时直接采用。
+(
+curl() { case " $* " in *' https://api.github.com/'*) printf '{"tag_name": "app/v2.6.1"}' ;; *) return 1 ;; esac; }
+get_latest_version >/dev/null
+[ "$LAST_VERSION_TAG" = 'app/v2.6.1' ]
+[ "$LAST_VERSION" = 'v2.6.1' ]
+)
+
+# API 限频 + github.com 不可达时，必须继续走镜像重定向而不是直接失败。
+(
+curl() {
+    case " $* " in
+        *' https://api.github.com/'*) return 1 ;;
+        *' https://github.com/apernet/hysteria/releases/latest '*) printf 'https://github.com/apernet/hysteria/releases/latest' ;;
+        *' https://kkgithub.com/apernet/hysteria/releases/latest '*) printf 'https://kkgithub.com/apernet/hysteria/releases/tag/app/v2.6.2' ;;
+        *) return 1 ;;
+    esac
+}
+get_latest_version >/dev/null
+[ "$LAST_VERSION_TAG" = 'app/v2.6.2' ]
+[ "$LAST_VERSION" = 'v2.6.2' ]
+)
+
+# 重定向层全部只回原始 URL 时，落到 HTML 抓取层。
+(
+curl() {
+    case " $* " in
+        *' https://api.github.com/'*) return 1 ;;
+        *'/releases/latest '*) printf 'https://github.com/apernet/hysteria/releases/latest' ;;
+        *' https://github.com/apernet/hysteria/releases '*) printf '<a href="/apernet/hysteria/releases/tag/app/v2.6.3">x</a>' ;;
+        *) return 1 ;;
+    esac
+}
+get_latest_version >/dev/null
+[ "$LAST_VERSION_TAG" = 'app/v2.6.3' ]
+)
+
+# 全部来源失败必须返回非零且不残留脏值，由调用方中止安装。
+(
+curl() { return 1; }
+! get_latest_version >/dev/null 2>&1
+[ -z "$LAST_VERSION_TAG" ]
+[ -z "$LAST_VERSION" ]
+)
+
 echo 'Hysteria 2 network validation passed.'

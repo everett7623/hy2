@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.36（2026-09-07） · 本次更新：公网 IP 探测站改为多 ASN + 免 DNS 端点，避免单点故障导致 IP 检测失败。
+> 当前版本：v2.0.37（2026-09-07） · 本次更新：版本号获取增加格式校验与镜像回退，修复 GitHub 受限时安装被脏 tag 中断的问题。
 
 ## 目录
 

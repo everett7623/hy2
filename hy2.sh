@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：everettlabs
-# 版本：v2.0.36
+# 版本：v2.0.37
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -727,26 +727,78 @@ valid_positive_number() {
 #     LAST_VERSION_TAG — 完整 tag（app/vX.Y.Z），用于构造下载 URL
 # ============================================================
 
+# 校验并规范化 Hysteria 版本 tag。上游 tag 形如 app/v2.6.1。
+# 重定向兜底失败时 curl 仍会输出原始请求 URL，裸 sed 抽不出 tag 就会把整条
+# URL 当成版本号，非空检查拦不住；随后 download_hy2 用它比对二进制实际版本，
+# 连官方永久镜像这条本可用的路径也会被误判为版本不符而中止安装。
+normalize_hy2_tag() {
+    local _tag="$1"
+    _tag=$(printf '%s' "$_tag" | tr -d '[:space:]' | sed -E 's#^.*/tag/##; s#^.*/download/##; s#[?].*$##')
+    [ -n "$_tag" ] || return 1
+    case "$_tag" in
+        app/*) _tag="${_tag#app/}" ;;
+    esac
+    case "$_tag" in
+        v*) ;;
+        *) _tag="v${_tag}" ;;
+    esac
+    printf '%s\n' "$_tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+    printf 'app/%s' "$_tag"
+}
+
+set_hy2_version_tag() {
+    local _candidate _normalized
+    for _candidate in "$@"; do
+        _normalized=$(normalize_hy2_tag "$_candidate" 2>/dev/null || true)
+        if [ -n "$_normalized" ]; then
+            LAST_VERSION_TAG="$_normalized"
+            LAST_VERSION="${_normalized#app/}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 get_latest_version() {
     echo -e "${YELLOW}正在获取最新版本...${PLAIN}"
+    LAST_VERSION_TAG=""
+    LAST_VERSION=""
+    local _candidate _page _url
 
-    # 从 GitHub API 获取完整 tag（如 app/v2.6.1）
-    local _raw_tag
-    _raw_tag=$(curl -Ls --max-time 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+    _candidate=$(curl -fsSL --connect-timeout 8 --max-time 15 \
+        "https://api.github.com/repos/apernet/hysteria/releases/latest" 2>/dev/null \
+        | awk -F'"' '/"tag_name":/ { print $4; exit }' 2>/dev/null || true)
+    set_hy2_version_tag "$_candidate" || true
 
-    # 备用：跟随重定向取 URL 末段
-    if [ -z "$_raw_tag" ]; then
-        _raw_tag=$(curl -Ls --max-time 10 -o /dev/null -w "%{url_effective}" \
-            "https://github.com/apernet/hysteria/releases/latest" | sed 's|.*/tag/||')
+    # GitHub API 限频或被阻断时改走重定向；镜像用于 github.com 不可达的网络。
+    if [ -z "$LAST_VERSION_TAG" ]; then
+        for _url in \
+            "https://github.com/apernet/hysteria/releases/latest" \
+            "https://kkgithub.com/apernet/hysteria/releases/latest" \
+            "https://gh-proxy.com/https://github.com/apernet/hysteria/releases/latest"
+        do
+            _candidate=$(curl -Ls --connect-timeout 8 --max-time 15 -o /dev/null -w "%{url_effective}" "$_url" 2>/dev/null || true)
+            set_hy2_version_tag "$_candidate" && break
+        done
     fi
 
-    [ -z "$_raw_tag" ] && echo -e "${RED}获取版本失败，请检查网络（可能被 GitHub API 限频）${PLAIN}" && return 1
+    if [ -z "$LAST_VERSION_TAG" ]; then
+        for _url in \
+            "https://github.com/apernet/hysteria/releases" \
+            "https://kkgithub.com/apernet/hysteria/releases"
+        do
+            _page=$(curl -fsSL --connect-timeout 8 --max-time 15 "$_url" 2>/dev/null || true)
+            _candidate=$(printf '%s\n' "$_page" \
+                | grep -oE 'apernet/hysteria/releases/(tag|download)/app/v[0-9]+\.[0-9]+\.[0-9]+' \
+                | sed -E 's#.*/(tag|download)/##' | head -1)
+            set_hy2_version_tag "$_candidate" && break
+        done
+    fi
 
-    # 保留完整 tag 用于下载 URL
-    LAST_VERSION_TAG="$_raw_tag"
-    # 剥离 app/ 前缀用于版本对比和显示
-    LAST_VERSION="${_raw_tag#app/}"
+    if [ -z "$LAST_VERSION_TAG" ]; then
+        echo -e "${RED}获取版本失败，请检查网络（可能被 GitHub API 限频）${PLAIN}"
+        return 1
+    fi
 
     echo -e "${GREEN}最新版本: ${LAST_VERSION}${PLAIN}"
 }
@@ -2256,7 +2308,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.36${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.37${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

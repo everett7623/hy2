@@ -4,6 +4,17 @@
 
 ---
 
+## v2.0.37 (2026-09-07)
+
+- 修复 `hy2.sh` 与 `ss.sh` 在 GitHub API 限频时可能把整条 URL 当成版本号的缺陷。原重定向兜底用裸 `sed 's|.*/tag/||'` 提取 tag，而 `curl -w %{url_effective}` 在跳转失败时仍会输出原始请求 URL，抽不出 tag 就原样返回，非空检查无法拦截。
+- 该脏 tag 会被拼进下载 URL；`hy2.sh` 还会用它比对下载到的二进制实际版本，导致官方永久镜像 `download.hysteria.network` 这条本来可用的路径被误判为版本不符，安装直接中止。
+- 新增 `normalize_hy2_tag()` / `set_hy2_version_tag()` 与 `normalize_ss_tag()` / `set_ss_version_tag()`，tag 必须匹配 `vX.Y.Z`（Hysteria 另加 `app/` 前缀）才被接受，与 AnyTLS/VLESS/HTTP\/SOCKS 侧的 `normalize_version_tag()` 对齐。
+- `hy2.sh`、`ss.sh` 的版本获取补齐镜像回退：GitHub API → `github.com` / `kkgithub.com` / `gh-proxy.com` 重定向 → HTML 抓取。此前只有 `github.com` 一条路径，被阻断即彻底失败，而这正是本项目目标用户的常见网络环境。
+- `install.sh` 系统检测的 IPv4/IPv6 连通性判断改用多站点探测并显示实际公网地址，单一探测站被阻断不再误报「FAILED」。
+- 测试：新增 tag 规范化边界、API 可用、镜像重定向回退、HTML 抓取回退、全来源失败返回非零且不残留脏值等用例，并加入格式校验与镜像回退的回归锁断言。
+
+---
+
 ## v2.0.36 (2026-09-07)
 
 - 强化公网 IP 探测，从源头减少 v2.0.35 兜底逻辑被触发的概率。原探测表 `api.ipify.org`、`ip.gs`、`ipv4.icanhazip.com` 三站同在 Cloudflare 之后且全部依赖 DNS 解析，并非独立信源：一次 DNS 故障或单点阻断即导致全部探测失败，机器 IP 检测随之失准。

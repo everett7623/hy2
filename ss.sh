@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：everettlabs
-# 版本：v2.0.36
+# 版本：v2.0.37
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -828,18 +828,73 @@ valid_json_secret() {
 # 获取最新版本 & 下载二进制
 # ============================================================
 
+# 校验并规范化 shadowsocks-rust 版本 tag（形如 v1.23.1）。
+# 重定向兜底失败时 curl 仍会输出原始请求 URL，裸 sed 抽不出 tag 就会把整条
+# URL 当成版本号并拼进下载 URL 与压缩包文件名，非空检查拦不住。
+normalize_ss_tag() {
+    local _tag="$1"
+    _tag=$(printf '%s' "$_tag" | tr -d '[:space:]' | sed -E 's#^.*/tag/##; s#^.*/download/##; s#[?].*$##')
+    [ -n "$_tag" ] || return 1
+    case "$_tag" in
+        v*) ;;
+        *) _tag="v${_tag}" ;;
+    esac
+    printf '%s\n' "$_tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+    printf '%s' "$_tag"
+}
+
+set_ss_version_tag() {
+    local _candidate _normalized
+    for _candidate in "$@"; do
+        _normalized=$(normalize_ss_tag "$_candidate" 2>/dev/null || true)
+        if [ -n "$_normalized" ]; then
+            LAST_VERSION="$_normalized"
+            return 0
+        fi
+    done
+    return 1
+}
+
 get_latest_version() {
     echo -e "${YELLOW}正在获取最新版本...${PLAIN}"
-    LAST_VERSION=$(curl -Ls --max-time 10 \
-        "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+    LAST_VERSION=""
+    local _candidate _page _url
 
+    _candidate=$(curl -fsSL --connect-timeout 8 --max-time 15 \
+        "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" 2>/dev/null \
+        | awk -F'"' '/"tag_name":/ { print $4; exit }' 2>/dev/null || true)
+    set_ss_version_tag "$_candidate" || true
+
+    # GitHub API 限频或被阻断时改走重定向；镜像用于 github.com 不可达的网络。
     if [ -z "$LAST_VERSION" ]; then
-        LAST_VERSION=$(curl -Ls -o /dev/null -w "%{url_effective}" \
-            "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" | sed 's|.*/tag/||')
+        for _url in \
+            "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" \
+            "https://kkgithub.com/shadowsocks/shadowsocks-rust/releases/latest" \
+            "https://gh-proxy.com/https://github.com/shadowsocks/shadowsocks-rust/releases/latest"
+        do
+            _candidate=$(curl -Ls --connect-timeout 8 --max-time 15 -o /dev/null -w "%{url_effective}" "$_url" 2>/dev/null || true)
+            set_ss_version_tag "$_candidate" && break
+        done
     fi
 
-    [ -z "$LAST_VERSION" ] && echo -e "${RED}获取版本失败，请检查网络${PLAIN}" && return 1
+    if [ -z "$LAST_VERSION" ]; then
+        for _url in \
+            "https://github.com/shadowsocks/shadowsocks-rust/releases" \
+            "https://kkgithub.com/shadowsocks/shadowsocks-rust/releases"
+        do
+            _page=$(curl -fsSL --connect-timeout 8 --max-time 15 "$_url" 2>/dev/null || true)
+            _candidate=$(printf '%s\n' "$_page" \
+                | grep -oE 'shadowsocks/shadowsocks-rust/releases/(tag|download)/v[0-9]+\.[0-9]+\.[0-9]+' \
+                | sed -E 's#.*/(tag|download)/##' | head -1)
+            set_ss_version_tag "$_candidate" && break
+        done
+    fi
+
+    if [ -z "$LAST_VERSION" ]; then
+        echo -e "${RED}获取版本失败，请检查网络（可能被 GitHub API 限频）${PLAIN}"
+        return 1
+    fi
+
     echo -e "${GREEN}最新版本: ${LAST_VERSION}${PLAIN}"
 }
 
@@ -2101,7 +2156,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.36${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.37${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"
