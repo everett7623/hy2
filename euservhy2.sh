@@ -3,8 +3,8 @@
 #  EUserv IPv6-only Hysteria2 一键安装脚本
 #  项目地址: https://github.com/everett7623/hy2
 #  适用环境: EUserv 免费 IPv6-only VPS
-#  版本: v2.0.33
-#  更新时间: 2026-09-01
+#  版本: v2.0.34
+#  更新时间: 2026-09-06
 # ============================================================
 
 # ============================================================
@@ -67,7 +67,7 @@ HY2_BIN="/usr/local/bin/hysteria"
 HY2_SERVICE="/etc/systemd/system/hysteria-server.service"
 CERT_DIR="/etc/hysteria/certs"
 LOG_FILE="/var/log/euserv_hy2_install.log"
-SCRIPT_VERSION="2.0.33"
+SCRIPT_VERSION="2.0.34"
 
 # NAT64 公共 DNS（纯IPv6机器临时访问IPv4资源）
 NAT64_DNS1="2001:67c:2b0::4"
@@ -254,46 +254,61 @@ check_warp_status() {
 #  NAT64 DNS 临时启用 / 恢复
 # ============================================================
 enable_nat64_dns() {
-    [[ $DNS_PATCHED -eq 1 ]] && return
+    [[ $DNS_PATCHED -eq 1 ]] && return 0
     step "临时启用 NAT64 DNS（用于访问 IPv4 资源）..."
     # 必须先确保可回滚再改 resolv.conf：备份失败却照样覆盖的话，restore_dns
     # 找不到备份就不会恢复，机器会永久停留在 NAT64 DNS 上。
-    rm -f /etc/resolv.conf.hy2bak /etc/resolv.conf.hy2absent
+    if [ -e /etc/resolv.conf.hy2bak ] || [ -e /etc/resolv.conf.hy2absent ]; then
+        warn "检测到尚未清理的 DNS 恢复文件，已跳过 NAT64 DNS 切换；请先恢复原 DNS"
+        return 1
+    fi
     if [ -e /etc/resolv.conf ]; then
         cp /etc/resolv.conf /etc/resolv.conf.hy2bak 2>/dev/null || {
             warn "无法备份 /etc/resolv.conf，已跳过 NAT64 DNS 切换以免 DNS 无法恢复"
-            return
+            return 1
         }
     else
         # 原本就没有 resolv.conf，标记下来，恢复时删除我们创建的文件。
-        : > /etc/resolv.conf.hy2absent
+        : > /etc/resolv.conf.hy2absent || return 1
     fi
-    cat > /etc/resolv.conf <<EOF
+    DNS_PATCHED=1
+    trap restore_dns EXIT
+    trap 'restore_dns; exit 130' INT
+    trap 'restore_dns; exit 143' TERM
+    if ! cat > /etc/resolv.conf <<EOF
 # euservhy2.sh NAT64 临时配置，安装后自动恢复
 nameserver ${NAT64_DNS1}
 nameserver ${NAT64_DNS2}
 nameserver ${NAT64_DNS_BACKUP}
 EOF
-    DNS_PATCHED=1
-    # 设置 trap，脚本被中断时也能恢复 DNS
-    trap restore_dns EXIT INT TERM
+    then
+        warn "写入 NAT64 DNS 失败，正在恢复原配置"
+        restore_dns || true
+        return 1
+    fi
     success "NAT64 DNS 已启用（安装完成后自动恢复）"
     sleep 1
 }
 
 restore_dns() {
-    [[ $DNS_PATCHED -eq 1 ]] || return
+    [[ $DNS_PATCHED -eq 1 ]] || return 0
     if [ -f /etc/resolv.conf.hy2bak ]; then
-        cp /etc/resolv.conf.hy2bak /etc/resolv.conf 2>/dev/null || true
-        rm -f /etc/resolv.conf.hy2bak
+        if ! cp /etc/resolv.conf.hy2bak /etc/resolv.conf 2>/dev/null; then
+            warn "DNS 恢复失败，原配置保留在 /etc/resolv.conf.hy2bak，将在退出时重试"
+            return 1
+        fi
+        rm -f /etc/resolv.conf.hy2bak || return 1
     elif [ -f /etc/resolv.conf.hy2absent ]; then
-        # 切换前本就没有 resolv.conf，删掉我们建的那份，回到原始状态。
-        rm -f /etc/resolv.conf /etc/resolv.conf.hy2absent
+        rm -f /etc/resolv.conf || { warn "无法删除临时 DNS 配置，已保留恢复标记"; return 1; }
+        rm -f /etc/resolv.conf.hy2absent || return 1
+    else
+        warn "DNS 恢复文件缺失，无法确认已恢复原配置"
+        return 1
     fi
     DNS_PATCHED=0
-    # 清除 trap，避免重复触发
     trap - EXIT INT TERM
     success "DNS 已恢复原始配置"
+    return 0
 }
 
 # ============================================================
@@ -975,7 +990,7 @@ do_install() {
 
     get_latest_version
     install_hysteria2_binary || { restore_dns; read -rp "  按 Enter 返回..." _; return; }
-    restore_dns  # 安装完立即恢复DNS（如果改过）
+    restore_dns || { read -rp "  按 Enter 返回..." _; return 1; }
 
     generate_self_signed_cert "$NODE_DOMAIN" || { read -rp "  按 Enter 返回..." _; return; }
     generate_config "$PORT" "$PASSWORD" "$MASQUERADE_DOMAIN" "$NODE_DOMAIN"
@@ -1238,6 +1253,13 @@ do_upgrade() {
         fi
     fi
 
+    # 恢复仍失败时保留退出重试与备份，不能宣告整个升级流程完成。
+    if ! restore_dns; then
+        trap restore_dns EXIT
+        trap 'restore_dns; exit 130' INT
+        trap 'restore_dns; exit 143' TERM
+        return 1
+    fi
     # 升级完成（成功或已回滚），清除中断保护
     trap - EXIT INT TERM
 

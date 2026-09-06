@@ -5,6 +5,8 @@ trap 'echo "HTTP/SOCKS proxy validation failed at line $LINENO" >&2' ERR
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+bash tests/validate_recovery.sh proxy
+
 PROXY_LIB_ONLY=1 . ./proxy.sh
 
 validate_port 1

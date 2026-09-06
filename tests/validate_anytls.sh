@@ -5,6 +5,8 @@ trap 'echo "AnyTLS validation failed at line $LINENO" >&2' ERR
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+bash tests/validate_recovery.sh anytls
+
 ANYTLS_LIB_ONLY=1 . ./anytls.sh
 
 validate_port 1

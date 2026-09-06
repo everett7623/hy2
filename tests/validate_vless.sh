@@ -5,6 +5,8 @@ trap 'echo "VLESS validation failed at line $LINENO" >&2' ERR
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+bash tests/validate_recovery.sh vless
+
 VLESS_LIB_ONLY=1 . ./vless.sh
 
 TEST_UUID=bf000d23-0752-40b4-affe-68f7707a9661

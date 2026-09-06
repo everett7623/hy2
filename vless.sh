@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.33
+# 版本：v2.0.34
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-09-01
+# 更新日期: 2026-09-06
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -1821,6 +1821,7 @@ shared_proxy_service_restart() {
 # $1=rewrite 时写回 JSON；否则只更新内存中的 BIND_INTERFACE。
 ensure_outbound_bind() {
     local _mode="${1:-memory}" _iface="" _need_rewrite=0 _json_has_bind=0
+    local _old_bind="$BIND_INTERFACE"
     _iface=$(get_native_egress_interface 2>/dev/null || true)
     if [ -n "$BIND_INTERFACE" ] && command -v ip >/dev/null 2>&1; then
         if ! ip link show "$BIND_INTERFACE" >/dev/null 2>&1; then
@@ -1837,7 +1838,7 @@ ensure_outbound_bind() {
     if [ -f "$VLESS_CONFIG" ] && grep -q '"bind_interface"' "$VLESS_CONFIG" 2>/dev/null; then
         _json_has_bind=1
     fi
-    if [ -n "$BIND_INTERFACE" ] && [ "$_json_has_bind" = "0" ]; then
+    if [ -n "$BIND_INTERFACE" ] && ! grep -qF "\"bind_interface\": \"${BIND_INTERFACE}\"" "$VLESS_CONFIG" 2>/dev/null; then
         _need_rewrite=1
     fi
     if [ -z "$BIND_INTERFACE" ] && [ "$_json_has_bind" = "1" ]; then
@@ -1845,11 +1846,50 @@ ensure_outbound_bind() {
     fi
     [ "$_mode" = "rewrite" ] || return 0
     [ "$_need_rewrite" = "1" ] || return 0
-    if write_config && check_config; then
+    # 子 shell 隔离回滚 trap，避免覆盖安装/升级调用方的信号处理。
+    if (
+        _config_backup=$(mktemp "${VLESS_CONFIG}.bind.XXXXXX") || exit 1
+        _meta_backup=$(mktemp "${VLESS_META}/config.env.bind.XXXXXX") || {
+            rm -f "$_config_backup"; exit 1
+        }
+        if ! cp -p "$VLESS_CONFIG" "$_config_backup" || \
+            ! cp -p "$VLESS_META/config.env" "$_meta_backup"; then
+            rm -f "$_config_backup" "$_meta_backup"
+            exit 1
+        fi
+        _was_active=0; _restart_attempted=0
+        if command -v service_is_active >/dev/null 2>&1; then
+            service_is_active && _was_active=1 || true
+        fi
+        rollback_outbound_bind() {
+            local _ok=1
+            cp -p "$_config_backup" "$VLESS_CONFIG" || _ok=0
+            cp -p "$_meta_backup" "$VLESS_META/config.env" || _ok=0
+            if [ "$_restart_attempted" = "1" ] && command -v service_restart >/dev/null 2>&1; then
+                service_restart && wait_for_health || _ok=0
+            fi
+            if [ "$_ok" = "1" ]; then
+                rm -f "$_config_backup" "$_meta_backup"
+            else
+                echo -e "${RED}网卡绑定回滚未完成，备份保留在 ${_config_backup} 和 ${_meta_backup}${PLAIN}" >&2
+            fi
+        }
+        trap 'rollback_outbound_bind' EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        write_config && check_config || exit 1
+        if [ "$_was_active" = "1" ]; then
+            _restart_attempted=1
+            service_restart && wait_for_health || exit 1
+        fi
+        trap - EXIT INT TERM
+        rm -f "$_config_backup" "$_meta_backup"
+    ); then
         echo -e "${GREEN}已刷新出站网卡绑定: ${BIND_INTERFACE:-未绑定}${PLAIN}"
         return 0
     fi
-    echo -e "${RED}刷新出站网卡绑定失败${PLAIN}"
+    BIND_INTERFACE="$_old_bind"
+    echo -e "${RED}刷新出站网卡绑定失败，请检查回滚结果${PLAIN}"
     return 1
 }
 
@@ -2427,7 +2467,7 @@ _upgrade_core_locked() {
     }
     read_config || { echo -e "${RED}VLESS 元数据不完整，无法安全升级${PLAIN}"; return 1; }
     migrate_vless_config || return 1
-    ensure_outbound_bind rewrite || true
+    ensure_outbound_bind rewrite || return 1
     get_latest_version || return 1
 
     local _current_version _latest_version _was_active=0 _shared_was_active=0 _proxy_was_active=0
@@ -3054,7 +3094,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.33${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.34${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

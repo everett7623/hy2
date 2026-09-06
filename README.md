@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.33（2026-09-01） · 本次更新：收紧 IPv6 字面量校验，拒绝 ::、:::、超长分组等结构非法地址，避免其进入节点分享链接。
+> 当前版本：v2.0.34（2026-09-06） · 本次更新：DNS 恢复失败保留备份；网卡绑定刷新增加配置与服务回滚，核心已是最新版时也立即生效。
 
 ## 目录
 

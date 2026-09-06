@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.33 (2026-09-01)
+v2.0.34 (2026-09-06)
 
 ## Project overview
 

@@ -18,6 +18,14 @@ REAL_SING_BOX_BIN=/path/to/sing-box bash tests/validate_vless.sh
 
 发布前仍需在一次性 VPS 覆盖 systemd、OpenRC 以及 IPv4、IPv6、双栈环境。当前脚本支持上游 Linux `amd64`、`arm64`、`armv7`、`386` 和 `s390x` 发布包，其他架构应明确拒绝。
 
+## 恢复故障回归
+
+`bash tests/validate_recovery.sh` 在临时目录中验证三协议网卡绑定刷新和 EUserv DNS 恢复；不修改开发机的 DNS、服务或防火墙。各协议行为测试会调用对应子集，总验证入口另行执行 DNS 子集。
+
+覆盖运行中/已停止服务、配置和元数据回滚、备份失败、校验失败、重启及健康检查失败、回滚失败保留备份、TERM 中断、核心同版本刷新、重复刷新不重启，以及 DNS 恢复失败重试和遗留备份保护。
+
+实机验收需额外模拟网卡更名后执行同版本升级，确认新连接使用新网卡；并在 EUserv 上验证 DNS 文件恢复失败时备份仍存在、错误提示明确。
+
 ## 测试层级
 
 ### 1. 静态验证
@@ -100,7 +108,7 @@ bash tests/validate_scripts.sh
 - NAT、IPv4、IPv6 与双栈节点地址和端口正确；REALITY 目标域名及端口可达。
 - REALITY SNI 来源默认选择随机大厂候选，候选不使用 `.cn`、GitHub 或 Bing；选择自定义 SNI 时应提供 `bgp.tools` 查询辅助，并拒绝格式无效、TLS 1.3 不可用或当前地址族不可达的域名。
 - 运行诊断分别报告 REALITY 目标可达性与 VPS 下载探针结果，不把 Speedtest 单站失败直接判定为 VLESS 故障。
-- `vless.sh diagnose` 与服务管理菜单中的诊断入口应产生相同检查结果，且不修改配置、服务或防火墙。
+- `vless.sh diagnose` 与服务管理菜单中的诊断入口应产生相同检查结果，默认只读；用户确认重选 REALITY 目标后才备份并修改配置、重启原本运行中的服务。
 - 配置修改、重装、升级或服务启动失败时恢复旧配置、核心和服务状态。
 - 旧安装执行升级时应保留 UUID、REALITY 密钥和端口，并补齐当前配置 schema；迁移校验或重启失败时恢复旧配置。
 - 服务健康检查必须同时确认进程和 TCP 监听；本机防火墙规则写入失败时安装必须中止并回滚。
