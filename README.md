@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.34（2026-09-06） · 本次更新：DNS 恢复失败保留备份；网卡绑定刷新增加配置与服务回滚，核心已是最新版时也立即生效。
+> 当前版本：v2.0.35（2026-09-07） · 本次更新：修复公网 IP 探测站不可达时把双栈机误判为纯 IPv6 的缺陷，节点不再只下发 IPv6 地址。
 
 ## 目录
 

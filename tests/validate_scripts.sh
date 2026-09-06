@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh"
-EXPECTED_VERSION="v2.0.34"
+EXPECTED_VERSION="v2.0.35"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -259,6 +259,22 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q 'command -v ss >/dev/null 2>&1 || return 1' "$script"
     [ "$(grep -c 'for _cmd in .* ss; do' "$script")" -eq 2 ]
 done
+# 公网 IP 探测站不可达时，不得直接判定“本机没有 IPv4”。五个协议脚本都必须保留
+# “本机原生全局 IPv4 + 默认 IPv4 路由”兜底，否则双栈机被误判为纯 IPv6，
+# 节点只下发 IPv6 地址，IPv4 客户端全部连不上。
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
+    grep -q '^is_private_ipv4()' "$script"
+    grep -q '^has_default_ipv4_route()' "$script"
+    grep -q '^get_native_local_ipv4()' "$script"
+    grep -q 'if is_valid_ipv4 "\$_local_ipv4" && has_default_ipv4_route; then' "$script"
+    grep -q 'IPV4_UNVERIFIED=1' "$script"
+    # 私网地址只能证明有 IPv4 出网，落进 PUBLIC_IP 会直接写入分享链接。
+    grep -q 'if is_private_ipv4 "\$_local_ipv4"; then' "$script"
+    # PUBLIC_IP 为空时不得再做 NAT 比对，否则空串会误判 NAT 状态。
+    grep -q 'if \[ "\$HAS_IPV4" = "1" \] && \[ -n "\$PUBLIC_IP" \] && command -v ip >/dev/null 2>&1; then' "$script"
+    grep -q 'NAT 机器\${PLAIN}（公网 IPv4 未确认，请手动指定节点地址）' "$script"
+done
+
 # 死 IPv6（接口有全局地址但无默认路由且外网不可达）必须按纯 IPv4 处理，
 # 否则出站/握手拨号解析到 AAAA 后拨向死路由，连接全部超时。
 for script in anytls.sh vless.sh proxy.sh; do

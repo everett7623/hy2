@@ -4,12 +4,12 @@
 
 ## 项目特点
 
-- 5 个独立的 Bash 管理脚本（VLESS、AnyTLS、Hysteria 2、Shadowsocks、EUserv HY2）
+- 6 个独立的 Bash 管理脚本（VLESS、AnyTLS、Hysteria 2、Shadowsocks、HTTP/SOCKS、EUserv HY2）
 - 通过 `curl | bash` 远程执行，无构建系统
 - 支持 9+ 种 Linux 发行版（Debian、Ubuntu、CentOS、Alpine 等）
 - 无共享库设计：工具函数在脚本间复制
 
-当前版本：v2.0.22 (2026-07-21)
+当前版本：v2.0.35 (2026-09-07)
 
 ## 不可移除的兼容性特性
 

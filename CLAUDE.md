@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.34 (2026-09-06)
+v2.0.35 (2026-09-07)
 
 ## Project overview
 
@@ -107,27 +107,138 @@ Every commit that changes code, tests, or documentation MUST increment the unifi
 - Current version, date, and update summary in `README.md`
 - Top entry in `CHANGELOG.md`
 - Protocol-specific test expectations when changing AnyTLS (`validate_anytls.sh`), VLESS (`validate_vless.sh`), or HTTP/SOCKS (`validate_proxy.sh`)
+- `.github/copilot-instructions.md` and `.windsurfrules` restate the version inline; `.cursorrules` does not. `validate_scripts.sh` does NOT check these three files, so they drift silently — grep for the old version string across the repo before committing.
 
 See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 
+Fastest way to find every location that still holds the old version:
+
+```bash
+grep -rnF "v2.0.35" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+```
+
 ## Testing and validation
 
-Static validation (run on any Linux-compatible shell):
+One command runs everything:
 ```bash
 bash tests/validate_scripts.sh
 git diff --check  # detect trailing whitespace and CRLF
 ```
 
-Protocol-specific validation (requires valid config):
+`tests/validate_scripts.sh` is the single entry point and its final section invokes every other
+validator (`validate_recovery.sh dns`, `validate_anytls.sh`, `validate_vless.sh`,
+`validate_proxy.sh`, `validate_hy2_network.sh`, `validate_ss_network.sh`). Running the sub-scripts
+directly is only useful for faster iteration on one protocol.
+
+**None of these need a VPS, a running service, root, or a real config.** Every validator sources
+its target in library mode (see below) and mocks `ip`, `curl`, `systemctl`, `cp` and friends, so
+the whole suite completes in seconds on any machine — including Windows git-bash. There is no
+excuse for skipping it.
+
 ```bash
-bash tests/validate_anytls.sh    # AnyTLS config structure, cert paths, wrapper
-bash tests/validate_vless.sh     # VLESS UUID, REALITY keys, JSON, shared core
-bash tests/validate_proxy.sh     # HTTP/SOCKS mixed inbound, users, bind_interface, wrapper
-bash tests/validate_hy2_network.sh   # Hysteria 2 network layer (requires running service)
-bash tests/validate_ss_network.sh    # Shadowsocks network layer (requires running service)
+bash tests/validate_recovery.sh              # all subsets: anytls, vless, proxy, dns
+bash tests/validate_recovery.sh vless        # bind-refresh + rollback for one protocol
+bash tests/validate_anytls.sh                # AnyTLS config structure, cert paths, wrapper
+bash tests/validate_vless.sh                 # VLESS UUID, REALITY keys, JSON, shared core
+bash tests/validate_proxy.sh                 # mixed inbound, users, bind_interface, wrapper
+bash tests/validate_hy2_network.sh           # hy2 IP validation, WARP filtering, downloader
+bash tests/validate_ss_network.sh            # ss IP validation, WARP filtering, downloader
+
+# Optional: also run `sing-box check` on the generated VLESS JSON
+REAL_SING_BOX_BIN=/path/to/sing-box bash tests/validate_vless.sh
 ```
 
-VPS integration tests (install, upgrade, rollback, uninstall, firewall, service) must be run manually on disposable VPS instances — no CI automation exists.
+GitHub Actions (`.github/workflows/shell-checks.yml`) runs `bash tests/validate_scripts.sh` on
+every push and PR — that is the entire CI. `.gitattributes` forces `eol=lf` on `*.sh`, `*.bash`,
+`*.md`, `*.yml`, `*.yaml`.
+
+VPS integration tests (install, upgrade, rollback, uninstall, firewall, service) must be run
+manually on disposable instances — no CI automation exists for runtime behavior.
+
+## The test suite is a regression lock, not a linter
+
+This is the highest-friction fact about the repo. `tests/validate_scripts.sh` contains ~198
+`grep -q` assertions and ~33 negative `! grep -q` assertions pinned to **literal source text**:
+function names, Chinese menu strings, menu item numbering, cron minute fields, prompt ordering,
+and heredoc bodies. It is a change-detector by design.
+
+Consequences when editing:
+
+- Renaming a function, reordering a menu, or rewording a Chinese UI string **will fail the
+  build**. Update the matching assertion in `tests/validate_scripts.sh` in the same commit.
+- The `! grep -q` assertions forbid re-introducing specific past bugs (dead-IPv6 dialing, stale
+  `mkdir` upgrade locks, `exec` in the `sb` wrapper leaking temp files, NAT64 DNS that cannot roll
+  back, `upgrade_core || true` swallowing failures). Each carries a Chinese comment explaining the
+  original bug — **read that comment before "fixing" a failing negative assertion.** If one fires,
+  you almost certainly reintroduced the bug rather than found a stale test.
+- It also asserts that `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and all four
+  `docs/*.md` exist and are non-empty, and that the five `docs/assets/screenshots/*.png` files
+  exist **and are referenced from `README.md`**. Deleting or renaming a doc or screenshot breaks CI.
+- It extracts the auto-update heredoc from each protocol script and the `sb` shortcut heredoc from
+  `install.sh`, then runs `bash -n` on the extracted text — generated scripts are syntax-checked too.
+- `tests/helpers/validators.bash` and `tests/helpers/generators.bash` are bats-core style helper
+  libraries (no `.bats` files exist yet). They are still syntax- and CRLF-checked as
+  `HELPER_SCRIPTS`, so they must stay valid bash.
+
+## Library mode (`*_LIB_ONLY`) — how the scripts stay testable
+
+Every script can be `source`d as a pure function library with no side effects, which is the only
+reason hermetic tests are possible. The guard also suppresses the TTY fix and CRLF guard.
+
+Two naming conventions coexist — **do not unify them**, `validate_scripts.sh` greps for the
+per-protocol tokens:
+
+| Script | Variable | Guard style |
+|--------|----------|-------------|
+| `hy2.sh`, `ss.sh`, `euservhy2.sh` | `EXPORT_LIB_ONLY=1` | entry block wrapped in `if [ "${EXPORT_LIB_ONLY:-0}" != "1" ]; then … fi` |
+| `anytls.sh` | `ANYTLS_LIB_ONLY=1` | `[ "$_ANYTLS_LIB_ONLY" = "1" ] && return 0` before the entry block |
+| `vless.sh` | `VLESS_LIB_ONLY=1` | `[ "$_VLESS_LIB_ONLY" = "1" ] && return 0` |
+| `proxy.sh` | `PROXY_LIB_ONLY=1` | `[ "$_PROXY_LIB_ONLY" = "1" ] && return 0` |
+
+```bash
+VLESS_LIB_ONLY=1 . ./vless.sh   # functions available, nothing executed
+```
+
+Tests override path constants after sourcing (`VLESS_CONFIG`, `VLESS_META`, …) and redefine
+functions like `service_restart`, `check_config`, `get_native_egress_interface` to drive failure
+paths. Keep new logic in named functions and read paths from the module-level constants, or it
+becomes untestable.
+
+## CLI action arguments
+
+`install.sh` does not drop users into sub-script menus — it passes an action as `$1`. Every
+protocol script dispatches the same verb set, so keep the `case` block in sync when adding one:
+
+```
+install | info|node|export|all | uri|link | mihomo|clash | surfboard | shadowrocket
+| loon | quantumult|quantumultx | qrcode|qr | manage|service|config
+| upgrade|update | uninstall|remove | menu|""
+```
+
+`vless.sh` adds `diagnose|check|health`. `euservhy2.sh` uses `do_install` / `show_node_info`
+instead of the `install_*` / `show_config` names. Unknown verbs must exit 1 with the usage line.
+
+## Shared sing-box core coordination (anytls / vless / proxy)
+
+The three sing-box protocols share one `/usr/local/bin/sing-box` binary and one `/etc/sing-box`
+directory, so upgrading any one of them can break the other two. This is the most dangerous area
+in the repo. The protocol is:
+
+- **Mutual exclusion** — all three take `/var/lock/sing-box-tools-upgrade.lock` (flock, with a
+  `${LOCK}.d` mkdir fallback that reclaims a stale directory via `find -maxdepth 0 -mmin -5`).
+  Auto-update cron minutes are deliberately staggered: AnyTLS 04:17, VLESS 04:27, proxy 04:37 Mon.
+- **Pre-flight validation** — a candidate binary must pass `check` against *every* existing
+  `/etc/sing-box/*.json`, not just the caller's own, before the atomic replace.
+- **Cross-restart** — after replacing the core, restart every consumer that was running before the
+  upgrade, via `shared_vless_service_restart()` / `shared_anytls_service_restart()` /
+  `shared_proxy_service_restart()`. If any fails, roll the core back and restore prior states.
+- **Ownership** — `/etc/sing-box/.singbox-tools-managed` marks the core as project-installed so
+  the *last* protocol uninstalled can remove it, in any uninstall order. Never delete shared files
+  another protocol still owns.
+- **`ensure_outbound_bind()`** — present in all three; refreshes/heals `bind_interface` on install,
+  upgrade and from the tools menu, with its own backup, config check, health check and rollback.
+  It runs even when the core is already at the latest version. Rollback failure must preserve the
+  `.bind.*` backup and report its path rather than claim success.
 
 ## Client export formats
 

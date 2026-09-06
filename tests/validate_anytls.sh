@@ -474,4 +474,105 @@ validate_elf "$tmp/server"
 printf 'html' > "$tmp/bad"
 ! validate_elf "$tmp/bad"
 
+
+# ---------------------------------------------------------------------------
+# 公网 IP 探测站不可达时的 IPv4 兜底判定
+# ---------------------------------------------------------------------------
+# is_private_ipv4 边界：私网/CGNAT 端点必须命中，相邻公网段不得误判，
+# 否则要么把私网地址写进分享链接，要么把正常公网 IP 当成 NAT。
+is_private_ipv4 10.0.0.1
+is_private_ipv4 192.168.1.1
+is_private_ipv4 172.16.0.1
+is_private_ipv4 172.31.255.254
+is_private_ipv4 100.64.0.1
+is_private_ipv4 100.127.255.254
+! is_private_ipv4 172.15.0.1
+! is_private_ipv4 172.32.0.1
+! is_private_ipv4 100.63.255.255
+! is_private_ipv4 100.128.0.1
+! is_private_ipv4 203.0.113.5
+! is_private_ipv4 198.51.100.38
+
+# 双栈机的 IPv4 探测站全部不可达时，必须按“本机全局 IPv4 + 默认 IPv4 路由”认定 IPv4 可用。
+# 缺少这个兜底会误判纯 IPv6，节点只下发 IPv6 地址，IPv4 客户端全部连不上。
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+detect_warp() { return 1; }
+curl() { case " $* " in *' -s6 '*) printf '2001:db8::5' ;; *) return 1 ;; esac; }
+ip() {
+    case "$*" in
+        '-4 route show default') printf 'default via 203.0.113.1 dev eth0\n' ;;
+        '-6 route show default') printf 'default via fe80::1 dev eth0\n' ;;
+        '-4 addr show dev eth0 scope global') printf '    inet 203.0.113.5/24 scope global eth0\n' ;;
+        '-4 addr show scope global') printf '2: eth0\n    inet 203.0.113.5/24 scope global eth0\n' ;;
+        '-6 addr show scope global') printf '2: eth0\n    inet6 2001:db8::5/64 scope global\n' ;;
+        'addr show') printf '    inet 203.0.113.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV4" = "1" ]
+[ "$HAS_IPV6" = "1" ]
+[ "$PUBLIC_IP" = "203.0.113.5" ]
+[ "$NAT_MODE" = "0" ]
+[ "$BIND_FAMILY" = "v4" ]
+[ "$IPV4_UNVERIFIED" = "1" ]
+)
+
+# 同样探测失败，但本机只有私网 IPv4：认定有 IPv4 并按 NAT 处理，
+# 且绝不能把私网地址写进 PUBLIC_IP —— 它会直接进入分享链接。
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+detect_warp() { return 1; }
+curl() { return 1; }
+ip() {
+    case "$*" in
+        '-4 route show default') printf 'default via 10.0.0.1 dev eth0\n' ;;
+        '-4 addr show dev eth0 scope global') printf '    inet 10.0.0.5/24 scope global eth0\n' ;;
+        '-4 addr show scope global') printf '2: eth0\n    inet 10.0.0.5/24 scope global eth0\n' ;;
+        'addr show') printf '    inet 10.0.0.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV4" = "1" ]
+[ "$NAT_MODE" = "1" ]
+[ -z "$PUBLIC_IP" ]
+)
+
+# WARP 网卡持有的 IPv4 不是原生 IPv4，探测失败时不得当作可用 IPv4 兜底。
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+detect_warp() { return 0; }
+curl() { return 1; }
+ip() {
+    case "$*" in
+        '-4 route show default') printf 'default dev warp0\n' ;;
+        '-4 addr show scope global') printf '3: warp0\n    inet 172.16.0.2/32 scope global warp0\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV4" = "0" ]
+[ -z "$PUBLIC_IP" ]
+)
+
+# 无 IPv4 地址也无 IPv4 默认路由 → 仍判纯 IPv6，兜底不得放宽真实的纯 IPv6 机。
+(
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+detect_warp() { return 1; }
+curl() { case " $* " in *' -s6 '*) printf '2001:db8::5' ;; *) return 1 ;; esac; }
+ip() {
+    case "$*" in
+        '-6 route show default') printf 'default via fe80::1 dev eth0\n' ;;
+        '-6 addr show scope global') printf '2: eth0\n    inet6 2001:db8::5/64 scope global\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1
+[ "$HAS_IPV4" = "0" ]
+[ "$HAS_IPV6" = "1" ]
+[ "$BIND_FAMILY" = "v6" ]
+)
+
 echo "AnyTLS behavior validation passed."

@@ -225,4 +225,95 @@ grep -q '"server": "::"' "$SS_CONFIG"
 grep -q '"server_port": 8443' "$SS_CONFIG"
 case "$(uname -s)" in MINGW*|MSYS*) ;; *) [ "$(stat -c %a "$SS_CONFIG")" = '600' ] ;; esac
 
+
+# ---------------------------------------------------------------------------
+# 公网 IP 探测站不可达时的 IPv4 兜底判定
+# ---------------------------------------------------------------------------
+is_private_ipv4 10.0.0.1
+is_private_ipv4 192.168.1.1
+is_private_ipv4 172.16.0.1
+is_private_ipv4 172.31.255.254
+is_private_ipv4 100.64.0.1
+is_private_ipv4 100.127.255.254
+! is_private_ipv4 172.15.0.1
+! is_private_ipv4 172.32.0.1
+! is_private_ipv4 100.63.255.255
+! is_private_ipv4 100.128.0.1
+! is_private_ipv4 203.0.113.5
+
+# 双栈机的 IPv4 探测站全部不可达时，必须按“本机全局 IPv4 + 默认 IPv4 路由”认定 IPv4 可用。
+# 缺少这个兜底会误判纯 IPv6，节点只下发 IPv6 地址，IPv4 客户端全部连不上。
+(
+detect_warp() { return 1; }
+curl() { case " $* " in *' -s6 '*) printf '2001:db8::5' ;; *) return 1 ;; esac; }
+ip() {
+    case "$*" in
+        '-4 route show default') printf 'default via 203.0.113.1 dev eth0\n' ;;
+        '-4 addr show dev eth0 scope global') printf '    inet 203.0.113.5/24 scope global eth0\n' ;;
+        'addr show') printf '    inet 203.0.113.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1 <<'EOF'
+y
+EOF
+[ "$HAS_IPV4" = "1" ]
+[ "$HAS_IPV6" = "1" ]
+[ "$IPV6_ONLY" = "0" ]
+[ "$PUBLIC_IP" = "203.0.113.5" ]
+[ "$NAT_MODE" = "0" ]
+[ "$IPV4_UNVERIFIED" = "1" ]
+)
+
+# 同样探测失败，但本机只有私网 IPv4：认定有 IPv4 并按 NAT 处理，
+# 且绝不能把私网地址写进 PUBLIC_IP —— 它会直接进入分享链接。
+(
+detect_warp() { return 1; }
+curl() { return 1; }
+ip() {
+    case "$*" in
+        '-4 route show default') printf 'default via 10.0.0.1 dev eth0\n' ;;
+        '-4 addr show dev eth0 scope global') printf '    inet 10.0.0.5/24 scope global eth0\n' ;;
+        'addr show') printf '    inet 10.0.0.5/24\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1 <<'EOF'
+y
+EOF
+[ "$HAS_IPV4" = "1" ]
+[ "$NAT_MODE" = "1" ]
+[ -z "$PUBLIC_IP" ]
+)
+
+# WARP 网卡持有的 IPv4 不是原生 IPv4，探测失败时不得当作可用 IPv4 兜底。
+(
+detect_warp() { return 0; }
+curl() { return 1; }
+ip() {
+    case "$*" in
+        '-4 route show default') printf 'default dev warp0\n' ;;
+        *) return 1 ;;
+    esac
+}
+detect_network >/dev/null 2>&1 <<'EOF'
+y
+EOF
+[ "$HAS_IPV4" = "0" ]
+[ -z "$PUBLIC_IP" ]
+)
+
+# 无 IPv4 地址也无 IPv4 默认路由 → 仍判纯 IPv6，兜底不得放宽真实的纯 IPv6 机。
+(
+detect_warp() { return 1; }
+curl() { case " $* " in *' -s6 '*) printf '2001:db8::5' ;; *) return 1 ;; esac; }
+ip() { return 1; }
+detect_network >/dev/null 2>&1 <<'EOF'
+y
+EOF
+[ "$HAS_IPV4" = "0" ]
+[ "$HAS_IPV6" = "1" ]
+[ "$IPV6_ONLY" = "1" ]
+)
+
 echo 'Shadowsocks network validation passed.'

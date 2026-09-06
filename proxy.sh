@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.34
+# 版本：v2.0.35
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-09-06
+# 更新日期: 2026-09-07
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -89,6 +89,7 @@ AUTO_UPDATE_LOG="/var/log/proxy-autoupdate.log"
 RELEASE="unknown"
 INIT_SYS="none"
 NAT_MODE=0
+IPV4_UNVERIFIED=0
 HAS_IPV4=0
 HAS_IPV6=0
 PUBLIC_IP=""
@@ -549,9 +550,39 @@ has_default_ipv6_route() {
     ip -6 route show default 2>/dev/null | grep -q .
 }
 
+# 私网 / 共享地址段 IPv4。这类地址不能写进分享链接，
+# 命中时必须按 NAT 处理，公网地址交给用户确认。
+is_private_ipv4() {
+    case "$1" in
+        10.*|127.*|169.254.*|192.168.*) return 0 ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+        100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 是否存在默认 IPv4 路由。与 has_default_ipv6_route 对称，
+# 用于在公网 IP 探测站不可达时仍能确认本机具备 IPv4 出网能力。
+has_default_ipv4_route() {
+    command -v ip >/dev/null 2>&1 || return 1
+    ip -4 route show default 2>/dev/null | grep -q .
+}
+
+# 原生出站网卡上的全局 IPv4（排除 WARP/隧道网卡）。
+# 仅在公网 IP 探测站全部不可达时，作为“本机有 IPv4”的兜底证据。
+get_native_local_ipv4() {
+    command -v ip >/dev/null 2>&1 || return 1
+    local _iface
+    _iface=$(get_native_egress_interface 2>/dev/null || true)
+    [ -n "$_iface" ] || return 1
+    ip -4 addr show dev "$_iface" scope global 2>/dev/null | awk '
+        /inet / { addr=$2; sub(/\/.*/, "", addr); print addr; exit }
+    '
+}
+
 detect_network() {
     echo -e "${YELLOW}正在检测网络环境...${PLAIN}"
-    NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; DEFAULT_EGRESS_IPV4=""; WARP_ACTIVE=0; BIND_INTERFACE=""; BIND_FAMILY="v4"; LISTEN_HOST="::"
+    NAT_MODE=0; HAS_IPV4=0; HAS_IPV6=0; PUBLIC_IP=""; PUBLIC_IPV6=""; DEFAULT_EGRESS_IPV4=""; WARP_ACTIVE=0; BIND_INTERFACE=""; BIND_FAMILY="v4"; LISTEN_HOST="::"; IPV4_UNVERIFIED=0
     local _ip _url
 
     detect_warp && WARP_ACTIVE=1 || true
@@ -595,6 +626,22 @@ detect_network() {
     elif [ "$WARP_ACTIVE" = "0" ] && is_valid_ipv4 "$DEFAULT_EGRESS_IPV4"; then
         PUBLIC_IP="$DEFAULT_EGRESS_IPV4"
         HAS_IPV4=1
+    else
+        # 公网 IP 探测站全部不可达（被墙、限速或临时故障）时不能断定“本机没有 IPv4”。
+        # 与上面的 IPv6 分支对称：原生网卡有全局 IPv4 且存在默认 IPv4 路由即认定具备 IPv4。
+        # 缺少这个兜底会把双栈机误判为纯 IPv6，节点只写 IPv6 地址，IPv4 客户端全部连不上。
+        local _local_ipv4
+        _local_ipv4=$(get_native_local_ipv4 2>/dev/null || true)
+        if is_valid_ipv4 "$_local_ipv4" && has_default_ipv4_route; then
+            HAS_IPV4=1
+            IPV4_UNVERIFIED=1
+            if is_private_ipv4 "$_local_ipv4"; then
+                # 私网地址只能证明有 IPv4 出网，不能作为节点地址。
+                NAT_MODE=1
+            else
+                PUBLIC_IP="$_local_ipv4"
+            fi
+        fi
     fi
 
     if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
@@ -606,7 +653,8 @@ detect_network() {
         [ -z "$_real_ipv4" ] && { HAS_IPV4=0; PUBLIC_IP=""; }
     fi
 
-    if [ "$HAS_IPV4" = "1" ] && command -v ip >/dev/null 2>&1; then
+    # PUBLIC_IP 为空表示公网地址未确认，此时不做 NAT 比对（NAT_MODE 已在兜底分支置位）。
+    if [ "$HAS_IPV4" = "1" ] && [ -n "$PUBLIC_IP" ] && command -v ip >/dev/null 2>&1; then
         local _local_ips
         _local_ips=$(ip addr show 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '^127\.' | grep -v '^169\.254\.')
         echo "$_local_ips" | grep -q "^${PUBLIC_IP}$" || NAT_MODE=1
@@ -616,11 +664,15 @@ detect_network() {
     [ "$HAS_IPV6" = "1" ] && [ "$HAS_IPV4" = "1" ] && BIND_FAMILY="v4"
     [ "$HAS_IPV6" = "0" ] && LISTEN_HOST="0.0.0.0"
 
-    if   [ "$NAT_MODE"     = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
+    if   [ "$NAT_MODE" = "1" ] && [ -z "$PUBLIC_IP" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4 未确认，请手动指定节点地址）"
+    elif [ "$NAT_MODE"     = "1" ]; then echo -e "  机器类型: ${YELLOW}NAT 机器${PLAIN}（公网 IPv4: ${PUBLIC_IP}）"
     elif [ "$BIND_FAMILY"  = "v6" ]; then echo -e "  机器类型: ${YELLOW}纯 IPv6${PLAIN}（IPv6: ${PUBLIC_IPV6}）"
     elif [ "$HAS_IPV6"     = "1" ]; then echo -e "  机器类型: ${GREEN}双栈${PLAIN}（IPv6: ${PUBLIC_IPV6} | IPv4: ${PUBLIC_IP}）"
     elif [ "$HAS_IPV4"     = "1" ]; then echo -e "  机器类型: ${GREEN}标准 IPv4${PLAIN}（IP: ${PUBLIC_IP}）"
     else                                  echo -e "  机器类型: ${RED}无法检测，请手动输入节点地址${PLAIN}"
+    fi
+    if [ "${IPV4_UNVERIFIED:-0}" = "1" ]; then
+        echo -e "  ${YELLOW}提示: 公网 IP 探测站不可达，已按本机默认路由确认 IPv4 可用${PLAIN}"
     fi
     if [ "$WARP_ACTIVE" = "1" ]; then
         echo -e "  WARP 状态: ${YELLOW}已检测到${PLAIN}（仅作为出站，不用于节点入口）"
@@ -2398,7 +2450,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.34${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.35${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
