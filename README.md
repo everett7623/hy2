@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.38（2026-09-07） · 本次更新：GitHub 不可达时 Hysteria 2 全新安装改走官方永久镜像，不再被版本获取失败阻断。
+> 当前版本：v2.0.39（2026-09-07） · 本次更新：配置恢复增加归档校验、备份失败中止与解包失败回滚，不再可能留下半还原状态。
 
 ## 目录
 

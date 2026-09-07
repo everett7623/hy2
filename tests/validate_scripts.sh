@@ -5,8 +5,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
-HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh"
-EXPECTED_VERSION="v2.0.38"
+HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh"
+EXPECTED_VERSION="v2.0.39"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -259,6 +259,22 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q 'command -v ss >/dev/null 2>&1 || return 1' "$script"
     [ "$(grep -c 'for _cmd in .* ss; do' "$script")" -eq 2 ]
 done
+# restore_config 以 root 身份把归档解到 /，是全项目风险最高的写入路径。
+# 解包前必须完成完整性与成员校验：gzip/tar 的完整性要读到末尾才能确认，
+# 截断归档直接解包会写入一半再失败，留下无人回滚的半还原状态。
+grep -q '^validate_backup_archive()' install.sh
+grep -q '^RESTORE_ALLOWED_PREFIX=' install.sh
+grep -q 'validate_backup_archive "\$_file" || return 1' install.sh
+# 与项目其他改动路径一致：备份失败必须中止，不能带着无法回退的状态继续。
+! grep -q '^    backup_config || true$' install.sh
+grep -q '无法备份当前配置，已取消恢复' install.sh
+# 解包失败必须回滚，回滚失败不得谎报成功。
+grep -q '正在回滚到恢复前状态' install.sh
+grep -q '回滚失败：请手动解包' install.sh
+# 只重启确实已安装的服务，并如实报告失败，不再无条件宣告恢复成功。
+grep -q '^restart_restored_services()' install.sh
+! grep -q 'echo -e "\${GREEN}\[OK\] 恢复完成，已尝试重启相关服务\${PLAIN}"' install.sh
+
 # GitHub 全线不可达时，官方永久镜像 download.hysteria.network 不依赖版本号，
 # 全新安装不应被版本获取失败阻断；但升级路径必须保持中止，
 # 版本未知时盲目替换正在工作的二进制会带来不可控回退风险。
@@ -358,7 +374,12 @@ grep -q 'vless-server:start) nohup /usr/local/bin/vless-server' install.sh
 grep -q 'vless-server:stop)' install.sh
 grep -q 'etc/systemd/system/vless-server.service' install.sh
 grep -q 'etc/init.d/vless-server' install.sh
-grep -q 'service_action vless-server restart /var/run/vless-server.pid' install.sh
+# 重启表必须把每个服务与正确的 pidfile 配对（原为五条显式调用，现为循环表）。
+grep -q '"vless-server /var/run/vless-server.pid"' install.sh
+grep -q '"anytls-server /var/run/anytls-server.pid"' install.sh
+grep -q '"proxy-server /var/run/proxy-server.pid"' install.sh
+grep -q '"hysteria-server /var/run/hysteria.pid"' install.sh
+grep -q '"shadowsocks-server /var/run/ssserver.pid"' install.sh
 grep -q 'VLESS    : .*VLESS_STATUS' install.sh
 grep -q 'install) install_hy2' hy2.sh
 grep -q 'info|node|export|all) show_config' hy2.sh
@@ -400,6 +421,7 @@ do
 done
 
 bash tests/validate_recovery.sh dns
+bash tests/validate_restore.sh
 bash tests/validate_anytls.sh
 bash tests/validate_vless.sh
 bash tests/validate_proxy.sh

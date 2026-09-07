@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.38
+# 版本：v2.0.39
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -67,6 +67,7 @@ VLESS_URL="${BASE_URL}/vless.sh"
 PROXY_URL="${BASE_URL}/proxy.sh"
 EUSERV_URL="${BASE_URL}/euservhy2.sh"
 BACKUP_DIR="/root/singbox-tools/backup"
+LAST_BACKUP_FILE=""
 SCRIPT_CACHE_DIR="/root/singbox-tools/scripts"
 SHORTCUT_BIN="/usr/local/bin/sb"
 
@@ -425,7 +426,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.38${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.39${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -778,6 +779,7 @@ system_tools_menu() {
 backup_config() {
     mkdir -p "$BACKUP_DIR"
     local _file="${BACKUP_DIR}/backup-$(date '+%Y%m%d-%H%M%S').tar.gz"
+    LAST_BACKUP_FILE=""
     local _items=""
     [ -d /etc/sing-box ] && _items="${_items} etc/sing-box"
     [ -d /etc/hysteria ] && _items="${_items} etc/hysteria"
@@ -806,7 +808,8 @@ backup_config() {
         echo -e "${RED}[ERROR] 备份失败${PLAIN}"
         return 1
     }
-    printf '%s\n' "script_version=v2.0.38" > "${BACKUP_DIR}/latest-version.txt"
+    LAST_BACKUP_FILE="$_file"
+    printf '%s\n' "script_version=v2.0.39" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -824,6 +827,60 @@ show_backup_archives() {
     done
 }
 
+# 恢复归档允许出现的顶层前缀。备份只收 etc/ 下的配置，
+# 而 restore_config 以 root 身份把归档解到 /，放行越界成员等于任意文件写入。
+RESTORE_ALLOWED_PREFIX="etc/"
+
+# 解包前完成全部校验。gzip 与 tar 的完整性要读到末尾才能确认：
+# 截断归档若直接解包，会先写入一部分再失败，留下半还原状态。
+validate_backup_archive() {
+    local _file="$1" _members _bad
+    if ! tar -tzf "$_file" >/dev/null 2>&1; then
+        echo -e "${RED}[ERROR] 备份文件损坏或不是有效的 tar.gz${PLAIN}"
+        return 1
+    fi
+    _members=$(tar -tzf "$_file" 2>/dev/null)
+    if [ -z "$_members" ]; then
+        echo -e "${RED}[ERROR] 备份文件为空${PLAIN}"
+        return 1
+    fi
+    _bad=$(printf '%s\n' "$_members" | awk -v pfx="$RESTORE_ALLOWED_PREFIX" '
+        /^\// { print; exit }
+        /(^|\/)\.\.(\/|$)/ { print; exit }
+        index($0, pfx) != 1 { print; exit }
+    ')
+    if [ -n "$_bad" ]; then
+        echo -e "${RED}[ERROR] 备份包含越界或非配置路径，已拒绝: ${_bad}${PLAIN}"
+        return 1
+    fi
+    return 0
+}
+
+# 恢复后只重启确实已安装的服务，并如实报告失败。
+# 无条件 restart 全部五个服务会把"未安装"也算成失败，
+# 而一律 || true 又会在服务起不来时谎报恢复成功。
+restart_restored_services() {
+    local _entry _svc _pid _failed=""
+    [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload
+    for _entry in \
+        "vless-server /var/run/vless-server.pid" \
+        "anytls-server /var/run/anytls-server.pid" \
+        "proxy-server /var/run/proxy-server.pid" \
+        "hysteria-server /var/run/hysteria.pid" \
+        "shadowsocks-server /var/run/ssserver.pid"
+    do
+        _svc="${_entry%% *}"
+        _pid="${_entry##* }"
+        [ -f "/etc/systemd/system/${_svc}.service" ] || [ -f "/etc/init.d/${_svc}" ] || continue
+        service_action "$_svc" restart "$_pid" >/dev/null 2>&1 || _failed="${_failed} ${_svc}"
+    done
+    if [ -n "$_failed" ]; then
+        echo -e "${RED}[WARN] 以下服务重启失败，请检查配置和日志:${_failed}${PLAIN}"
+        return 1
+    fi
+    return 0
+}
+
 restore_config() {
     mkdir -p "$BACKUP_DIR"
     echo -e "${WHITE}${BOLD}备份列表${PLAIN}"
@@ -831,19 +888,35 @@ restore_config() {
     echo ""
     read -r -p "请输入要恢复的完整备份路径: " _file
     [ -f "$_file" ] || { echo -e "${RED}[ERROR] 备份文件不存在${PLAIN}"; return 1; }
+
+    validate_backup_archive "$_file" || return 1
+
+    # 与项目其他改动路径一致：备份失败必须中止，不能带着无法回退的状态继续。
     echo -e "${YELLOW}[WARN] 恢复前将自动备份当前配置${PLAIN}"
-    backup_config || true
-    tar -xzf "$_file" -C / 2>/dev/null || {
-        echo -e "${RED}[ERROR] 恢复失败，请检查备份文件${PLAIN}"
+    LAST_BACKUP_FILE=""
+    if ! backup_config; then
+        echo -e "${RED}[ERROR] 无法备份当前配置，已取消恢复（未做任何改动）${PLAIN}"
         return 1
-    }
-    [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload
-    service_action vless-server restart /var/run/vless-server.pid >/dev/null 2>&1 || true
-    service_action anytls-server restart /var/run/anytls-server.pid >/dev/null 2>&1 || true
-    service_action proxy-server restart /var/run/proxy-server.pid >/dev/null 2>&1 || true
-    service_action hysteria-server restart /var/run/hysteria.pid >/dev/null 2>&1 || true
-    service_action shadowsocks-server restart /var/run/ssserver.pid >/dev/null 2>&1 || true
-    echo -e "${GREEN}[OK] 恢复完成，已尝试重启相关服务${PLAIN}"
+    fi
+    local _safety="$LAST_BACKUP_FILE"
+
+    if ! tar -xzf "$_file" -C / 2>/dev/null; then
+        echo -e "${RED}[ERROR] 恢复失败，正在回滚到恢复前状态...${PLAIN}"
+        if [ -n "$_safety" ] && [ -f "$_safety" ] && tar -xzf "$_safety" -C / 2>/dev/null; then
+            restart_restored_services || true
+            echo -e "${YELLOW}已回滚到恢复前配置${PLAIN}"
+        else
+            echo -e "${RED}回滚失败：请手动解包 ${_safety:-${BACKUP_DIR} 下最新备份} 到 /${PLAIN}"
+        fi
+        return 1
+    fi
+
+    if restart_restored_services; then
+        echo -e "${GREEN}[OK] 恢复完成，相关服务已重启${PLAIN}"
+    else
+        echo -e "${YELLOW}[WARN] 配置已恢复，但部分服务未能启动${PLAIN}"
+        return 1
+    fi
 }
 
 backup_restore_menu() {
