@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.39
+# 版本：v2.0.40
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-09-07
+# 更新日期: 2026-09-08
 #====================================================================================
 
 # ============================================================
@@ -207,6 +207,16 @@ run_script() {
             return 1
         fi
         chmod +x "$_tmp"
+        # 校验通过的脚本顺手落盘为缓存。远程不可达时的兜底此前只能依赖用户
+        # 在菜单里手动刷新缓存，多数人从未执行过，兜底形同虚设。
+        # 内容已通过非空与 bash -n 校验，与 download_script_to_cache 同级。
+        if mkdir -p "$SCRIPT_CACHE_DIR" 2>/dev/null; then
+            if cp -f "$_tmp" "${_cache}.tmp" 2>/dev/null; then
+                mv -f "${_cache}.tmp" "$_cache" 2>/dev/null || rm -f "${_cache}.tmp"
+            else
+                rm -f "${_cache}.tmp"
+            fi
+        fi
         run_local_script "$_tmp" "$_action"
         _status=$?
         rm -f "$_tmp"
@@ -426,7 +436,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.39${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.40${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -809,7 +819,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.0.39" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.40" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 

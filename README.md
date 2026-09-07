@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.39（2026-09-07） · 本次更新：配置恢复增加归档校验、备份失败中止与解包失败回滚，不再可能留下半还原状态。
+> 当前版本：v2.0.40（2026-09-08） · 本次更新：子脚本下载校验后自动落盘为缓存，离线兜底真正可用；同步 README 与四份文档。
 
 ## 目录
 
@@ -26,12 +26,13 @@
 | 能力 | 说明 |
 | --- | --- |
 | 统一入口 | 一个 `install.sh` 管理多种协议方案，首次运行后可使用 `sb` 快捷命令 |
-| 自动检测 | 识别发行版、CPU 架构、systemd/OpenRC、IPv4/IPv6、NAT 与防火墙环境 |
+| 自动检测 | 识别发行版、CPU 架构、systemd/OpenRC、IPv4/IPv6、NAT 与防火墙环境；探测站不可达时按本机路由判定，不会把双栈机误判为纯 IPv6 |
 | 安全部署 | 下载校验、临时文件、原子替换、配置备份、服务失败回滚 |
+| 受限网络 | 公网 IP 探测跨多个 ASN 并含免 DNS 端点；版本获取支持 GitHub 镜像与 HTML 兜底；Hysteria 2 在 GitHub 全线不可达时改走官方永久镜像 |
 | 节点导出 | 按协议输出 URI、Mihomo、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码 |
 | 服务管理 | 安装、重装、查看状态、启停、重启、日志、修改配置、升级和卸载 |
 | 共享核心 | AnyTLS、VLESS 与 HTTP/SOCKS 安全共用 sing-box，升级前检查全部现存配置 |
-| 系统工具 | 网络诊断、手动备份/恢复，以及按需启用标准 `bbr + fq` |
+| 系统工具 | 网络诊断、手动备份/恢复（恢复前校验归档、失败自动回滚），以及按需启用标准 `bbr + fq` |
 
 ## 快速开始
 
@@ -191,6 +192,22 @@ date
 ```bash
 bash <(curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/everett7623/hy2/main/install.sh?nocache=$(date +%s)")
 ```
+
+### 机器类型被识别成「纯 IPv6」，但明明有公网 IPv4
+
+v2.0.35 之前，IPv4 判定完全依赖 `api.ipify.org` 等外部探测站，探测失败即认定本机没有 IPv4；而 IPv6 判定已支持按本机地址与默认路由兜底。两侧标准不对称，双栈机会被判为纯 IPv6，节点只下发 IPv6 地址，IPv4 客户端全部连不上。
+
+现在探测站全部不可达时会改用「原生网卡全局 IPv4 + 默认 IPv4 路由」确认，并在界面提示「已按本机默认路由确认 IPv4 可用」。探测站清单也已跨多个 ASN 并加入免 DNS 端点。
+
+若仍被误判，请先确认本机确有默认 IPv4 路由和全局地址，再排查探测站可达性：
+
+```bash
+ip -4 route show default
+ip -4 addr show scope global
+curl -s4 --connect-timeout 5 https://1.1.1.1/cdn-cgi/trace | grep ^ip=
+```
+
+注意：WARP 与隧道网卡持有的 IPv4 不参与判定；网卡只有私网地址时会按 NAT 处理，需手动指定节点地址。
 
 ### 服务已安装但客户端无法连接
 

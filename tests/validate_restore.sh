@@ -60,4 +60,10 @@ if tar -tzf "$tmp/dots.tar.gz" 2>/dev/null | grep -q '\.\.'; then
     ! validate_backup_archive "$tmp/dots.tar.gz" >/dev/null 2>&1
 fi
 
+# run_script 下载并校验成功后必须把脚本落盘为缓存，否则远程不可达时的
+# 兜底只对手动刷新过缓存的用户有效 —— 而多数人从未执行过那个菜单项。
+grep -q 'mv -f "${_cache}.tmp" "$_cache"' install.sh
+# 缓存写入失败不得影响本次运行。
+grep -q 'if mkdir -p "$SCRIPT_CACHE_DIR" 2>/dev/null; then' install.sh
+
 echo 'Restore validation passed.'

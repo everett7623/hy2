@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.39 (2026-09-07)
+v2.0.40 (2026-09-08)
 
 ## Project overview
 
@@ -114,7 +114,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.39" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.40" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation
@@ -126,9 +126,9 @@ git diff --check  # detect trailing whitespace and CRLF
 ```
 
 `tests/validate_scripts.sh` is the single entry point and its final section invokes every other
-validator (`validate_recovery.sh dns`, `validate_anytls.sh`, `validate_vless.sh`,
-`validate_proxy.sh`, `validate_hy2_network.sh`, `validate_ss_network.sh`). Running the sub-scripts
-directly is only useful for faster iteration on one protocol.
+validator (`validate_recovery.sh dns`, `validate_restore.sh`, `validate_anytls.sh`,
+`validate_vless.sh`, `validate_proxy.sh`, `validate_hy2_network.sh`, `validate_ss_network.sh`).
+Running the sub-scripts directly is only useful for faster iteration on one protocol.
 
 **None of these need a VPS, a running service, root, or a real config.** Every validator sources
 its target in library mode (see below) and mocks `ip`, `curl`, `systemctl`, `cp` and friends, so
@@ -138,6 +138,7 @@ excuse for skipping it.
 ```bash
 bash tests/validate_recovery.sh              # all subsets: anytls, vless, proxy, dns
 bash tests/validate_recovery.sh vless        # bind-refresh + rollback for one protocol
+bash tests/validate_restore.sh               # backup-archive validation for restore_config
 bash tests/validate_anytls.sh                # AnyTLS config structure, cert paths, wrapper
 bash tests/validate_vless.sh                 # VLESS UUID, REALITY keys, JSON, shared core
 bash tests/validate_proxy.sh                 # mixed inbound, users, bind_interface, wrapper
@@ -157,8 +158,8 @@ manually on disposable instances — no CI automation exists for runtime behavio
 
 ## The test suite is a regression lock, not a linter
 
-This is the highest-friction fact about the repo. `tests/validate_scripts.sh` contains ~198
-`grep -q` assertions and ~33 negative `! grep -q` assertions pinned to **literal source text**:
+This is the highest-friction fact about the repo. `tests/validate_scripts.sh` contains ~244
+`grep -q` assertions and ~40 negative `! grep -q` assertions pinned to **literal source text**:
 function names, Chinese menu strings, menu item numbering, cron minute fields, prompt ordering,
 and heredoc bodies. It is a change-detector by design.
 

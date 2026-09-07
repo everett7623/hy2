@@ -40,11 +40,17 @@
 | `shadowsocks/shadowsocks-rust` Releases | SS 版本与 musl 二进制 | tag、压缩包、架构名 |
 | `SagerNet/sing-box` Releases | AnyTLS/VLESS 核心与原生入站 | 最低版本、tag、压缩包、架构名、REALITY 字段 |
 | `download.hysteria.network` | Hysteria 备用下载 | URL 或可达性 |
-| GitHub API | 获取最新版本 | 限频、网络阻断 |
+| GitHub API | 获取最新版本（首选） | 限频、网络阻断 |
+| `kkgithub.com` / `gh-proxy.com` / `ghproxy.net` | GitHub 受限时的版本与下载镜像 | 镜像失效、URL 变更、内容不可信 |
+| `api.ipify.org` / `ip.gs` / `icanhazip.com` | 公网 IP 探测（依赖 DNS，同在 Cloudflare 之后） | 单点阻断会整组失效 |
+| `1.1.1.1` / `[2606:4700:4700::1111]` 的 `/cdn-cgi/trace` | 免 DNS 的公网 IP 探测兜底 | Cloudflare 策略变更、字面量地址被阻断 |
+| `checkip.amazonaws.com` | 跨 ASN 的公网 IP 探测 | URL 或可达性 |
 | `raw.githubusercontent.com` | 分发项目脚本 | DNS、网络阻断 |
 | fscarmen WARP 脚本 | EUserv IPv4 出口 | 交互参数和 URL |
 
 上游接口变化时，先验证解析结果和下载文件，再修改生产路径。不要在下载验证前覆盖现有二进制。
+
+公网 IP 探测与版本获取都必须保持多来源：探测站清单不能全部依赖 DNS，也不能全部落在同一个 CDN 之后；版本获取不能只留 `github.com` 一条路径。删掉其中任何一层兜底都会让受限网络下的机器直接失败或误判。
 
 ## 安装产物
 
