@@ -423,4 +423,27 @@ download_file() { printf '<html>not a binary</html>' > "$2"; return 0; }
 [ ! -f "$HY_BIN" ]
 )
 
+
+# ---------------------------------------------------------------------------
+# 密码校验：安装与修改必须同规则
+# ---------------------------------------------------------------------------
+# 密码写入双引号 YAML、分享链接和 awk 替换文本，三处的危险字符取并集。
+valid_hy2_password 'Abcdef123456'
+valid_hy2_password 'ok-pass_9.~'
+! valid_hy2_password 'has"quote'
+! valid_hy2_password 'has\backslash'
+! valid_hy2_password 'has$dollar'
+! valid_hy2_password 'has`backtick'
+# 控制字符曾只在安装路径被拦截，改密码路径漏掉：从 Windows 粘贴的密码常带
+# 尾随 \r，会被静默写进配置和分享链接，客户端连不上却没有任何报错。
+! valid_hy2_password "$(printf 'has\rcr')"
+! valid_hy2_password "$(printf 'has\ttab')"
+! valid_hy2_password "$(printf 'trail\r')"
+# 自动生成的密码必须始终通过校验，否则留空自动生成会直接失败。
+i=0
+while [ "$i" -lt 20 ]; do
+    valid_hy2_password "$(gen_password)"
+    i=$((i + 1))
+done
+
 echo 'Hysteria 2 network validation passed.'

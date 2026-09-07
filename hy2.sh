@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：everettlabs
-# 版本：v2.0.40
+# 版本：v2.0.41
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1082,6 +1082,14 @@ open_firewall_range() {
 # 密码生成（两步法，避免管道截断导致空密码）
 # ============================================================
 
+# 密码会写入双引号 YAML、分享链接和 awk 替换文本，危险字符取三者并集。
+# 安装与修改必须走同一个校验：此前两处内联判断规则不一致，修改路径漏掉
+# 控制字符，粘贴带回车符（CR）的密码会被静默写进配置和分享链接，客户端连不上
+# 却没有任何报错。printf 而非 echo，避免 echo 解释反斜杠转义。
+valid_hy2_password() {
+    ! printf '%s' "$1" | LC_ALL=C grep -qE '["\\$`]|[[:cntrl:]]'
+}
+
 gen_password() {
     local _pass=""
     if command -v openssl >/dev/null 2>&1; then
@@ -1181,11 +1189,11 @@ install_hy2() {
 
     read -r -p "请设置连接密码 [留空自动生成]: " PASSWORD
     [ -z "$PASSWORD" ] && PASSWORD=$(gen_password)
-    echo "$PASSWORD" | grep -qE '["\\$`]|[[:cntrl:]]' && {
+    if ! valid_hy2_password "$PASSWORD"; then
         echo -e "${RED}密码不能包含引号、反斜杠、美元符、反引号或控制字符${PLAIN}"
         restore_current_install
         return
-    }
+    fi
 
     # IPv6 Only：监听双栈
     # PORT_HOP 格式为用户友好的 "起始:结束"（如 20000:50000），
@@ -1753,8 +1761,8 @@ change_password() {
     [ -z "$NEW_PASS" ] && NEW_PASS=$(gen_password)
 
     # 校验密码不含破坏 YAML 的特殊字符
-    if echo "$NEW_PASS" | grep -qE '["\\$`]'; then
-        echo -e "${RED}错误: 密码不能包含特殊字符 (\", \\, \$, \`)${PLAIN}"
+    if ! valid_hy2_password "$NEW_PASS"; then
+        echo -e "${RED}密码不能包含引号、反斜杠、美元符、反引号或控制字符${PLAIN}"
         sleep 2
         return
     fi
@@ -2326,7 +2334,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.40${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.41${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

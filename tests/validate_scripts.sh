@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh"
-EXPECTED_VERSION="v2.0.40"
+EXPECTED_VERSION="v2.0.41"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -259,6 +259,17 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q 'command -v ss >/dev/null 2>&1 || return 1' "$script"
     [ "$(grep -c 'for _cmd in .* ss; do' "$script")" -eq 2 ]
 done
+# 密码校验必须单点定义，安装与修改共用。此前 hy2 两处内联判断规则不一致：
+# 安装拦控制字符、改密码不拦，粘贴带 \r 的密码会被静默写进配置和分享链接。
+grep -q '^valid_hy2_password()' hy2.sh
+[ "$(grep -c 'valid_hy2_password "' hy2.sh)" -eq 2 ]
+! grep -q 'echo "\$NEW_PASS" | grep -qE' hy2.sh
+! grep -q 'echo "\$PASSWORD" | grep -qE' hy2.sh
+# ss 走 JSON，anytls/proxy 走各自的 validate_password，同样必须两处以上共用。
+[ "$(grep -c 'valid_json_secret "' ss.sh)" -ge 2 ]
+[ "$(grep -c 'validate_password "' anytls.sh)" -ge 2 ]
+[ "$(grep -c 'validate_password "' proxy.sh)" -ge 2 ]
+
 # restore_config 以 root 身份把归档解到 /，是全项目风险最高的写入路径。
 # 解包前必须完成完整性与成员校验：gzip/tar 的完整性要读到末尾才能确认，
 # 截断归档直接解包会写入一半再失败，留下无人回滚的半还原状态。

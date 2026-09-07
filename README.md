@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.40（2026-09-08） · 本次更新：子脚本下载校验后自动落盘为缓存，离线兜底真正可用；同步 README 与四份文档。
+> 当前版本：v2.0.41（2026-09-08） · 本次更新：统一 Hysteria 2 密码校验，修复改密码路径漏拦控制字符。
 
 ## 目录
 
