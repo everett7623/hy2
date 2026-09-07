@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Hysteria2 Management Script
 # 作者：everettlabs
-# 版本：v2.0.37
+# 版本：v2.0.38
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -829,7 +829,8 @@ download_hy2() {
     echo -e "${YELLOW}正在下载 hysteria-linux-${_arch}...${PLAIN}"
 
     local _source=""
-    if download_file "$_url_github" "$_tmp_bin"; then
+    # 版本未知时 GitHub URL 无法构造，直接走官方永久镜像。
+    if [ -n "$LAST_VERSION_TAG" ] && download_file "$_url_github" "$_tmp_bin"; then
         _source="GitHub"
     elif download_file "$_url_mirror" "$_tmp_bin"; then
         _source="官方镜像"
@@ -842,10 +843,20 @@ download_hy2() {
     chmod +x "$_tmp_bin"
     local _downloaded_version
     _downloaded_version=$("$_tmp_bin" version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-    if [ "$_downloaded_version" != "$LAST_VERSION" ]; then
+    if [ -z "$_downloaded_version" ]; then
+        rm -f "$_tmp_bin"
+        echo -e "${RED}无法从下载的二进制读取版本号${PLAIN}"
+        return 1
+    fi
+    # 版本已知时严格比对；未知时以二进制自报版本为准（已通过上面的合法性检查）。
+    if [ -n "$LAST_VERSION" ] && [ "$_downloaded_version" != "$LAST_VERSION" ]; then
         rm -f "$_tmp_bin"
         echo -e "${RED}下载的二进制版本校验失败（期望 ${LAST_VERSION}，得到 ${_downloaded_version:-未知}）${PLAIN}"
         return 1
+    fi
+    if [ -z "$LAST_VERSION" ]; then
+        LAST_VERSION="$_downloaded_version"
+        LAST_VERSION_TAG="app/${_downloaded_version}"
     fi
     mv -f "$_tmp_bin" "$HY_BIN"
     echo -e "${GREEN}下载完成（来源：${_source}）${PLAIN}"
@@ -1128,7 +1139,14 @@ install_hy2() {
     install_dependencies || return
     detect_network
     echo ""
-    get_latest_version || return
+    # GitHub 全线不可达时，官方永久镜像仍可能可用，不应因此阻断全新安装；
+    # 版本改由下载后从二进制自身读取。升级路径不走这里：版本未知时
+    # 不能盲目替换正在工作的二进制。
+    if ! get_latest_version; then
+        echo -e "${YELLOW}[WARN] 无法确定最新版本，将尝试官方永久镜像安装${PLAIN}"
+        LAST_VERSION_TAG=""
+        LAST_VERSION=""
+    fi
     backup_current_install || { echo -e "${RED}无法创建重装备份，已取消安装${PLAIN}"; return; }
     download_hy2 || { restore_current_install; return; }
 
@@ -2308,7 +2326,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}    Hysteria2 Management Script v2.0.37${PLAIN}"
+        echo -e "${GREEN}    Hysteria2 Management Script v2.0.38${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

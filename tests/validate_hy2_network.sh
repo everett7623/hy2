@@ -368,4 +368,59 @@ curl() { return 1; }
 [ -z "$LAST_VERSION" ]
 )
 
+
+# ---------------------------------------------------------------------------
+# GitHub 全线不可达时的全新安装路径
+# ---------------------------------------------------------------------------
+# 官方永久镜像 download.hysteria.network 不依赖版本号，GitHub 取不到版本时
+# 仍应能完成全新安装；此前 install_hy2 在这里直接 return，本可用的路径被浪费。
+(
+HY_BIN="$tmp/hy-mirror"
+LAST_VERSION_TAG=""
+LAST_VERSION=""
+downloaded_from=""
+download_file() {
+    case "$1" in
+        *download.hysteria.network*)
+            downloaded_from=mirror
+            printf '#!/bin/sh\necho "hysteria version v2.6.9"\n' > "$2"
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+download_hy2 >/dev/null 2>&1
+[ "$downloaded_from" = mirror ]
+# 版本必须回填为二进制自报值，供后续元数据与升级比对使用。
+[ "$LAST_VERSION" = 'v2.6.9' ]
+[ "$LAST_VERSION_TAG" = 'app/v2.6.9' ]
+rm -f "$HY_BIN"
+)
+
+# 版本已知时仍必须严格比对：镜像给出不同版本要判失败，不能静默接受。
+(
+HY_BIN="$tmp/hy-mismatch"
+LAST_VERSION_TAG="app/v2.6.1"
+LAST_VERSION="v2.6.1"
+download_file() {
+    case "$1" in
+        *download.hysteria.network*)
+            printf '#!/bin/sh\necho "hysteria version v2.6.9"\n' > "$2"
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+! download_hy2 >/dev/null 2>&1
+[ ! -f "$HY_BIN" ]
+)
+
+# 下载物读不出版本号说明拿到的不是可用二进制，必须失败而不是当成未知版本放行。
+(
+HY_BIN="$tmp/hy-garbage"
+LAST_VERSION_TAG=""
+LAST_VERSION=""
+download_file() { printf '<html>not a binary</html>' > "$2"; return 0; }
+! download_hy2 >/dev/null 2>&1
+[ ! -f "$HY_BIN" ]
+)
+
 echo 'Hysteria 2 network validation passed.'

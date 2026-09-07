@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh"
-EXPECTED_VERSION="v2.0.37"
+EXPECTED_VERSION="v2.0.38"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -259,6 +259,17 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q 'command -v ss >/dev/null 2>&1 || return 1' "$script"
     [ "$(grep -c 'for _cmd in .* ss; do' "$script")" -eq 2 ]
 done
+# GitHub 全线不可达时，官方永久镜像 download.hysteria.network 不依赖版本号，
+# 全新安装不应被版本获取失败阻断；但升级路径必须保持中止，
+# 版本未知时盲目替换正在工作的二进制会带来不可控回退风险。
+grep -q 'echo -e "\${YELLOW}\[WARN\] 无法确定最新版本，将尝试官方永久镜像安装\${PLAIN}"' hy2.sh
+grep -q 'if \[ -n "\$LAST_VERSION_TAG" \] && download_file "\$_url_github" "\$_tmp_bin"; then' hy2.sh
+grep -q 'if \[ -n "\$LAST_VERSION" \] && \[ "\$_downloaded_version" != "\$LAST_VERSION" \]; then' hy2.sh
+grep -q '无法从下载的二进制读取版本号' hy2.sh
+# 升级仍须在版本未知时中止。
+sed -n '/^_upgrade_hy2_locked() {/,/^}$/p' hy2.sh | grep -q '^    get_latest_version || return$'
+! sed -n '/^install_hy2() {/,/^}$/p' hy2.sh | grep -q '^    get_latest_version || return$'
+
 # 版本 tag 必须经过格式校验后才能进入下载 URL。重定向兜底失败时 curl 会输出
 # 原始请求 URL，裸 sed 抽不出 tag 就把整条 URL 当版本号，非空检查拦不住；
 # hy2 还会用它比对二进制实际版本，导致官方永久镜像这条可用路径被误判中止。
