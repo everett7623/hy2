@@ -1,1 +1,4 @@
 .agents/
+
+# 文件同步工具（Syncthing 等）产生的冲突副本，绝不能提交
+*sync-conflict-*

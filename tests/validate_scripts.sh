@@ -5,8 +5,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
-HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh"
-EXPECTED_VERSION="v2.0.41"
+HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh"
+EXPECTED_VERSION="v2.0.42"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -259,6 +259,26 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q 'command -v ss >/dev/null 2>&1 || return 1' "$script"
     [ "$(grep -c 'for _cmd in .* ss; do' "$script")" -eq 2 ]
 done
+# hy2/ss 的自动更新是安装时写死的自包含快照，不像 anytls/vless/proxy 那样
+# 每次下载最新脚本 —— 主脚本的修复到不了它。因此快照自身必须带镜像回退，
+# 否则 GitHub API 限频或被阻断时自动更新会长期静默跳过，而用户以为它在工作。
+for script in hy2.sh ss.sh; do
+    _au=$(mktemp)
+    awk '/cat > "\$AUTO_UPDATE_SCRIPT" <<'\''AUTOUPDATE_EOF'\''/{c=1;next} c&&/^AUTOUPDATE_EOF$/{exit} c' "$script" > "$_au"
+    grep -q '^_norm_tag()' "$_au"
+    grep -q 'kkgithub.com' "$_au"
+    grep -q 'gh-proxy.com' "$_au"
+    grep -q 'url_effective' "$_au"
+    # 加了重定向兜底就必须同时校验格式，否则等于把脏 tag 缺陷带进 cron 路径。
+    grep -q "grep -qE '\^v\[0-9\]" "$_au"
+    rm -f "$_au"
+done
+# anytls/vless/proxy 走委托模式，其入口参数是自动更新的命脉，不可删改。
+for script in anytls.sh vless.sh proxy.sh; do
+    grep -q 'bash "\$TMP_SCRIPT" --upgrade-noninteractive' "$script"
+    grep -q 'if \[ "\${1:-}" = "--upgrade-noninteractive" \]; then' "$script"
+done
+
 # 密码校验必须单点定义，安装与修改共用。此前 hy2 两处内联判断规则不一致：
 # 安装拦控制字符、改密码不拦，粘贴带 \r 的密码会被静默写进配置和分享链接。
 grep -q '^valid_hy2_password()' hy2.sh
@@ -433,6 +453,7 @@ done
 
 bash tests/validate_recovery.sh dns
 bash tests/validate_restore.sh
+bash tests/validate_autoupdate.sh
 bash tests/validate_anytls.sh
 bash tests/validate_vless.sh
 bash tests/validate_proxy.sh

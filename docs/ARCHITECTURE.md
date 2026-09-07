@@ -148,6 +148,7 @@ sing-box-multi-protocol-tools/  # 仓库 slug 仍为 hy2，raw URL 不变
 │   ├── validate_scripts.sh     # 总验证入口，末尾串联下列全部验证脚本
 │   ├── validate_recovery.sh    # 三协议网卡绑定刷新回滚 + EUserv DNS 恢复
 │   ├── validate_restore.sh     # install.sh 配置恢复的归档校验
+│   ├── validate_autoupdate.sh  # 生成的 cron 脚本：镜像回退与 tag 校验
 │   ├── validate_anytls.sh      # AnyTLS 行为测试
 │   ├── validate_vless.sh       # VLESS/REALITY 行为测试
 │   ├── validate_proxy.sh       # HTTP/SOCKS mixed 行为测试

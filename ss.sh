@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Shadowsocks-Rust Management Script
 # 作者：everettlabs
-# 版本：v2.0.41
+# 版本：v2.0.42
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1861,10 +1861,38 @@ release_lock() {
     LOCK_MODE=""
 }
 
+# 校验版本 tag 格式。重定向兜底失败时 curl 仍会输出原始请求 URL，
+# 裸 sed 抽不出 tag 就把整条 URL 当版本号并拼进下载 URL 与压缩包名。
+_norm_tag() {
+    local _t
+    _t=$(printf '%s' "$1" | tr -d '[:space:]' | sed -E 's#^.*/tag/##; s#^.*/download/##; s#[?].*$##')
+    [ -n "$_t" ] || return 1
+    case "$_t" in v*) ;; *) _t="v${_t}" ;; esac
+    printf '%s\n' "$_t" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+    printf '%s' "$_t"
+}
+
 get_latest() {
-    curl -Ls --max-time 15 \
-        "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" \
-        | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -1
+    local _raw="" _cand="" _u
+    _cand=$(curl -fsSL --connect-timeout 8 --max-time 15 \
+        "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" 2>/dev/null \
+        | awk -F'"' '/"tag_name":/ { print $4; exit }' 2>/dev/null)
+    _raw=$(_norm_tag "$_cand" 2>/dev/null) || _raw=""
+    # GitHub API 限频（每 IP 每小时 60 次）或被阻断时改走重定向，镜像用于
+    # github.com 不可达的网络。缺少这层兜底会让自动更新长期静默跳过，
+    # 而用户以为它在工作。
+    if [ -z "$_raw" ]; then
+        for _u in \
+            "https://github.com/shadowsocks/shadowsocks-rust/releases/latest" \
+            "https://kkgithub.com/shadowsocks/shadowsocks-rust/releases/latest" \
+            "https://gh-proxy.com/https://github.com/shadowsocks/shadowsocks-rust/releases/latest"
+        do
+            _cand=$(curl -Ls --connect-timeout 8 --max-time 15 -o /dev/null -w "%{url_effective}" "$_u" 2>/dev/null)
+            _raw=$(_norm_tag "$_cand" 2>/dev/null) && break
+            _raw=""
+        done
+    fi
+    printf '%s' "$_raw"
 }
 
 get_current() {
@@ -2156,7 +2184,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}===============================================${PLAIN}"
-        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.41${PLAIN}"
+        echo -e "${GREEN}  Shadowsocks-Rust Management Script v2.0.42${PLAIN}"
         echo -e "${SKYBLUE}===============================================${PLAIN}"
         echo -e " 项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
         echo -e " 作者    : ${YELLOW}everettlabs${PLAIN}"

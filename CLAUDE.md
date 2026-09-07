@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.41 (2026-09-08)
+v2.0.42 (2026-09-08)
 
 ## Project overview
 
@@ -114,7 +114,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.41" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.42" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation
@@ -127,7 +127,8 @@ git diff --check  # detect trailing whitespace and CRLF
 
 `tests/validate_scripts.sh` is the single entry point and its final section invokes every other
 validator (`validate_recovery.sh dns`, `validate_restore.sh`, `validate_anytls.sh`,
-`validate_vless.sh`, `validate_proxy.sh`, `validate_hy2_network.sh`, `validate_ss_network.sh`).
+`validate_autoupdate.sh`, `validate_vless.sh`, `validate_proxy.sh`, `validate_hy2_network.sh`,
+`validate_ss_network.sh`).
 Running the sub-scripts directly is only useful for faster iteration on one protocol.
 
 **None of these need a VPS, a running service, root, or a real config.** Every validator sources
@@ -139,6 +140,7 @@ excuse for skipping it.
 bash tests/validate_recovery.sh              # all subsets: anytls, vless, proxy, dns
 bash tests/validate_recovery.sh vless        # bind-refresh + rollback for one protocol
 bash tests/validate_restore.sh               # backup-archive validation for restore_config
+bash tests/validate_autoupdate.sh            # generated cron scripts: mirror fallback, tag validation
 bash tests/validate_anytls.sh                # AnyTLS config structure, cert paths, wrapper
 bash tests/validate_vless.sh                 # VLESS UUID, REALITY keys, JSON, shared core
 bash tests/validate_proxy.sh                 # mixed inbound, users, bind_interface, wrapper
@@ -218,6 +220,18 @@ install | info|node|export|all | uri|link | mihomo|clash | surfboard | shadowroc
 
 `vless.sh` adds `diagnose|check|health`. `euservhy2.sh` uses `do_install` / `show_node_info`
 instead of the `install_*` / `show_config` names. Unknown verbs must exit 1 with the usage line.
+
+`anytls.sh`, `vless.sh` and `proxy.sh` also accept **`--upgrade-noninteractive`**, handled by a
+dedicated branch *before* the normal `case` dispatch. Their auto-update cron re-downloads the
+latest script from GitHub and invokes exactly this flag — deleting or renaming it silently
+breaks unattended updates for all three protocols.
+
+The two auto-update architectures differ, and this matters when fixing upgrade logic:
+
+| Scripts | Cron does | Consequence |
+|---------|-----------|-------------|
+| `anytls.sh`, `vless.sh`, `proxy.sh` | downloads latest script, runs `--upgrade-noninteractive` | always picks up main-script fixes |
+| `hy2.sh`, `ss.sh` | runs a self-contained snapshot written into `/usr/local/bin/*-autoupdate.sh` at install time | **frozen** — main-script fixes never reach it; patch the `AUTOUPDATE_EOF` heredoc too |
 
 ## Shared sing-box core coordination (anytls / vless / proxy)
 

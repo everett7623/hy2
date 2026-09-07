@@ -4,6 +4,17 @@
 
 ---
 
+## v2.0.42 (2026-09-08)
+
+- 修复 `hy2.sh` 与 `ss.sh` 自动更新在 GitHub API 受限时长期静默失效的问题。这两个脚本的 cron 任务是安装时写死的自包含快照，其 `get_latest()` 只有 GitHub API 一条来源；API 限频（每 IP 每小时 60 次，廉价 VPS 常共享出口 IP）或被阻断时只在日志留下「跳过更新」，用户以为自动更新在正常工作。
+- 与 `anytls.sh`/`vless.sh`/`proxy.sh` 不同，后三者的 cron 每次重新下载最新脚本再执行 `--upgrade-noninteractive`，主脚本的修复会自动生效；hy2/ss 的快照逻辑冻结在安装那一刻，v2.0.37 为交互路径补的镜像回退根本到不了它。
+- 两份生成脚本的 `get_latest()` 补齐回退链：GitHub API → `github.com` / `kkgithub.com` / `gh-proxy.com` 重定向。
+- 同时新增 `_norm_tag()` 格式校验。加入重定向兜底就必须校验格式，否则等于把 v2.0.37 修掉的脏 tag 缺陷重新引入无人值守的 cron 路径 —— `curl -w %{url_effective}` 在跳转失败时仍会输出原始请求 URL。
+- 测试：新增 `tests/validate_autoupdate.sh`，从两个脚本中抽取 `AUTOUPDATE_EOF` heredoc 并验证 API 可用、限频后走镜像、脏 tag 被拒、全失败返回空值四条路径，已接入主入口；回归锁额外断言 anytls/vless/proxy 的 `--upgrade-noninteractive` 入口与其调用点必须同时存在。
+- 文档：`CLAUDE.md` 补入 `--upgrade-noninteractive` 入口说明，以及「两种自动更新架构」对照表 —— hy2/ss 的 cron 是冻结快照，修升级逻辑时必须同步修改 `AUTOUPDATE_EOF` heredoc，否则改动不会生效。
+
+---
+
 ## v2.0.41 (2026-09-08)
 
 - 统一 `hy2.sh` 的密码校验。此前安装与改密码是两处独立的内联判断且规则不一致：安装拦截 `" \ $ ` ` 与控制字符，改密码只拦前四个，漏掉控制字符。
