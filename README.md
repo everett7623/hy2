@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.42（2026-09-08） · 本次更新：hy2/ss 自动更新补齐镜像回退，GitHub API 限频不再导致长期静默失效。
+> 当前版本：v2.0.43（2026-09-09） · 本次更新：Alpine 改用 sing-box musl 构建，并修复 UFW inactive 状态误判与错误信息丢失。
 
 ## 目录
 
