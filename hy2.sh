@@ -1025,10 +1025,10 @@ open_firewall_rule() {
     fi
     mkdir -p "$HY_META/firewall" 2>/dev/null || return 1
 
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
-        if ! ufw status 2>/dev/null | grep -qE "^${_ufw_spec}[[:space:]]+ALLOW"; then
-            ufw allow "$_ufw_spec" >/dev/null 2>&1 && \
-                ufw status 2>/dev/null | grep -qE "^${_ufw_spec}[[:space:]]+ALLOW" || return 1
+    if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -qE '^Status:[[:space:]]+active[[:space:]]*$'; then
+        if ! LC_ALL=C ufw status 2>/dev/null | grep -qE "^${_ufw_spec}[[:space:]]+ALLOW"; then
+            LC_ALL=C ufw allow "$_ufw_spec" >/dev/null && \
+                LC_ALL=C ufw status 2>/dev/null | grep -qE "^${_ufw_spec}[[:space:]]+ALLOW" || return 1
             record_firewall_rule ufw "$_proto" "$_kind" "$_start" "$_end" || return 1
         fi
         echo -e "  ${GREEN}✓ ufw 已放行 ${_proto}/${_ufw_spec%/*}${PLAIN}"

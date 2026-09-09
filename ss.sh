@@ -394,11 +394,11 @@ open_ports() {
     fi
 
     # ufw：用 ufw status 判断 active（比 is-active 更可靠）
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
+    if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -qE '^Status:[[:space:]]+active[[:space:]]*$'; then
         for _proto in tcp udp; do
-            if ! ufw status 2>/dev/null | grep -qE "^${_port}/${_proto}[[:space:]]+ALLOW"; then
-                if ! ufw allow "${_port}/${_proto}" >/dev/null 2>&1 || \
-                    ! ufw status 2>/dev/null | grep -qE "^${_port}/${_proto}[[:space:]]+ALLOW"; then
+            if ! LC_ALL=C ufw status 2>/dev/null | grep -qE "^${_port}/${_proto}[[:space:]]+ALLOW"; then
+                if ! LC_ALL=C ufw allow "${_port}/${_proto}" >/dev/null || \
+                    ! LC_ALL=C ufw status 2>/dev/null | grep -qE "^${_port}/${_proto}[[:space:]]+ALLOW"; then
                     close_ports "$_port"
                     echo -e "${RED}ufw 放行 ${_proto}/${_port} 失败${PLAIN}"
                     return 1

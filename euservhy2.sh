@@ -719,7 +719,7 @@ configure_firewall() {
     valid_port "$port" || { error "无效的防火墙端口: ${port}"; return 1; }
     step "配置防火墙（IPv6 UDP/TCP ${port}）..."
 
-    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+    if command -v ufw &>/dev/null && LC_ALL=C ufw status 2>/dev/null | grep -qE '^Status:[[:space:]]+active[[:space:]]*$'; then
         ufw allow "${port}/udp" >> "$LOG_FILE" 2>&1 && \
             ufw allow "${port}/tcp" >> "$LOG_FILE" 2>&1 || {
             error "UFW 规则添加失败，详情见 ${LOG_FILE}"

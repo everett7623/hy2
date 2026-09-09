@@ -595,6 +595,33 @@ detect_arch() {
     esac
 }
 
+singbox_asset_name() {
+    local _ver="${1#v}" _arch="$2" _suffix=""
+    # Alpine 使用官方 musl 静态构建，避免普通包的 libc 运行时依赖。
+    if [ "${RELEASE:-unknown}" = "alpine" ] && version_at_least "$_ver" "1.13.0"; then
+        case "$_arch" in
+            amd64|arm64|armv7|386) _suffix="-musl" ;;
+        esac
+    fi
+    printf 'sing-box-%s-linux-%s%s.tar.gz\n' "$_ver" "$_arch" "$_suffix"
+}
+
+validate_singbox_execution() {
+    local _bin="$1" _expected="$2" _output _status=0 _actual
+    _output=$("$_bin" version 2>&1) || _status=$?
+    _actual=$(printf '%s\n' "$_output" | sed -n 's/^sing-box version \([0-9][0-9.]*\).*$/\1/p' | head -1)
+    if [ "$_status" -ne 0 ] || [ "$_actual" != "$_expected" ]; then
+        echo -e "${RED}sing-box 执行或版本校验失败（退出码 ${_status}，期望 ${_expected}，得到 ${_actual:-未知}）${PLAIN}" >&2
+        printf '%s\n' "$_output" >&2
+        case "$_status" in
+            137) echo "进程被 SIGKILL 终止，可能触发 VPS 内存限制；请检查 OOM 日志和可用内存。" >&2 ;;
+            126|127) echo "请检查系统运行库、CPU 架构及临时目录是否设置 noexec。" >&2 ;;
+            132) echo "CPU 不支持该二进制所需的指令集。" >&2 ;;
+        esac
+        return 1
+    fi
+}
+
 build_release_url() {
     local _tag="$1" _arch="$2"
     case "$_tag" in
@@ -605,8 +632,8 @@ build_release_url() {
         *) echo -e "${RED}不支持的架构: ${_arch}${PLAIN}" >&2; return 1 ;;
     esac
     local _ver="${_tag#v}"
-    printf 'https://github.com/SagerNet/sing-box/releases/download/v%s/sing-box-%s-linux-%s.tar.gz\n' \
-        "$_ver" "$_ver" "$_arch"
+    printf 'https://github.com/SagerNet/sing-box/releases/download/v%s/%s\n' \
+        "$_ver" "$(singbox_asset_name "$_ver" "$_arch")"
 }
 
 version_at_least() {
@@ -979,10 +1006,10 @@ open_ports() {
         return 0
     fi
 
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
-        if ! ufw status 2>/dev/null | grep -qE "^${_port}/tcp[[:space:]]+ALLOW"; then
-            if ! ufw allow "${_port}/tcp" >/dev/null 2>&1 || \
-                ! ufw status 2>/dev/null | grep -qE "^${_port}/tcp[[:space:]]+ALLOW"; then
+    if command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -qE '^Status:[[:space:]]+active[[:space:]]*$'; then
+        if ! LC_ALL=C ufw status 2>/dev/null | grep -qE "^${_port}/tcp[[:space:]]+ALLOW"; then
+            if ! LC_ALL=C ufw allow "${_port}/tcp" >/dev/null || \
+                ! LC_ALL=C ufw status 2>/dev/null | grep -qE "^${_port}/tcp[[:space:]]+ALLOW"; then
                 echo -e "${RED}ufw 放行 tcp/${_port} 失败${PLAIN}"
                 return 1
             fi
@@ -1038,7 +1065,7 @@ close_ports() {
         firewall-cmd --reload >/dev/null 2>&1 || true
         rm -f "$_fw_meta/firewalld-${_port}-tcp"
     fi
-    if [ -f "$_fw_meta/ufw-${_port}-tcp" ] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "active"; then
+    if [ -f "$_fw_meta/ufw-${_port}-tcp" ] && command -v ufw >/dev/null 2>&1 && LC_ALL=C ufw status 2>/dev/null | grep -qE '^Status:[[:space:]]+active[[:space:]]*$'; then
         ufw delete allow "${_port}/tcp" >/dev/null 2>&1 || true
         rm -f "$_fw_meta/ufw-${_port}-tcp"
     fi
@@ -1186,7 +1213,8 @@ download_vless() {
     _arch=$(detect_arch) || return 1
 
     local _ver="${LAST_VERSION_TAG#v}"
-    local _asset="sing-box-${_ver}-linux-${_arch}.tar.gz"
+    local _asset
+    _asset=$(singbox_asset_name "$_ver" "$_arch") || return 1
     local _gh_path="SagerNet/sing-box/releases/download/v${_ver}/${_asset}"
     local _urls=(
         "https://github.com/${_gh_path}"
@@ -1249,11 +1277,8 @@ download_vless() {
         echo -e "${RED}二进制 ELF 校验失败（文件损坏或架构不匹配）${PLAIN}"
         return 1
     fi
-    local _downloaded_version
-    _downloaded_version=$("$_bin" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-    if [ "$_downloaded_version" != "$_ver" ]; then
+    if ! validate_singbox_execution "$_bin" "$_ver"; then
         rm -rf "$_tmp_dir"
-        echo -e "${RED}sing-box 执行或版本校验失败（期望 ${_ver}，得到 ${_downloaded_version:-未知}）${PLAIN}"
         return 1
     fi
     if ! validate_shared_configs_with_bin "$_bin"; then

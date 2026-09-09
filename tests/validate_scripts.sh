@@ -454,6 +454,7 @@ done
 bash tests/validate_recovery.sh dns
 bash tests/validate_restore.sh
 bash tests/validate_autoupdate.sh
+bash tests/validate_platform.sh
 bash tests/validate_anytls.sh
 bash tests/validate_vless.sh
 bash tests/validate_proxy.sh
