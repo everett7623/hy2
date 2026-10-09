@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.43
+# 版本：v2.0.44
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-09-09
+# 更新日期: 2026-10-09
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -2128,7 +2128,7 @@ _upgrade_core_locked() {
     get_latest_version || return 1
 
     local _current_version _latest_version _was_active=0
-    local _anytls_was_active=0 _vless_was_active=0
+    local _anytls_was_active=0 _vless_was_active=0 _landing_was_active=0
     local _restart_failed=0 _was_managed="$MANAGED_SING_BOX"
     _current_version=$(get_installed_version)
     _latest_version="${LAST_VERSION_TAG#v}"
@@ -2144,6 +2144,7 @@ _upgrade_core_locked() {
     service_is_active && _was_active=1 || true
     shared_service_is_active anytls-server && _anytls_was_active=1 || true
     shared_service_is_active vless-server && _vless_was_active=1 || true
+    shared_service_is_active landing-server && _landing_was_active=1 || true
     if ! download_singbox; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         MANAGED_SING_BOX="$_was_managed"
@@ -2164,17 +2165,22 @@ _upgrade_core_locked() {
     if [ "$_vless_was_active" = "1" ]; then
         shared_service_restart vless-server /usr/local/bin/vless-server || _restart_failed=1
     fi
-    if [ "$_was_active" = "1" ] || [ "$_anytls_was_active" = "1" ] || [ "$_vless_was_active" = "1" ]; then
+    if [ "$_landing_was_active" = "1" ]; then
+        shared_service_restart landing-server /usr/local/bin/landing-server || _restart_failed=1
+    fi
+    if [ "$_was_active" = "1" ] || [ "$_anytls_was_active" = "1" ] || [ "$_vless_was_active" = "1" ] || [ "$_landing_was_active" = "1" ]; then
         sleep 2
     fi
     [ "$_was_active" = "0" ] || wait_for_health || _restart_failed=1
     [ "$_anytls_was_active" = "0" ] || shared_service_is_active anytls-server || _restart_failed=1
     [ "$_vless_was_active" = "0" ] || shared_service_is_active vless-server || _restart_failed=1
+    [ "$_landing_was_active" = "0" ] || shared_service_is_active landing-server || _restart_failed=1
     if [ "$_restart_failed" = "1" ]; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         [ "$_was_active" = "0" ] || service_restart || true
         [ "$_anytls_was_active" = "0" ] || shared_service_restart anytls-server /usr/local/bin/anytls-server || true
         [ "$_vless_was_active" = "0" ] || shared_service_restart vless-server /usr/local/bin/vless-server || true
+        [ "$_landing_was_active" = "0" ] || shared_service_restart landing-server /usr/local/bin/landing-server || true
         echo -e "${RED}升级后共享服务启动失败，已回滚${PLAIN}"
         return 1
     fi
@@ -2506,7 +2512,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.43${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.44${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

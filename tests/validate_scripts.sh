@@ -4,9 +4,9 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh euservhy2.sh"
-HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh"
-EXPECTED_VERSION="v2.0.43"
+SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
+HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
+EXPECTED_VERSION="v2.0.44"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -76,6 +76,15 @@ for script in $SCRIPTS; do
             grep -q 'export_uri_socks5()' "$script"
             ! grep -q 'export_mihomo_http\|export_mihomo_socks\|Mihomo HTTP 单行' "$script"
             ;;
+        landing.sh)
+            grep -q "# 版本：${EXPECTED_VERSION}" "$script"
+            grep -q "Landing Relay Management Script.*${EXPECTED_VERSION}" "$script"
+            grep -q 'github.com/SagerNet/sing-box/releases/download' "$script"
+            grep -q '"type": "wireguard"' "$script"
+            grep -q '"type": "vless"' "$script"
+            grep -q '"system": false' "$script"
+            grep -q 'LANDING_LIB_ONLY' "$script"
+            ;;
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
             ;;
@@ -87,7 +96,7 @@ for script in $SCRIPTS; do
     fi
 done
 
-for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh; do
     tmp=$(mktemp)
     awk '
         /cat > "\$AUTO_UPDATE_SCRIPT" <<'\''AUTOUPDATE_EOF'\''/ {
@@ -121,6 +130,21 @@ grep -q '^shared_vless_service_restart()' anytls.sh
 grep -q '^shared_anytls_service_restart()' vless.sh
 grep -q '^shared_proxy_service_restart()' anytls.sh
 grep -q '^shared_proxy_service_restart()' vless.sh
+# 家宽中转与三个 sing-box 协议共用核心：任一方升级核心后都必须重启另外几方，
+# 否则旧进程继续持有已被替换的二进制，失败时也无法一并回滚。
+grep -q '^shared_landing_service_restart()' anytls.sh
+grep -q '^shared_landing_service_restart()' vless.sh
+grep -q 'shared_landing_service_is_active && _landing_was_active=1' anytls.sh
+grep -q 'shared_landing_service_is_active && _landing_was_active=1' vless.sh
+grep -q 'shared_service_is_active landing-server && _landing_was_active=1' proxy.sh
+grep -q 'shared_service_restart landing-server /usr/local/bin/landing-server' proxy.sh
+grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' landing.sh
+grep -q 'LANDING_URL="${BASE_URL}/landing.sh"' install.sh
+grep -q 'landing-server:start) nohup /usr/local/bin/landing-server' install.sh
+grep -q '"landing-server /var/run/landing-server.pid"' install.sh
+grep -q 'etc/systemd/system/landing-server.service' install.sh
+grep -q '10) run_script "家宽中转" "$LANDING_URL" "menu"' install.sh
+grep -q 'download_script_to_cache landing.sh "$LANDING_URL"' install.sh
 grep -q '^ensure_outbound_bind()' anytls.sh
 grep -q '^ensure_outbound_bind()' vless.sh
 grep -q '^ensure_outbound_bind()' proxy.sh
@@ -238,6 +262,7 @@ done
 grep -q '17 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' anytls.sh
 grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
 grep -q '37 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
+grep -q '47 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' landing.sh
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh
@@ -274,7 +299,7 @@ for script in hy2.sh ss.sh; do
     rm -f "$_au"
 done
 # anytls/vless/proxy 走委托模式，其入口参数是自动更新的命脉，不可删改。
-for script in anytls.sh vless.sh proxy.sh; do
+for script in anytls.sh vless.sh proxy.sh landing.sh; do
     grep -q 'bash "\$TMP_SCRIPT" --upgrade-noninteractive' "$script"
     grep -q 'if \[ "\${1:-}" = "--upgrade-noninteractive" \]; then' "$script"
 done
@@ -327,7 +352,7 @@ grep -q '^set_ss_version_tag()' ss.sh
 ! grep -q 'sed .s|\.\*/tag/||.' hy2.sh
 ! grep -q 'sed .s|\.\*/tag/||.' ss.sh
 # github.com 不可达是本项目目标用户的常见场景，五个脚本都必须有镜像回退。
-for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
+for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh; do
     grep -q 'kkgithub.com' "$script"
     grep -q 'gh-proxy.com' "$script"
 done
@@ -458,6 +483,7 @@ bash tests/validate_platform.sh
 bash tests/validate_anytls.sh
 bash tests/validate_vless.sh
 bash tests/validate_proxy.sh
+bash tests/validate_landing.sh
 bash tests/validate_hy2_network.sh
 bash tests/validate_ss_network.sh
 

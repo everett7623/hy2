@@ -8,6 +8,8 @@
 
 同一入口还会执行 `tests/validate_proxy.sh`。该测试会 source `proxy.sh`，验证端口/用户名/密码校验、mixed 入站 JSON、`bind_interface` 出站、wrapper、systemd/OpenRC 单元名 `proxy-server`，以及在无真实 sing-box 时对 `check_config` 的 mock 行为。
 
+同一入口还会执行 `tests/validate_landing.sh`。该测试会 source `landing.sh`，验证 WireGuard 密钥/落地机地址/SSH 用户校验、远程结果与参数文件解析、线路机和落地机 JSON、元数据往返（含以 `=` 结尾的密钥）、参数注入拒绝、落地机两阶段 commit/abort、角色与共享核心卸载所有权、出口 IP 校验，以及 SSH 不使用 `StrictHostKeyChecking=no`、sshpass、`ip_forward` 或 iptables NAT 的静态约束。设置 `REAL_SING_BOX_BIN` 时会对两端 JSON 运行真实 `sing-box check`。
+
 本机已有真实 sing-box 时，可额外校验测试生成的 VLESS JSON：
 
 ```bash
@@ -58,7 +60,7 @@ bash tests/validate_scripts.sh
 - `/etc/sing-box` 存在其他配置时，卸载 AnyTLS 或 VLESS 不得删除共享文件和核心
 - AnyTLS/VLESS 任一入口升级 sing-box 前，必须用候选二进制校验所有 `/etc/sing-box/*.json`
 - AnyTLS 三种证书模式均需验证：自签输出兼容参数；已有证书校验 SAN、有效期、root 私钥权限和密钥配对；ACME 仅在 sing-box >= 1.14.0 使用 `certificate_provider`，并验证 TCP 80/443 防火墙所有权、回滚和卸载清理
-- 核心替换后必须重启替换前正在运行的 AnyTLS/VLESS/HTTP/SOCKS（`proxy-server` 为第三共享消费者）；任一服务恢复失败时回滚核心和原服务状态
+- 核心替换后必须重启替换前正在运行的 AnyTLS/VLESS/HTTP/SOCKS/家宽中转（`proxy-server`、`landing-server` 均为共享消费者）；任一服务恢复失败时回滚核心和原服务状态
 - 最后一个项目管理的 sing-box 协议卸载时，只有存在 `.singbox-tools-managed` 或协议元数据确认所有权后才可删除核心
 
 ### 3. 用户侧连接验证
@@ -117,6 +119,15 @@ bash tests/validate_scripts.sh
 - 旧安装执行升级时应保留 UUID、REALITY 密钥和端口，并补齐当前配置 schema；迁移校验或重启失败时恢复旧配置。
 - 服务健康检查必须同时确认进程和 TCP 监听；本机防火墙规则写入失败时安装必须中止并回滚。
 - 与 AnyTLS 共存时，升级会预检双方 JSON；不同卸载顺序都不会误删共享配置或遗留项目独占核心。
+
+### `landing.sh`
+
+- 在线路机一键部署：首次 SSH 确认指纹后，落地机自动安装 sing-box 并只开放一个 UDP 端口；线路机显示的出口 IP 必须等于落地机公网 IP。
+- 真实客户端经线路机访问 IP、域名与 DNS 均从落地机出口；停止落地机服务后流量应失败，证明不存在绕过隧道的直连。
+- 内网目标（RFC1918、回环）被拒绝。
+- 重新部署失败（例如指定的 UDP 端口被占用）时两端配置、服务和防火墙恢复到部署前状态；重新部署成功时保留客户端 UUID。
+- 修改落地机地址、诊断和卸载（含远端清理）后两端无残留；与 VLESS/AnyTLS/HTTP/SOCKS 共存时不误删共享核心。
+- 家宽落地机位于路由器后时，需验证路由器 UDP 端口转发到落地机后可握手。
 
 ### `euservhy2.sh`
 

@@ -1,6 +1,6 @@
 # Sing-box Multi-Protocol Tools
 
-面向 Linux VPS 的多协议部署与管理脚本，统一管理 VLESS + REALITY + Vision、AnyTLS、Hysteria 2、Shadowsocks-Rust、HTTP/SOCKS（住宅 IP 独立协议）和 EUserv IPv6-only Hysteria 2。
+面向 Linux VPS 的多协议部署与管理脚本，统一管理 VLESS + REALITY + Vision、AnyTLS、Hysteria 2、Shadowsocks-Rust、HTTP/SOCKS（住宅 IP 独立协议）、家宽 / 落地中转（线路机 + 落地机）和 EUserv IPv6-only Hysteria 2。
 
 [![GitHub release](https://img.shields.io/github/v/release/everett7623/hy2?color=blue&label=Latest%20Version)](https://github.com/everett7623/hy2/releases)
 [![Shell Script](https://img.shields.io/badge/Language-Shell-green)](https://github.com/everett7623/hy2)
@@ -8,13 +8,14 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.43（2026-09-09） · 本次更新：Alpine 改用 sing-box musl 构建，并修复 UFW inactive 状态误判与错误信息丢失。
+> 当前版本：v2.0.44（2026-10-09） · 本次更新：新增「家宽 / 落地中转」方案（线路机 + 落地机），只需在线路机上一键完成两端部署与出口验证。
 
 ## 目录
 
 - [核心能力](#核心能力)
 - [快速开始](#快速开始)
 - [协议选择](#协议选择)
+- [家宽 / 落地中转](#家宽--落地中转)
 - [客户端导出](#客户端导出)
 - [系统与网络支持](#系统与网络支持)
 - [管理与升级](#管理与升级)
@@ -31,7 +32,8 @@
 | 受限网络 | 公网 IP 探测跨多个 ASN 并含免 DNS 端点；版本获取支持 GitHub 镜像与 HTML 兜底；Hysteria 2 在 GitHub 全线不可达时改走官方永久镜像 |
 | 节点导出 | 按协议输出 URI、Mihomo、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码 |
 | 服务管理 | 安装、重装、查看状态、启停、重启、日志、修改配置、升级和卸载 |
-| 共享核心 | AnyTLS、VLESS 与 HTTP/SOCKS 安全共用 sing-box，升级前检查全部现存配置 |
+| 共享核心 | AnyTLS、VLESS、HTTP/SOCKS 与家宽中转安全共用 sing-box，升级前检查全部现存配置 |
+| 家宽中转 | 线路机一键 SSH 部署落地机，用户态 WireGuard 隧道，自动验证出口 IP，失败两端回滚 |
 | 系统工具 | 网络诊断、手动备份/恢复（恢复前校验归档、失败自动回滚），以及按需启用标准 `bbr + fq` |
 
 ## 快速开始
@@ -89,6 +91,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/ss.sh)
 # HTTP/SOCKS Proxy (residential IP / mixed inbound)
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/proxy.sh)
 
+# 家宽 / 落地中转（在线路机上运行）
+bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/landing.sh)
+
 # EUserv IPv6-only Hysteria 2
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservhy2.sh)
 ```
@@ -118,6 +123,30 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 脚本不会自动抓取 `bgp.tools` 页面，也不会直接采用可能无效的机房默认 PTR。自定义域名不可达或不支持 TLS 1.3 时必须重新输入。
 
 REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用户可以在安装或配置修改时手动指定其他有效域名与端口。
+
+## 家宽 / 落地中转
+
+适合「线路好的 VPS 做入口，家宽 / 住宅 IP 机器做出口」的场景，例如流媒体解锁或需要住宅 IP 的网站。
+
+```text
+客户端 ──VLESS REALITY──▶ 线路机 ══WireGuard（UDP）══▶ 落地机 / 家宽机 ──▶ 互联网
+```
+
+使用方法：在**线路机**上运行 `sb` → `[10] 家宽 / 落地中转` → `1. 一键部署`，按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
+
+1. 在线路机生成 VLESS REALITY 节点参数与 WireGuard 密钥；
+2. 经 SSH 在落地机安装 sing-box 并启动 WireGuard 落地端（UDP 端口可指定，留空随机，自动放行本机防火墙）；
+3. 启动线路机并经隧道实测出口 IP，确认是落地机 IP 后才完成部署，否则两端自动恢复原状；
+4. 输出指向线路机的节点链接，节点名称按落地机出口 IP 的国家命名。
+
+落地机要求与注意事项：
+
+- 需要能 SSH 登录（root，或配置了免密 `sudo` 的用户）并能访问外网；家宽机器在路由器后面时，先在路由器把一个 UDP 端口转发到落地机，部署时填写该端口。
+- 云厂商安全组 / 面板防火墙需放行落地机的 UDP 端口；部署失败时可在菜单「出口检测与诊断」中经 SSH 查看落地机状态。
+- 只有本节点流量从落地机出网，线路机上的其他协议、SSH 与系统更新仍走线路机自身网络，不会因为隧道异常导致线路机失联。
+- 两端都不修改系统路由、不开启 `ip_forward`、不写 iptables NAT；落地机拒绝隧道访问其局域网与本机服务。
+- 家宽换 IP 后在线路机菜单选择「更新落地机地址」即可；推荐给落地机配置 DDNS 域名。
+- 客户端 DNS 需经节点解析（如 Mihomo 使用 fake-ip），否则网站可能看到本地 DNS。
 
 ## 客户端导出
 
@@ -167,7 +196,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.s
 
 - 安装、升级和卸载不会自动创建 VPS 配置归档；如有需要，请先在“备份/恢复”中手动备份。
 - BBR 默认只显示状态，不会随协议安装自动开启；启用标准 `bbr + fq` 属于用户主动操作。
-- AnyTLS、VLESS 与 HTTP/SOCKS 共用 `/usr/local/bin/sing-box`，替换核心前会检查 `/etc/sing-box/*.json`。
+- AnyTLS、VLESS、HTTP/SOCKS 与家宽中转共用 `/usr/local/bin/sing-box`，替换核心前会检查 `/etc/sing-box/*.json`，替换后重启所有正在运行的使用方。
 - `sb` 优先获取 GitHub `main` 的最新入口，远端失败时才尝试使用本地缓存。
 - 本地修改不会被远程 `install.sh` 使用；开发测试应直接运行本地子脚本。
 
@@ -263,6 +292,7 @@ VLESS 诊断会检查 REALITY 目标、Cloudflare 下载探针和当前 TCP 拥�
 | `hy2.sh` / `ss.sh` | Hysteria 2 与 Shadowsocks-Rust 管理 |
 | `anytls.sh` / `vless.sh` | sing-box 原生 AnyTLS 与 VLESS 管理 |
 | `proxy.sh` | sing-box 原生 mixed（HTTP + SOCKS5）管理 |
+| `landing.sh` | 家宽 / 落地中转：线路机 VLESS REALITY + 用户态 WireGuard 落地 |
 | `euservhy2.sh` | EUserv IPv6-only 独立脚本 |
 | `tests/validate_scripts.sh` | Bash 语法、版本、换行和行为验证总入口 |
 | `docs/` | 架构、测试、发布和维护边界 |

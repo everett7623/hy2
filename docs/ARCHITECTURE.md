@@ -95,6 +95,7 @@ LISTEN_PORT=""
         ├── 选择 AnyTLS ──────────> 下载 main/anytls.sh ───> 按动作参数执行
         ├── 选择 VLESS ───────────> 下载 main/vless.sh ────> 按动作参数执行
         ├── 选择 HTTP/SOCKS ──────> 下载 main/proxy.sh ────> 按动作参数执行
+        ├── 选择 家宽/落地中转 ───> 下载 main/landing.sh ──> 按动作参数执行
         └── 选择 EUserv IPv6 HY2 ─> 下载 main/euservhy2.sh > 按动作参数执行
 ```
 
@@ -102,12 +103,13 @@ LISTEN_PORT=""
 - 首次运行 `install.sh` 会写入 `/usr/local/bin/sb` 快捷命令；`sb` 会优先拉取 GitHub `main` 的最新主入口，远程失败时使用本地缓存。
 - 启动器不读取仓库中的本地子脚本；未推送到 GitHub `main` 的修改不会通过启动器生效。
 - 项目没有预发布分支。静态检查由 `tests/validate_scripts.sh` 和 GitHub Actions 执行；运行时行为仍需在一次性 VPS 上端到端验证。
-- 七个脚本的项目版本保持一致，但版本文本分散在文件头、菜单、变量、README、测试和变更日志中；每次准备提交一组修改时都必须提升版本并人工同步，不能延后到 GitHub Release 阶段。
+- 八个脚本的项目版本保持一致，但版本文本分散在文件头、菜单、变量、README、测试和变更日志中；每次准备提交一组修改时都必须提升版本并人工同步，不能延后到 GitHub Release 阶段。
 - `anytls.sh` 使用 sing-box >= 1.12.0 原生 AnyTLS 入站；证书支持自签、已有文件和 sing-box >= 1.14.0 ACME Certificate Provider。ACME 仅在满足核心版本时开放，已有证书保留原始路径且不复制私钥。
 - `vless.sh` 使用 sing-box >= 1.12.0 原生 VLESS 入站，默认组合为 TCP + REALITY + `xtls-rprx-vision`；Shell 生成 UUID、REALITY 密钥、short ID、JSON 及 `vless-server` wrapper。
 - `proxy.sh` 使用 sing-box >= 1.12.0 原生 `mixed` 入站（同端口 HTTP + SOCKS5），生成用户名/密码、JSON、`proxy-server` wrapper；出站为 `direct`，检测到原生网卡时写入 `bind_interface`。
 - VLESS 安装提供随机大厂与自定义 SNI 两种来源。自定义流程可通过 WHOIS TCP 43 查询 BGP Prefix 并输出 DNS 页面，也可直接输入任意候选域名；不抓取 `bgp.tools` HTML，输入域名必须通过当前地址族下的 TLS 1.3 可达性验证。诊断中的 Cloudflare 小文件下载仅作为 VPS 当次网络状态参考，不等价于客户端经 VLESS 的端到端测速。
-- VLESS、AnyTLS 与 HTTP/SOCKS 共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；替换后须重启升级前处于运行中的全部托管消费者（AnyTLS、VLESS、`proxy-server`）；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
+- `landing.sh` 在线路机与落地机两端都使用 sing-box 用户态 WireGuard endpoint（`system: false`），不依赖内核模块、`ip_forward`、iptables NAT 或路由表修改。线路机入站为 VLESS + REALITY + Vision，`route.final` 指向 `wg-out`，DNS 经隧道由落地机解析；落地机只监听一个 UDP 端口。线路机通过 OpenSSH ControlMaster（`StrictHostKeyChecking=accept-new`、`BatchMode=yes`）在落地机上运行同一脚本的 `--remote-exit-*` 动作，私钥只在各自机器生成，脚本不读取也不保存 SSH 密码。落地机配置以 `landing-pending` 两阶段提交：线路机验证出口 IP 成功后才 commit，否则 abort 恢复两端旧状态。
+- VLESS、AnyTLS、HTTP/SOCKS 与家宽中转共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；替换后须重启升级前处于运行中的全部托管消费者（AnyTLS、VLESS、`proxy-server`、`landing-server`）；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
 - AnyTLS/VLESS/HTTP/SOCKS 通过 `ensure_outbound_bind` 在安装、升级与工具菜单中刷新/愈合 `bind_interface`，避免网卡改名或 WARP 切换后出站仍绑旧接口。
 
 ## 本地验证清单
@@ -136,6 +138,7 @@ sing-box-multi-protocol-tools/  # 仓库 slug 仍为 hy2，raw URL 不变
 ├── anytls.sh           # sing-box 原生 AnyTLS 管理
 ├── vless.sh            # sing-box 原生 VLESS + REALITY + Vision 管理
 ├── proxy.sh            # sing-box 原生 mixed（HTTP + SOCKS5）管理
+├── landing.sh          # 家宽/落地中转：线路机 VLESS 入站 + 用户态 WireGuard 到落地机
 ├── euservhy2.sh        # EUserv IPv6 Hysteria 2
 ├── CHANGELOG.md        # 更新日志
 ├── CONTRIBUTING.md     # 贡献与开发流程
@@ -152,6 +155,7 @@ sing-box-multi-protocol-tools/  # 仓库 slug 仍为 hy2，raw URL 不变
 │   ├── validate_anytls.sh      # AnyTLS 行为测试
 │   ├── validate_vless.sh       # VLESS/REALITY 行为测试
 │   ├── validate_proxy.sh       # HTTP/SOCKS mixed 行为测试
+│   ├── validate_landing.sh     # 家宽中转 WireGuard/两端配置/远程编排测试
 │   ├── validate_hy2_network.sh # hy2 网络检测、版本获取与下载器
 │   ├── validate_ss_network.sh  # ss 网络检测、版本获取与下载器
 │   └── helpers/                # bats 风格函数库（仍受语法与 CRLF 检查）

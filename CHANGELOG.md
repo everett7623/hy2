@@ -4,6 +4,19 @@
 
 ---
 
+## v2.0.44 (2026-10-09)
+
+- 新增 `landing.sh`「家宽 / 落地中转」节点方案：客户端经 VLESS + REALITY + Vision 连接线路机，线路机再通过 WireGuard 隧道从落地机（家宽机）出网，网站看到的是落地机 IP。
+- 两端均使用 sing-box 用户态 WireGuard（`system: false`），不创建系统网卡、不开启 `ip_forward`、不写 iptables NAT、不改系统路由；线路机的 SSH、系统更新和其他协议保持直连，OpenVZ / LXC 也可使用。
+- 只需在线路机操作：脚本经 SSH 登录落地机自动部署（密码由 ssh 自己读取，脚本不读取、不保存），WireGuard 私钥各自在本机生成，公钥与预共享密钥以文件方式传递。
+- 落地机两阶段提交：线路机验证出口 IP 成功后才确认，任一步失败都会自动恢复两端原状；家宽换 IP 或改用 DDNS 时可在线路机直接更新落地机地址，无需再次 SSH。
+- 安全默认：落地机只接受线路机隧道地址，拒绝访问私网与本机回环目标；域名经隧道交给落地机系统 DNS 解析，CDN 就近解析与出口 IP 一致；SSH 首次连接按 `accept-new` 记录主机指纹，指纹变化时拒绝连接。
+- `vless.sh`、`anytls.sh`、`proxy.sh` 升级共享 sing-box 核心时一并重启 `landing-server`，失败时与其他协议一起回滚；`landing.sh` 升级时同样重启这三个协议。
+- `install.sh` 主菜单新增 `[10] 家宽 / 落地中转`，并接入状态总览、服务管理、日志、备份/恢复、升级中心、卸载中心和脚本缓存刷新。
+- 测试：新增 `tests/validate_landing.sh`，覆盖密钥与地址校验、带 `=` 结尾密钥的元数据回读、双端配置生成、落地机回传解析、出口验证、两阶段回滚以及共享核心保留规则；可选 `REAL_SING_BOX_BIN` 对生成配置执行 `sing-box check`。
+
+---
+
 ## v2.0.43 (2026-09-09)
 
 - Alpine 上的 AnyTLS、VLESS 与 HTTP/SOCKS 改用 sing-box 官方 musl 静态构建，避免普通 Linux 包在 musl 环境中因运行库不兼容而无法启动。

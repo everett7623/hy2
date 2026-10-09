@@ -8,11 +8,11 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.43 (2026-09-09)
+v2.0.44 (2026-10-09)
 
 ## Project overview
 
-Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for VLESS + REALITY + Vision, Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, HTTP/SOCKS (sing-box mixed) for residential IP use cases, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
+Sing-box Multi-Protocol Tools is a collection of standalone Bash scripts for one-click deployment, management, client export, QR generation, diagnostics, backup and recovery for VLESS + REALITY + Vision, Hysteria 2, Shadowsocks-Rust, AnyTLS via sing-box, HTTP/SOCKS (sing-box mixed) for residential IP use cases, a relay + landing (residential exit) scheme over userspace WireGuard, and EUserv IPv6-only Hysteria 2 on Linux VPS. There is no build system; lightweight static validation runs locally and in GitHub Actions. Scripts are deployed via `curl | bash` from `https://raw.githubusercontent.com/everett7623/hy2/main/`; the repository slug remains `hy2` for compatibility with existing raw URLs.
 
 ## Unified entry point
 
@@ -28,11 +28,12 @@ When testing local changes to `install.sh`, run it directly (`bash install.sh`) 
 - **`anytls.sh`** — Standalone shell management around sing-box >= 1.12.0 native AnyTLS inbound. Generates JSON, TLS certificates, wrapper and service files without Python.
 - **`vless.sh`** — Standalone shell management around sing-box >= 1.12.0 native VLESS inbound with TCP, REALITY, and `xtls-rprx-vision`. Generates UUID, REALITY key pair, short ID, JSON, wrapper and service files without Python.
 - **`proxy.sh`** — Standalone shell management around sing-box >= 1.12.0 native `mixed` inbound (HTTP + SOCKS5 on one port). Generates JSON with username/password users, optional `bind_interface` direct outbound, wrapper and service files without Python. Intended as an independent protocol for residential IP / streaming-friendly egress.
+- **`landing.sh`** — Relay + landing ("线路机 + 落地机 / 家宽机") node scheme on sing-box >= 1.12.0. The relay runs a VLESS REALITY inbound whose route `final` is a userspace WireGuard endpoint (`system: false`) to the landing machine; the landing machine runs a WireGuard endpoint inbound with a `direct` outbound. No kernel WireGuard, `ip_forward`, iptables NAT or system route changes on either side. Run only on the relay: it SSHes (OpenSSH ControlMaster, password read by ssh itself) into the landing machine, uploads itself and runs `--remote-exit-install|commit|abort|uninstall|upgrade|status`. The landing side keeps a pending rollback until the relay has verified the egress IP through a loopback-only authenticated `mixed` probe inbound. One service `landing-server`; the role is stored as `ROLE=relay|exit` in `landing-meta/config.env`.
 - **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with hy2.sh.
 
 ## `install.sh` references
 
-`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`, and `euservhy2.sh` on the GitHub `main` branch.
+`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`, `landing.sh`, and `euservhy2.sh` on the GitHub `main` branch. `landing.sh` is reached from main-menu `[10]` (its own menu), service management `[10]`, update centre `[9]` and uninstall centre `[10]`; it is intentionally not part of `select_protocol_and_run` or the batch upgrade/uninstall loops because its upgrade/uninstall can prompt for the landing machine's SSH password.
 
 `install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2.sh`) rather than going through `install.sh`.
 
@@ -99,14 +100,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.s
 
 Every commit that changes code, tests, or documentation MUST increment the unified project version and synchronize ALL of the following locations before pushing — do NOT defer version updates until a GitHub Release is created:
 
-- File headers (version and date) in all seven scripts
-- Menu display versions in `install.sh`, `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`
+- File headers (version and date) in all eight scripts
+- Menu display versions in `install.sh`, `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`, `landing.sh`
 - `script_version` metadata written by `install.sh` backup
 - `SCRIPT_VERSION` in `euservhy2.sh`
 - `EXPECTED_VERSION` in `tests/validate_scripts.sh`
 - Current version, date, and update summary in `README.md`
 - Top entry in `CHANGELOG.md`
-- Protocol-specific test expectations when changing AnyTLS (`validate_anytls.sh`), VLESS (`validate_vless.sh`), or HTTP/SOCKS (`validate_proxy.sh`)
+- Protocol-specific test expectations when changing AnyTLS (`validate_anytls.sh`), VLESS (`validate_vless.sh`), HTTP/SOCKS (`validate_proxy.sh`), or landing relay (`validate_landing.sh`)
 - `.github/copilot-instructions.md` and `.windsurfrules` restate the version inline; `.cursorrules` does not. `validate_scripts.sh` does NOT check these three files, so they drift silently — grep for the old version string across the repo before committing.
 
 See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
@@ -114,7 +115,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.43" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.44" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation
@@ -127,7 +128,7 @@ git diff --check  # detect trailing whitespace and CRLF
 
 `tests/validate_scripts.sh` is the single entry point and its final section invokes every other
 validator (`validate_recovery.sh dns`, `validate_restore.sh`, `validate_anytls.sh`,
-`validate_autoupdate.sh`, `validate_vless.sh`, `validate_proxy.sh`, `validate_hy2_network.sh`,
+`validate_autoupdate.sh`, `validate_vless.sh`, `validate_proxy.sh`, `validate_landing.sh`, `validate_hy2_network.sh`,
 `validate_ss_network.sh`).
 Running the sub-scripts directly is only useful for faster iteration on one protocol.
 
@@ -144,6 +145,7 @@ bash tests/validate_autoupdate.sh            # generated cron scripts: mirror fa
 bash tests/validate_anytls.sh                # AnyTLS config structure, cert paths, wrapper
 bash tests/validate_vless.sh                 # VLESS UUID, REALITY keys, JSON, shared core
 bash tests/validate_proxy.sh                 # mixed inbound, users, bind_interface, wrapper
+bash tests/validate_landing.sh               # relay/exit JSON, WireGuard keys, egress check, 2-phase rollback
 bash tests/validate_hy2_network.sh           # hy2 IP validation, WARP filtering, downloader
 bash tests/validate_ss_network.sh            # ss IP validation, WARP filtering, downloader
 
@@ -197,6 +199,7 @@ per-protocol tokens:
 | `anytls.sh` | `ANYTLS_LIB_ONLY=1` | `[ "$_ANYTLS_LIB_ONLY" = "1" ] && return 0` before the entry block |
 | `vless.sh` | `VLESS_LIB_ONLY=1` | `[ "$_VLESS_LIB_ONLY" = "1" ] && return 0` |
 | `proxy.sh` | `PROXY_LIB_ONLY=1` | `[ "$_PROXY_LIB_ONLY" = "1" ] && return 0` |
+| `landing.sh` | `LANDING_LIB_ONLY=1` | `[ "$_LANDING_LIB_ONLY" = "1" ] && return 0` |
 
 ```bash
 VLESS_LIB_ONLY=1 . ./vless.sh   # functions available, nothing executed
@@ -221,7 +224,9 @@ install | info|node|export|all | uri|link | mihomo|clash | surfboard | shadowroc
 `vless.sh` adds `diagnose|check|health`. `euservhy2.sh` uses `do_install` / `show_node_info`
 instead of the `install_*` / `show_config` names. Unknown verbs must exit 1 with the usage line.
 
-`anytls.sh`, `vless.sh` and `proxy.sh` also accept **`--upgrade-noninteractive`**, handled by a
+`landing.sh` adds `diagnose|check|health` and the SSH-only `--remote-exit-*` verbs, which skip the TTY fix and must stay non-interactive.
+
+`anytls.sh`, `vless.sh`, `proxy.sh` and `landing.sh` also accept **`--upgrade-noninteractive`**, handled by a
 dedicated branch *before* the normal `case` dispatch. Their auto-update cron re-downloads the
 latest script from GitHub and invokes exactly this flag — deleting or renaming it silently
 breaks unattended updates for all three protocols.
@@ -233,20 +238,21 @@ The two auto-update architectures differ, and this matters when fixing upgrade l
 | `anytls.sh`, `vless.sh`, `proxy.sh` | downloads latest script, runs `--upgrade-noninteractive` | always picks up main-script fixes |
 | `hy2.sh`, `ss.sh` | runs a self-contained snapshot written into `/usr/local/bin/*-autoupdate.sh` at install time | **frozen** — main-script fixes never reach it; patch the `AUTOUPDATE_EOF` heredoc too |
 
-## Shared sing-box core coordination (anytls / vless / proxy)
+## Shared sing-box core coordination (anytls / vless / proxy / landing)
 
-The three sing-box protocols share one `/usr/local/bin/sing-box` binary and one `/etc/sing-box`
-directory, so upgrading any one of them can break the other two. This is the most dangerous area
+The four sing-box scripts share one `/usr/local/bin/sing-box` binary and one `/etc/sing-box`
+directory, so upgrading any one of them can break the others. This is the most dangerous area
 in the repo. The protocol is:
 
 - **Mutual exclusion** — all three take `/var/lock/sing-box-tools-upgrade.lock` (flock, with a
   `${LOCK}.d` mkdir fallback that reclaims a stale directory via `find -maxdepth 0 -mmin -5`).
-  Auto-update cron minutes are deliberately staggered: AnyTLS 04:17, VLESS 04:27, proxy 04:37 Mon.
+  Auto-update cron minutes are deliberately staggered: AnyTLS 04:17, VLESS 04:27, proxy 04:37, landing 04:47 Mon.
 - **Pre-flight validation** — a candidate binary must pass `check` against *every* existing
   `/etc/sing-box/*.json`, not just the caller's own, before the atomic replace.
 - **Cross-restart** — after replacing the core, restart every consumer that was running before the
   upgrade, via `shared_vless_service_restart()` / `shared_anytls_service_restart()` /
-  `shared_proxy_service_restart()`. If any fails, roll the core back and restore prior states.
+  `shared_proxy_service_restart()` / `shared_landing_service_restart()` (proxy.sh and landing.sh use
+ the generic `shared_service_restart <name> <bin>`). If any fails, roll the core back and restore prior states.
 - **Ownership** — `/etc/sing-box/.singbox-tools-managed` marks the core as project-installed so
   the *last* protocol uninstalled can remove it, in any uninstall order. Never delete shared files
   another protocol still owns.
@@ -304,6 +310,12 @@ Each protocol script generates different client config formats. Use the protocol
 | HTTP/SOCKS wrapper | `/usr/local/bin/proxy-server` |
 | HTTP/SOCKS config | `/etc/sing-box/proxy.json` |
 | HTTP/SOCKS metadata | `/etc/sing-box/proxy-meta/` |
+| Landing relay wrapper | `/usr/local/bin/landing-server` |
+| Landing relay config | `/etc/sing-box/landing.json` |
+| Landing relay metadata | `/etc/sing-box/landing-meta/` |
+| Landing pending rollback (exit side) | `/etc/sing-box/landing-pending/` |
+| Landing auto-update script | `/usr/local/bin/landing-autoupdate.sh` |
+| Landing systemd / OpenRC service | `/etc/systemd/system/landing-server.service` / `/etc/init.d/landing-server` |
 | Shared sing-box ownership marker | `/etc/sing-box/.singbox-tools-managed` |
 | Hysteria 2 auto-update script | `/usr/local/bin/hy2-autoupdate.sh` |
 | AnyTLS auto-update script | `/usr/local/bin/anytls-autoupdate.sh` |

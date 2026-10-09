@@ -1,14 +1,14 @@
 #!/bin/bash
 #====================================================================================
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
-# 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · EUserv IPv6 HY2
+# 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.43
+# 版本：v2.0.44
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-09-09
+# 更新日期: 2026-10-09
 #====================================================================================
 
 # ============================================================
@@ -65,6 +65,7 @@ SS_URL="${BASE_URL}/ss.sh"
 ANYTLS_URL="${BASE_URL}/anytls.sh"
 VLESS_URL="${BASE_URL}/vless.sh"
 PROXY_URL="${BASE_URL}/proxy.sh"
+LANDING_URL="${BASE_URL}/landing.sh"
 EUSERV_URL="${BASE_URL}/euservhy2.sh"
 BACKUP_DIR="/root/singbox-tools/backup"
 LAST_BACKUP_FILE=""
@@ -260,6 +261,8 @@ service_action() {
             anytls-server:stop)  [ -f "$_pidfile" ] && kill "$(cat "$_pidfile" 2>/dev/null)" 2>/dev/null; rm -f "$_pidfile" ;;
             proxy-server:start) nohup /usr/local/bin/proxy-server >/var/log/proxy-server.log 2>&1 & echo $! > "$_pidfile" ;;
             proxy-server:stop)  [ -f "$_pidfile" ] && kill "$(cat "$_pidfile" 2>/dev/null)" 2>/dev/null; rm -f "$_pidfile" ;;
+            landing-server:start) nohup /usr/local/bin/landing-server >/var/log/landing-server.log 2>&1 & echo $! > "$_pidfile" ;;
+            landing-server:stop)  [ -f "$_pidfile" ] && kill "$(cat "$_pidfile" 2>/dev/null)" 2>/dev/null; rm -f "$_pidfile" ;;
             hysteria-server:start) nohup /usr/local/bin/hysteria server -c /etc/hysteria/config.yaml >/var/log/hysteria.log 2>&1 & echo $! > "$_pidfile" ;;
             hysteria-server:stop)  [ -f "$_pidfile" ] && kill "$(cat "$_pidfile" 2>/dev/null)" 2>/dev/null; rm -f "$_pidfile" ;;
             shadowsocks-server:start) nohup /usr/local/bin/ssserver -c /etc/shadowsocks-rust/config.json >/var/log/ssserver.log 2>&1 & echo $! > "$_pidfile" ;;
@@ -421,6 +424,16 @@ get_status() {
         PROXY_STATUS="${RED}● 未安装${PLAIN}"
     fi
 
+    if [ -x "/usr/local/bin/landing-server" ] && [ -f "/etc/sing-box/landing.json" ]; then
+        local _role_label="线路机"
+        [ "$(awk -F= '$1 == "ROLE" { print $2; exit }' /etc/sing-box/landing-meta/config.env 2>/dev/null)" = "exit" ] && _role_label="落地机"
+        service_active landing-server /var/run/landing-server.pid \
+            && LANDING_STATUS="${GREEN}● 运行中${PLAIN}${DIM} ${_role_label}${PLAIN}" \
+            || LANDING_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} ${_role_label}${PLAIN}"
+    else
+        LANDING_STATUS="${RED}● 未部署${PLAIN}"
+    fi
+
     if [ "$NET_IPV6" != "无" ]; then
         [ "$NET_IPV4" = "无" ] \
             && EUSERV_STATUS="${CYAN}● 纯 IPv6 可用${PLAIN}" \
@@ -436,7 +449,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.43${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.44${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -457,6 +470,7 @@ show_status_summary() {
     echo -e "  Hysteria2     $(echo -e "$HY2_STATUS")"
     echo -e "  Shadowsocks   $(echo -e "$SS_STATUS")"
     echo -e "  HTTP/SOCKS    $(echo -e "$PROXY_STATUS")"
+    echo -e "  家宽中转      $(echo -e "$LANDING_STATUS")"
     echo -e "  EUserv HY2    $(echo -e "$EUSERV_STATUS")"
     echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
 }
@@ -568,6 +582,7 @@ show_all_services() {
     echo -e "Hysteria2   : $(echo -e "$HY2_STATUS")"
     echo -e "Shadowsocks : $(echo -e "$SS_STATUS")"
     echo -e "HTTP/SOCKS  : $(echo -e "$PROXY_STATUS")"
+    echo -e "家宽中转    : $(echo -e "$LANDING_STATUS")"
     echo -e "EUserv HY2  : $(echo -e "$EUSERV_STATUS")"
 }
 
@@ -631,9 +646,10 @@ service_management_menu() {
         echo -e "  [7] 查看所有服务状态"
         echo -e "  [8] 查看监听端口"
         echo -e "  [9] 查看最近日志"
+        echo -e "  [10] 家宽中转服务管理"
         echo -e "  [0] 返回"
         echo ""
-        read -r -p "  请选择 [0-9]: " opt
+        read -r -p "  请选择 [0-10]: " opt
         case "$opt" in
             1) protocol_service_menu "VLESS" "vless-server" "/var/run/vless-server.pid" "/var/log/vless-server.log" "VLESS" "$VLESS_URL" ;;
             2) protocol_service_menu "AnyTLS" "anytls-server" "/var/run/anytls-server.pid" "/var/log/anytls-server.log" "AnyTLS" "$ANYTLS_URL" ;;
@@ -650,8 +666,10 @@ service_management_menu() {
                 service_logs hysteria-server /var/log/hysteria.log
                 service_logs shadowsocks-server /var/log/ssserver.log
                 service_logs proxy-server /var/log/proxy-server.log
+                service_logs landing-server /var/log/landing-server.log
                 pause_return
                 ;;
+            10) protocol_service_menu "家宽中转" "landing-server" "/var/run/landing-server.pid" "/var/log/landing-server.log" "家宽中转" "$LANDING_URL" ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -686,6 +704,7 @@ system_detect() {
     echo "HY2      : $(echo -e "$HY2_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
     echo "SS       : $(echo -e "$SS_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
     echo "HTTP/SOCKS: $(echo -e "$PROXY_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
+    echo "Landing  : $(echo -e "$LANDING_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
     echo "BBR      : ${BBR_STATUS}"
     echo "Time     : $(date '+%F %T %Z')"
     echo "Disk     : $(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')"
@@ -798,11 +817,13 @@ backup_config() {
     [ -f /etc/systemd/system/vless-server.service ] && _items="${_items} etc/systemd/system/vless-server.service"
     [ -f /etc/systemd/system/anytls-server.service ] && _items="${_items} etc/systemd/system/anytls-server.service"
     [ -f /etc/systemd/system/proxy-server.service ] && _items="${_items} etc/systemd/system/proxy-server.service"
+    [ -f /etc/systemd/system/landing-server.service ] && _items="${_items} etc/systemd/system/landing-server.service"
     [ -f /etc/systemd/system/hysteria-server.service ] && _items="${_items} etc/systemd/system/hysteria-server.service"
     [ -f /etc/systemd/system/shadowsocks-server.service ] && _items="${_items} etc/systemd/system/shadowsocks-server.service"
     [ -f /etc/init.d/vless-server ] && _items="${_items} etc/init.d/vless-server"
     [ -f /etc/init.d/anytls-server ] && _items="${_items} etc/init.d/anytls-server"
     [ -f /etc/init.d/proxy-server ] && _items="${_items} etc/init.d/proxy-server"
+    [ -f /etc/init.d/landing-server ] && _items="${_items} etc/init.d/landing-server"
     [ -f /etc/init.d/hysteria-server ] && _items="${_items} etc/init.d/hysteria-server"
     [ -f /etc/init.d/shadowsocks-server ] && _items="${_items} etc/init.d/shadowsocks-server"
     [ -f /etc/sysctl.conf ] && _items="${_items} etc/sysctl.conf"
@@ -819,7 +840,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.0.43" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.44" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -876,6 +897,7 @@ restart_restored_services() {
         "vless-server /var/run/vless-server.pid" \
         "anytls-server /var/run/anytls-server.pid" \
         "proxy-server /var/run/proxy-server.pid" \
+        "landing-server /var/run/landing-server.pid" \
         "hysteria-server /var/run/hysteria.pid" \
         "shadowsocks-server /var/run/ssserver.pid"
     do
@@ -1069,9 +1091,10 @@ update_menu() {
         echo -e "  [6] 升级 HTTP/SOCKS 核心"
         echo -e "  [7] 刷新全部脚本缓存"
         echo -e "  [8] 升级全部核心（VLESS/AnyTLS/HY2/SS/HTTP/SOCKS）"
+        echo -e "  [9] 升级家宽中转核心（可同时升级落地机）"
         echo -e "  [0] 返回"
         echo ""
-        read -r -p "  请选择 [0-8]: " opt
+        read -r -p "  请选择 [0-9]: " opt
         case "$opt" in
             1)
                 if download_script_to_cache install.sh "$INSTALL_URL"; then
@@ -1095,11 +1118,13 @@ update_menu() {
                 download_script_to_cache hy2.sh "$HY2_URL" || { echo -e "${RED}[ERROR] hy2.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 download_script_to_cache ss.sh "$SS_URL" || { echo -e "${RED}[ERROR] ss.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 download_script_to_cache proxy.sh "$PROXY_URL" || { echo -e "${RED}[ERROR] proxy.sh 缓存刷新失败${PLAIN}"; _ok=0; }
+                download_script_to_cache landing.sh "$LANDING_URL" || { echo -e "${RED}[ERROR] landing.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 download_script_to_cache euservhy2.sh "$EUSERV_URL" || { echo -e "${RED}[ERROR] euservhy2.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 [ "$_ok" = "1" ] && echo -e "${GREEN}[OK] 全部脚本缓存刷新完成${PLAIN}" || echo -e "${YELLOW}[WARN] 部分脚本缓存刷新失败${PLAIN}"
                 pause_return
                 ;;
             8) upgrade_all_cores ;;
+            9) run_upgrade_action "家宽中转" "$LANDING_URL" ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -1121,9 +1146,10 @@ uninstall_menu() {
         echo -e "  [7] 卸载全部协议"
         echo -e "  [8] 删除所有配置"
         echo -e "  [9] 删除所有备份"
+        echo -e "  [10] 卸载家宽中转"
         echo -e "  [0] 返回"
         echo ""
-        read -r -p "  请选择 [0-9]: " opt
+        read -r -p "  请选择 [0-10]: " opt
         case "$opt" in
             1) run_uninstall_action "VLESS" "$VLESS_URL" ;;
             2) run_uninstall_action "AnyTLS" "$ANYTLS_URL" ;;
@@ -1139,10 +1165,12 @@ uninstall_menu() {
                     service_action vless-server stop /var/run/vless-server.pid >/dev/null 2>&1 || true
                     service_action anytls-server stop /var/run/anytls-server.pid >/dev/null 2>&1 || true
                     service_action proxy-server stop /var/run/proxy-server.pid >/dev/null 2>&1 || true
+                    service_action landing-server stop /var/run/landing-server.pid >/dev/null 2>&1 || true
                     service_action hysteria-server stop /var/run/hysteria.pid >/dev/null 2>&1 || true
                     service_action shadowsocks-server stop /var/run/ssserver.pid >/dev/null 2>&1 || true
                     rm -rf /etc/sing-box /etc/hysteria /etc/shadowsocks-rust
                     rm -f /etc/shadowsocks.json /etc/systemd/system/vless-server.service /etc/systemd/system/anytls-server.service /etc/systemd/system/proxy-server.service /etc/systemd/system/hysteria-server.service /etc/systemd/system/shadowsocks-server.service
+                    rm -f /etc/systemd/system/landing-server.service /etc/init.d/landing-server
                     rm -f /etc/init.d/vless-server /etc/init.d/anytls-server /etc/init.d/proxy-server /etc/init.d/hysteria-server /etc/init.d/shadowsocks-server
                     [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload
                     echo -e "${GREEN}[OK] 配置与服务文件已删除${PLAIN}"
@@ -1162,6 +1190,7 @@ uninstall_menu() {
                 fi
                 pause_return
                 ;;
+            10) run_uninstall_action "家宽中转" "$LANDING_URL" ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -1180,6 +1209,7 @@ main_menu() {
         echo -e "  [2] 查看节点信息"
         echo -e "  [3] 导出客户端配置"
         echo -e "  [4] 生成二维码"
+        echo -e "  [10] 家宽 / 落地中转（线路机 + 落地机）"
         echo ""
         echo -e "  ${DIM}运维与安全${PLAIN}"
         echo -e "  [5] 服务管理"
@@ -1189,7 +1219,7 @@ main_menu() {
         echo -e "  [9] 卸载 / 清理中心"
         echo -e "  [0] 退出"
         echo ""
-        read -r -p "  请输入选项 [0-9]: " choice
+        read -r -p "  请输入选项 [0-10]: " choice
 
         case "$choice" in
             1) install_menu ;;
@@ -1201,13 +1231,14 @@ main_menu() {
             7) backup_restore_menu ;;
             8) update_menu ;;
             9) uninstall_menu ;;
+            10) run_script "家宽中转" "$LANDING_URL" "menu" ;;
             0|q|quit|exit)
                 echo ""
                 echo -e "${DIM}感谢使用 Sing-box Multi-Protocol Tools，再见！${PLAIN}"
                 echo ""
                 exit 0
                 ;;
-            *) echo -e "${RED}无效选项，请输入 0-9${PLAIN}"; sleep 1 ;;
+            *) echo -e "${RED}无效选项，请输入 0-10${PLAIN}"; sleep 1 ;;
         esac
     done
 }

@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.0.43
+# 版本：v2.0.44
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-09-09
+# 更新日期: 2026-10-09
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -1869,6 +1869,32 @@ shared_proxy_service_restart() {
     fi
 }
 
+shared_landing_service_is_active() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl is-active --quiet landing-server 2>/dev/null
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service landing-server status 2>/dev/null | grep -q "started"
+    else
+        [ -f /var/run/landing-server.pid ] && kill -0 "$(cat /var/run/landing-server.pid)" 2>/dev/null
+    fi
+}
+
+shared_landing_service_restart() {
+    if [ "$INIT_SYS" = "systemd" ]; then
+        systemctl restart landing-server
+    elif [ "$INIT_SYS" = "openrc" ]; then
+        rc-service landing-server restart
+    else
+        [ -x /usr/local/bin/landing-server ] || return 1
+        if [ -f /var/run/landing-server.pid ]; then
+            kill "$(cat /var/run/landing-server.pid)" 2>/dev/null || true
+            rm -f /var/run/landing-server.pid
+        fi
+        nohup /usr/local/bin/landing-server >/var/log/landing-server.log 2>&1 &
+        echo $! > /var/run/landing-server.pid
+    fi
+}
+
 # 刷新/回写出站网卡绑定：网卡改名、WARP 切换或旧配置缺 bind_interface 时愈合。
 # $1=rewrite 时写回 JSON；否则只更新内存中的 BIND_INTERFACE。
 ensure_outbound_bind() {
@@ -2504,7 +2530,7 @@ _upgrade_core_locked() {
     get_latest_version || return 1
 
     local _current_version _latest_version _was_active=0 _shared_was_active=0 _proxy_was_active=0
-    local _restart_failed=0 _was_managed="$MANAGED_SING_BOX"
+    local _landing_was_active=0 _restart_failed=0 _was_managed="$MANAGED_SING_BOX"
     _current_version=$(get_installed_version)
     _latest_version="${LAST_VERSION_TAG#v}"
     if [ -n "$_current_version" ] && [ "$_current_version" = "$_latest_version" ]; then
@@ -2519,6 +2545,7 @@ _upgrade_core_locked() {
     service_is_active && _was_active=1 || true
     shared_vless_service_is_active && _shared_was_active=1 || true
     shared_proxy_service_is_active && _proxy_was_active=1 || true
+    shared_landing_service_is_active && _landing_was_active=1 || true
     if ! download_anytls; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         MANAGED_SING_BOX="$_was_managed"
@@ -2539,17 +2566,22 @@ _upgrade_core_locked() {
     if [ "$_proxy_was_active" = "1" ]; then
         shared_proxy_service_restart || _restart_failed=1
     fi
-    if [ "$_was_active" = "1" ] || [ "$_shared_was_active" = "1" ] || [ "$_proxy_was_active" = "1" ]; then
+    if [ "$_landing_was_active" = "1" ]; then
+        shared_landing_service_restart || _restart_failed=1
+    fi
+    if [ "$_was_active" = "1" ] || [ "$_shared_was_active" = "1" ] || [ "$_proxy_was_active" = "1" ] || [ "$_landing_was_active" = "1" ]; then
         sleep 2
     fi
     [ "$_was_active" = "0" ] || wait_for_health || _restart_failed=1
     [ "$_shared_was_active" = "0" ] || shared_vless_service_is_active || _restart_failed=1
     [ "$_proxy_was_active" = "0" ] || shared_proxy_service_is_active || _restart_failed=1
+    [ "$_landing_was_active" = "0" ] || shared_landing_service_is_active || _restart_failed=1
     if [ "$_restart_failed" = "1" ]; then
         mv -f "${SING_BOX_BIN}.bak" "$SING_BOX_BIN" 2>/dev/null || true
         [ "$_was_active" = "0" ] || service_restart || true
         [ "$_shared_was_active" = "0" ] || shared_vless_service_restart || true
         [ "$_proxy_was_active" = "0" ] || shared_proxy_service_restart || true
+        [ "$_landing_was_active" = "0" ] || shared_landing_service_restart || true
         echo -e "${RED}升级后共享服务启动失败，已回滚${PLAIN}"
         return 1
     fi
@@ -2799,7 +2831,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.43${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.44${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
