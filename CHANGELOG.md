@@ -9,6 +9,7 @@
 - 修复 `vless.sh` 在 Debian 默认 mawk 环境下无法从 `sing-box generate uuid` 提取 UUID 的问题（mawk 不支持 awk 区间表达式 `{36}`），改用 `grep -E`；此前会退回内核随机 UUID，测试在 mawk 下失败。
 - 修复 AnyTLS / VLESS / HTTP/SOCKS 安装失败回滚时，共享 sing-box 核心正被其他协议运行导致 `cp` 报 “Text file busy”、旧核心未能恢复的问题：核心未变化时不再覆盖，变化时先复制到同目录临时文件再原子替换，失败时明确提示重新安装核心。
 - 静态验证新增回归断言，禁止回退为直接覆盖运行中的核心或在 awk 中使用区间表达式。
+- `tests/validate_landing.sh` 固定 init 检测结果，避免在带 systemd 的 CI runner 上触发真实 `systemctl daemon-reload`。
 
 ## v2.0.44 (2026-10-09)
 

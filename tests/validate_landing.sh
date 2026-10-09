@@ -122,6 +122,8 @@ SYSTEMD_SERVICE="$tmp/landing-server.service"
 OPENRC_SERVICE="$tmp/landing-server.openrc"
 AUTO_UPDATE_SCRIPT="$tmp/landing-autoupdate.sh"
 AUTO_UPDATE_LOG="$tmp/landing-autoupdate.log"
+# remote_exit_* 会重新检测 init；CI runner 有真实 systemd，不得触发 systemctl。
+detect_init() { INIT_SYS=none; }
 INIT_SYS=none
 
 reset_config_vars
