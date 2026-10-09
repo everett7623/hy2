@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.44"
+EXPECTED_VERSION="v2.0.45"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -406,6 +406,13 @@ for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q 'maxdepth 0 -mmin -5' "$script"
     ! grep -q '\[ -n "$_owner" \] && ! kill -0 "$_owner" 2>/dev/null || return 1' "$script"
 done
+# 回滚时共享核心可能正被其他协议运行，直接 cp 覆盖会因 Text file busy 失败而留下新核心；
+# 必须先复制到同目录临时文件再原子 mv。mawk 不支持 awk 区间表达式 {36}，UUID 提取必须用 grep -E。
+for script in anytls.sh vless.sh proxy.sh landing.sh; do
+    ! grep -q 'cp -a "\$INSTALL_BACKUP_DIR/sing-box" "\$SING_BOX_BIN"' "$script"
+    grep -q 'mv -f "\${SING_BOX_BIN}.restore" "\$SING_BOX_BIN"' "$script"
+done
+! grep -qE "awk '[^']*\{[0-9]+\}" anytls.sh vless.sh proxy.sh landing.sh
 [ "$(grep -c 'maxdepth 0 -mmin -5' hy2.sh)" -eq 2 ]
 [ "$(grep -c 'maxdepth 0 -mmin -5' ss.sh)" -eq 2 ]
 # NAT64 DNS 切换必须可回滚：备份失败却照样覆盖 resolv.conf 会导致 DNS 永久停留在 NAT64。

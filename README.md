@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.44（2026-10-09） · 本次更新：新增「家宽 / 落地中转」方案（线路机 + 落地机），只需在线路机上一键完成两端部署与出口验证。
+> 当前版本：v2.0.45（2026-10-10） · 本次更新：修复 VLESS 在 mawk 环境下生成 UUID 失败，以及 AnyTLS / VLESS / HTTP/SOCKS 安装回滚时因共享核心运行中无法恢复 sing-box 的问题。
 
 ## 目录
 

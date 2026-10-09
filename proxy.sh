@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：HTTP/SOCKS Proxy Management Script
 # 作者：everettlabs
-# 版本：v2.0.44
+# 版本：v2.0.45
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-10-09
+# 更新日期: 2026-10-10
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -1421,8 +1421,16 @@ restore_current_install() {
     [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$PROXY_META"
     [ -f "$INSTALL_BACKUP_DIR/managed-marker" ] && cp -a "$INSTALL_BACKUP_DIR/managed-marker" "$SING_BOX_MANAGED_MARKER"
     [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$PROXY_BIN"
+    # 共享核心可能正被其他协议运行，直接 cp 覆盖会因 Text file busy 失败；
+    # 未变化时不动，变化时先复制到同目录临时文件再原子替换。
     if [ -f "$INSTALL_BACKUP_DIR/sing-box" ]; then
-        cp -a "$INSTALL_BACKUP_DIR/sing-box" "$SING_BOX_BIN"
+        if ! cmp -s "$INSTALL_BACKUP_DIR/sing-box" "$SING_BOX_BIN" 2>/dev/null; then
+            cp -a "$INSTALL_BACKUP_DIR/sing-box" "${SING_BOX_BIN}.restore" && \
+                mv -f "${SING_BOX_BIN}.restore" "$SING_BOX_BIN" || {
+                rm -f "${SING_BOX_BIN}.restore"
+                echo -e "${RED}恢复 sing-box 二进制失败，请在“升级 sing-box”中重新安装核心${PLAIN}" >&2
+            }
+        fi
     elif [ "$MANAGED_SING_BOX" = "1" ]; then
         rm -f "$SING_BOX_BIN"
     fi
@@ -2512,7 +2520,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.44${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}HTTP/SOCKS Proxy Management Script${PLAIN} ${DIM}v2.0.45${PLAIN}"
         echo -e "  ${DIM}适合住宅 IP VPS 解锁场景${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
