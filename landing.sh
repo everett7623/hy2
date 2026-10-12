@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.53
+# 版本：v2.0.54
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-10-12
+# 更新日期: 2026-10-13
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: KVM / 独立服务器 / OpenVZ / LXC（用户态 WireGuard，不依赖内核模块）
@@ -826,8 +826,10 @@ get_native_egress_interface() {
 IPV4_PROBE_URLS="${IPV4_PROBE_URLS:-https://api.ipify.org https://1.1.1.1/cdn-cgi/trace https://checkip.amazonaws.com https://ip.gs https://ipv4.icanhazip.com}"
 IPV6_PROBE_URLS="${IPV6_PROBE_URLS:-https://api6.ipify.org https://[2606:4700:4700::1111]/cdn-cgi/trace https://ipv6.icanhazip.com}"
 # 经隧道验证出口：先用免 DNS 的字面量地址确认隧道本身，再用域名确认 DNS 路径。
-TUNNEL_IP_PROBE_URL="${TUNNEL_IP_PROBE_URL:-http://1.1.1.1/cdn-cgi/trace}"
-TUNNEL_DNS_PROBE_URLS="${TUNNEL_DNS_PROBE_URLS:-https://api.ipify.org https://checkip.amazonaws.com}"
+# 字面量探测必须用 https：1.1.1.1 / 1.0.0.1 的 http 一律 301 跳转，拿不到 ip=，
+# v2.0.52–v2.0.53 因此隧道已通也判失败并回滚。其证书含这两个 IP 的 SAN，正常校验即可。
+TUNNEL_IP_PROBE_URLS="${TUNNEL_IP_PROBE_URLS:-https://1.1.1.1/cdn-cgi/trace https://1.0.0.1/cdn-cgi/trace}"
+TUNNEL_DNS_PROBE_URLS="${TUNNEL_DNS_PROBE_URLS:-https://api.ipify.org https://checkip.amazonaws.com https://ipv4.icanhazip.com}"
 
 # 探测响应可能是纯地址，也可能是 Cloudflare trace 的 key=value 多行文本。
 extract_probe_ip() {
@@ -2284,29 +2286,48 @@ service_logs_current() {
 }
 
 show_tunnel_errors() {
-    local _esc _lines
+    local _esc _all _no_endpoint
     _esc=$(printf '\033')
-    _lines=$(service_logs_current 2>/dev/null | sed "s/${_esc}\[[0-9;]*m//g" \
-        | grep -iE 'wireguard|wg-out' | grep -iE 'error|fail|timeout' | grep -v 'context canceled' | tail -n 5)
-    if [ -z "$_lines" ]; then
+    _all=$(service_logs_current 2>/dev/null | sed "s/${_esc}\[[0-9;]*m//g" \
+        | grep -iE 'wireguard|wg-out' | grep -iE 'error|fail|timeout' | grep -v 'context canceled' || true)
+    if [ -z "$_all" ]; then
         echo -e "${DIM}  本次运行的日志中没有 WireGuard 报错：通常是握手包被防火墙 / 安全组拦截，没有到达对端。${PLAIN}"
         return 0
     fi
     echo -e "${YELLOW}  线路机本次运行的 WireGuard 报错（最近 5 条）：${PLAIN}"
-    printf '%s\n' "$_lines" | sed 's/^/    /'
-    if printf '%s\n' "$_lines" | grep -q 'no known endpoint for peer'; then
+    printf '%s\n' "$_all" | tail -n 5 | sed 's/^/    /'
+    # reverse 模式下第一个探测包总比落地机的下一次握手先到，报一次 no known endpoint 属正常；
+    # 落地机始终没连上时，线路机每 5 秒重试握手都会再报一次。
+    _no_endpoint=$(printf '%s\n' "$_all" | grep -c 'no known endpoint for peer' || true)
+    if [ "$_no_endpoint" -ge 2 ]; then
         echo -e "${YELLOW}  → 落地机一直没有连上本机：请放行本机（线路机）UDP ${WG_PORT:-?} 入站，并确认落地机能出站访问 UDP${PLAIN}"
+    elif printf '%s\n' "$_all" | grep -q 'using outbound/wireguard\[wg-out\]'; then
+        echo -e "${YELLOW}  → 隧道已建立，但落地机连不上探测站：请在落地机执行 curl -4 https://1.1.1.1/cdn-cgi/trace 检查其外网${PLAIN}"
+    elif [ "$_no_endpoint" = "1" ]; then
+        echo -e "${YELLOW}  → 仅首个探测包报一次 no known endpoint 属正常（落地机握手随后到达），请检查落地机能否访问外网${PLAIN}"
     fi
 }
 
-# 先用免 DNS 的字面量地址确认隧道已握手，再用域名确认 DNS 路径可用；
+# 每轮换一个探测站（字面量地址在前，免 DNS 也能确认隧道本身）：隧道刚建立时前几轮可能落空，
+# 个别探测站在落地机所在网络被屏蔽时也不会误判。出口 IP 来自字面量地址时，再用域名确认 DNS 路径；
 # 出口仍是线路机自身 IP 说明流量没有进入隧道，必须判定失败。
 verify_exit_egress() {
     local _attempts="${1:-8}" _i=0 _ip="" _dns_ip="" _url
+    local -a _urls
+    read -r -a _urls <<EOF
+$TUNNEL_IP_PROBE_URLS $TUNNEL_DNS_PROBE_URLS
+EOF
     LAST_EGRESS_IP=""
+    [ "${#_urls[@]}" -gt 0 ] || return 1
     while [ "$_i" -lt "$_attempts" ]; do
-        _ip=$(probe_via_tunnel "$TUNNEL_IP_PROBE_URL" || true)
-        is_valid_ipv4 "$_ip" && break
+        _url="${_urls[$((_i % ${#_urls[@]}))]}"
+        _ip=$(probe_via_tunnel "$_url" || true)
+        if is_valid_ipv4 "$_ip"; then
+            case " $TUNNEL_DNS_PROBE_URLS " in
+                *" $_url "*) _dns_ip="$_ip" ;;
+            esac
+            break
+        fi
         _ip=""
         _i=$((_i + 1))
         [ "$_i" -lt "$_attempts" ] && sleep 3
@@ -2326,11 +2347,13 @@ verify_exit_egress() {
         echo -e "${RED}✗ 出口仍是线路机自身 IP (${_ip})，流量没有进入隧道${PLAIN}"
         return 1
     fi
-    for _url in $TUNNEL_DNS_PROBE_URLS; do
-        _dns_ip=$(probe_via_tunnel "$_url" || true)
-        is_valid_ipv4 "$_dns_ip" && break
-        _dns_ip=""
-    done
+    if [ -z "$_dns_ip" ]; then
+        for _url in $TUNNEL_DNS_PROBE_URLS; do
+            _dns_ip=$(probe_via_tunnel "$_url" || true)
+            is_valid_ipv4 "$_dns_ip" && break
+            _dns_ip=""
+        done
+    fi
     if [ -z "$_dns_ip" ]; then
         echo -e "${RED}✗ 隧道已通，但经落地机解析域名失败，请检查落地机的系统 DNS${PLAIN}"
         return 1
@@ -3108,7 +3131,7 @@ deploy_landing() {
         deploy_fail "线路机服务未能正常监听 TCP ${LISTEN_PORT}"
         return 1
     fi
-    echo -e "${YELLOW}正在验证隧道与出口 IP（最多约 30 秒）...${PLAIN}"
+    echo -e "${YELLOW}正在验证隧道与出口 IP（最多约 1 分钟）...${PLAIN}"
     if ! verify_exit_egress 8; then
         deploy_fail "出口验证失败"
         return 1
@@ -4041,7 +4064,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.53${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.54${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

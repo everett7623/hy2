@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.53（2026-10-12） · 本次更新：家宽中转新增并默认「落地机主动连接线路机」，落地机无需放行端口或端口转发，换 IP 自动恢复；部署失败只展示本次运行的日志。
+> 当前版本：v2.0.54（2026-10-13） · 本次更新：修复家宽中转隧道已通却总判「出口验证失败」并回滚的问题（出口探测改回 HTTPS，并轮换多个探测站）；失败提示不再误报「落地机没有连上」。
 
 ## 目录
 

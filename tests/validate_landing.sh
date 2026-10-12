@@ -268,8 +268,20 @@ printf '%s\n' "$_out" | grep -q 'failed to send handshake initiation: detour to 
 ! printf '%s\n' "$_out" | grep -q 'vless-in'
 ! printf '%s\n' "$_out" | grep -q 'context canceled'
 ! printf '%s\n' "$_out" | grep -q "$(printf '\033')"
-service_logs_current() { echo 'ERROR endpoint/wireguard[wg-out]: peer(x) - failed to send handshake initiation: no known endpoint for peer'; }
+# reverse 模式第一个探测包总比落地机的下一次握手先到：只报一次 no known endpoint 属正常，
+# 不能据此提示“落地机一直没有连上”；落地机真连不上时，线路机每 5 秒重试都会再报一次。
+_noep='ERROR endpoint/wireguard[wg-out]: peer(x) - failed to send handshake initiation: no known endpoint for peer'
+service_logs_current() { echo "$_noep"; }
+_out=$(show_tunnel_errors)
+! printf '%s\n' "$_out" | grep -q '落地机一直没有连上本机'
+printf '%s\n' "$_out" | grep -q '属正常'
+service_logs_current() { printf '%s\n%s\n%s\n' "$_noep" "$_noep" "$_noep"; }
 show_tunnel_errors | grep -q '落地机一直没有连上本机'
+# 握手后落地机连不上探测站（隧道已通）：经 wg-out 的连接被拒绝
+service_logs_current() { printf '%s\n%s\n' "$_noep" 'ERROR connection: open connection to 1.1.1.1:443 using outbound/wireguard[wg-out]: connect tcp 1.1.1.1:443: connection was refused'; }
+_out=$(show_tunnel_errors)
+printf '%s\n' "$_out" | grep -q '隧道已建立，但落地机连不上探测站'
+! printf '%s\n' "$_out" | grep -q '落地机一直没有连上本机'
 service_logs_current() { echo "暂无日志"; }
 show_tunnel_errors | grep -q '握手包被防火墙'
 unset -f service_logs_current
@@ -464,11 +476,36 @@ export_mihomo_vless 192.0.2.10 34567 'node' | grep -q "reality-opts: {public-key
 [ "$(generate_node_name US relay VLESS-Landing IPv4)" = '🇺🇸 US | relay | VLESS-Landing | IPv4' ]
 
 # --- 出口验证 ---
+# Cloudflare trace 取 ip= 行；http://1.1.1.1 返回的 301 跳转页取不到地址（v2.0.52–v2.0.53 的根因）。
+[ "$(printf 'fl=1f1\nh=1.1.1.1\nip=198.51.100.7\nts=1.0\n' | extract_probe_ip)" = 198.51.100.7 ]
+[ "$(printf '198.51.100.7\n' | extract_probe_ip)" = 198.51.100.7 ]
+! is_valid_ipv4 "$(printf '<html>\n<head><title>301 Moved Permanently</title></head>\n' | extract_probe_ip)"
+for _url in $TUNNEL_IP_PROBE_URLS; do
+    case "$_url" in https://*) ;; *) false ;; esac
+done
 PUBLIC_IP=192.0.2.10
 probe_via_tunnel() { printf '198.51.100.7'; }
 sleep() { :; }
 verify_exit_egress 2 >/dev/null
 [ "$LAST_EGRESS_IP" = 198.51.100.7 ]
+# 落地机所在网络屏蔽字面量探测站与部分域名站时，轮换到可用站点仍判定通过，且已验证 DNS 路径。
+# probe_via_tunnel 在 $(...) 子 shell 中执行，调用记录只能写文件。
+probe_via_tunnel() {
+    printf '%s\n' "$1" >> "$tmp/probed"
+    case "$1" in
+        *amazonaws*) printf '198.51.100.7' ;;
+        *) return 1 ;;
+    esac
+}
+: > "$tmp/probed"
+verify_exit_egress 4 >/dev/null
+[ "$LAST_EGRESS_IP" = 198.51.100.7 ]
+grep -qxF 'https://1.1.1.1/cdn-cgi/trace' "$tmp/probed"
+grep -qxF 'https://1.0.0.1/cdn-cgi/trace' "$tmp/probed"
+[ "$(grep -c amazonaws "$tmp/probed")" = 1 ]
+: > "$tmp/probed"
+! verify_exit_egress 3 >/dev/null
+! grep -q amazonaws "$tmp/probed"
 probe_via_tunnel() { printf '192.0.2.10'; }
 ! verify_exit_egress 2 >/dev/null
 probe_via_tunnel() { return 1; }
