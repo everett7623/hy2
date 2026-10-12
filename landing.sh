@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.46
+# 版本：v2.0.47
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1549,8 +1549,11 @@ install_config_file() {
     }
 }
 
-# 线路机：VLESS REALITY 入站 + 本机探测入口，全部出站经 WireGuard 进入落地机。
+# 线路机：VLESS REALITY 入站 + 本机探测入口，业务出站经 WireGuard 进入落地机。
 # 域名先经隧道交给落地机解析，再以 IP 进入隧道，CDN 就近解析与家宽出口保持一致。
+# REALITY 握手必须从线路机直连伪装站：route.final 是 wg-out，若不设 handshake.detour，
+# 握手会经家宽出去。落地机往往访问不了安装时在线路机上探测通过的 SNI，
+# 客户端就会连不上，但本机 mixed 探测仍显示隧道正常。
 write_relay_config() {
     local _tmp _reality_strategy _local_strategy _exit_strategy
     _reality_strategy=$(reality_domain_strategy)
@@ -1596,6 +1599,7 @@ write_relay_config() {
           "handshake": {
             "server": "${SERVER_NAME}",
             "server_port": ${HANDSHAKE_PORT},
+            "detour": "direct",
             "domain_resolver": {
               "server": "local",
               "strategy": "${_reality_strategy}"
@@ -3062,6 +3066,7 @@ show_config() {
     echo -e "落地机    : ${YELLOW}${EXIT_HOST}${PLAIN}（UDP ${WG_PORT}）"
     echo -e "落地出口  : ${YELLOW}${EXIT_IPV4:-未知}${PLAIN}（${_country} / $(get_country_name "$_country")）"
     echo -e "${DIM}客户端连接线路机，网站看到的是落地机出口 IP。${PLAIN}"
+    echo -e "${DIM}请导入「线路机」IPv4 节点，不要填落地出口 IP；若同时给出 IPv6 节点，客户端网络需能访问 IPv6。${PLAIN}"
     echo -e "${DIM}提示: 客户端 DNS 须经本节点（Mihomo 开启 fake-ip 或 nameserver 走节点），否则可能泄露本地 DNS。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -3086,6 +3091,35 @@ show_config() {
 # ============================================================
 # 诊断
 # ============================================================
+# 已部署节点升级脚本后，把 REALITY 握手改回线路机直连，无需整段重装。
+ensure_reality_handshake_direct() {
+    local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0
+    [ -f "$LANDING_CONFIG" ] || return 0
+    [ "${ROLE:-}" = "relay" ] || [ "$(installed_role 2>/dev/null)" = "relay" ] || return 0
+    grep -q '"handshake"' "$LANDING_CONFIG" || return 0
+    grep -q '"detour": "direct"' "$LANDING_CONFIG" && return 0
+    read_config >/dev/null 2>&1 || return 1
+    echo -e "${YELLOW}正在把 REALITY 握手改为线路机直连（不再经家宽隧道）...${PLAIN}"
+    cp -p "$LANDING_CONFIG" "$_bak" || return 1
+    if ! write_config || ! check_config; then
+        mv -f "$_bak" "$LANDING_CONFIG"
+        echo -e "${RED}握手直连修复失败，已恢复原配置。备份仍在: ${_bak}${PLAIN}"
+        return 1
+    fi
+    service_is_active && _was_active=1 || true
+    if [ "$_was_active" = "1" ]; then
+        if ! service_restart || ! wait_for_health; then
+            mv -f "$_bak" "$LANDING_CONFIG"
+            service_restart || true
+            echo -e "${RED}握手直连修复后服务异常，已回滚。备份仍在: ${_bak}${PLAIN}"
+            return 1
+        fi
+    fi
+    rm -f "$_bak"
+    echo -e "${GREEN}✓ REALITY 握手已改为线路机直连${PLAIN}"
+    return 0
+}
+
 diagnose_landing() {
     local _confirm
     echo -e "\n${GREEN}家宽中转诊断${PLAIN}"
@@ -3131,6 +3165,7 @@ diagnose_landing() {
     fi
 
     echo -e "  ${DIM}本机角色: 线路机 | 落地机: ${EXIT_HOST} UDP ${WG_PORT}${PLAIN}"
+    ensure_reality_handshake_direct || true
     tcp_port_is_listening "$LISTEN_PORT" && echo -e "  ${GREEN}✓ TCP ${LISTEN_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
     if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         echo -e "  ${GREEN}✓ REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 可达${PLAIN}"
@@ -3215,6 +3250,7 @@ _upgrade_core_locked() {
     _latest_version="${LAST_VERSION_TAG#v}"
     if [ -n "$_current_version" ] && [ "$_current_version" = "$_latest_version" ]; then
         echo -e "${GREEN}sing-box 已是最新版本 ${_current_version}${PLAIN}"
+        [ "$ROLE" = "relay" ] && ensure_reality_handshake_direct || true
         return 0
     fi
 
@@ -3597,7 +3633,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.46${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.47${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

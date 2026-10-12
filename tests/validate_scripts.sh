@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.46"
+EXPECTED_VERSION="v2.0.47"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -266,6 +266,8 @@ grep -q '17 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' anytls.sh
 grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
 grep -q '37 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '47 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' landing.sh
+grep -q '^ensure_reality_handshake_direct()' landing.sh
+grep -q '"detour": "direct"' landing.sh
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh

@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.46（2026-10-12） · 本次更新：主菜单按分区连续编号，家宽 / 落地中转改为 `[5]`，运维项顺延为 `[6]`–`[10]`。
+> 当前版本：v2.0.47（2026-10-12） · 本次更新：修复家宽中转 REALITY 握手误走落地机导致客户端连不上。
 
 ## 目录
 
@@ -143,7 +143,7 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 
 - 需要能 SSH 登录（root，或配置了免密 `sudo` 的用户）并能访问外网；家宽机器在路由器后面时，先在路由器把一个 UDP 端口转发到落地机，部署时填写该端口。
 - 云厂商安全组 / 面板防火墙需放行落地机的 UDP 端口；部署失败时可在菜单「出口检测与诊断」中经 SSH 查看落地机状态。
-- 只有本节点流量从落地机出网，线路机上的其他协议、SSH 与系统更新仍走线路机自身网络，不会因为隧道异常导致线路机失联。
+- 只有本节点流量从落地机出网；REALITY 握手从线路机直连伪装站，SSH 与系统更新也不走隧道，不会因为隧道异常导致线路机失联。
 - 两端都不修改系统路由、不开启 `ip_forward`、不写 iptables NAT；落地机拒绝隧道访问其局域网与本机服务。
 - 家宽换 IP 后在线路机菜单选择「更新落地机地址」即可；推荐给落地机配置 DDNS 域名。
 - 客户端 DNS 需经节点解析（如 Mihomo 使用 fake-ip），否则网站可能看到本地 DNS。
