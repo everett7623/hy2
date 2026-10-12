@@ -225,11 +225,11 @@ grep -q '"port": 47821' "$LANDING_CONFIG"
 grep -q '"allowed_ips": \["0.0.0.0/0", "::/0"\]' "$LANDING_CONFIG"
 grep -q '"persistent_keepalive_interval": 25' "$LANDING_CONFIG"
 grep -q '"server": "10.233.0.1", "detour": "wg-out"' "$LANDING_CONFIG"
-grep -A8 '"handshake"' "$LANDING_CONFIG" | grep -q '"detour": "direct"'
+# direct 出站没有拨号选项时，detour 指向它会在拨号时报错（check 不报），WG 握手与 REALITY 握手全部失败。
+! grep -q '"detour": "direct"' "$LANDING_CONFIG"
 grep -q '"action": "resolve", "server": "exit-dns", "strategy": "ipv4_only"' "$LANDING_CONFIG"
 grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG"
 grep -q '"final": "direct"' "$LANDING_CONFIG"
-grep -q '"detour": "direct"' "$LANDING_CONFIG"
 ! grep -q '"final": "wg-out"' "$LANDING_CONFIG"
 grep -q '"default_domain_resolver": { "server": "local", "strategy": "prefer_ipv4" }' "$LANDING_CONFIG"
 ! grep -q '"listen_port": 47821' "$LANDING_CONFIG"
@@ -242,9 +242,98 @@ service_is_active() { return 1; }
 ensure_reality_handshake_direct >/dev/null
 grep -q '"final": "direct"' "$LANDING_CONFIG"
 grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG"
-grep -A8 '"handshake"' "$LANDING_CONFIG" | grep -q '"detour": "direct"'
+! grep -q '"detour": "direct"' "$LANDING_CONFIG"
+
+# v2.0.47–v2.0.51 部署的线路机带 "detour": "direct"（握手 + WG 端点），诊断/升级必须去掉。
+awk '
+    { print }
+    /"server_port": / && !h { print "            \"detour\": \"direct\","; h=1 }
+' "$LANDING_CONFIG.good" | awk '
+    /"persistent_keepalive_interval"/ { kp=1 }
+    kp && /^      \]$/ { print "      ],"; print "      \"detour\": \"direct\""; kp=0; next }
+    { print }
+' > "$LANDING_CONFIG"
+[ "$(grep -c '"detour": "direct"' "$LANDING_CONFIG")" = "2" ]
+ensure_reality_handshake_direct >/dev/null
+! grep -q '"detour": "direct"' "$LANDING_CONFIG"
+grep -q '"final": "direct"' "$LANDING_CONFIG"
+cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 unset -f service_is_active
 rm -f "${LANDING_CONFIG}.handshake.bak" "$LANDING_CONFIG.good"
+# --- 隧道失败时展示线路机日志里的 WireGuard 报错（去掉颜色码） ---
+service_logs() { printf '\033[31mERROR\033[0m endpoint/wireguard[wg-out]: peer(abc) - failed to send handshake initiation: detour to an empty direct outbound makes no sense\nINFO inbound/vless[vless-in]: started\n'; }
+_out=$(show_tunnel_errors)
+printf '%s\n' "$_out" | grep -q 'failed to send handshake initiation: detour to an empty direct outbound'
+! printf '%s\n' "$_out" | grep -q 'vless-in'
+! printf '%s\n' "$_out" | grep -q "$(printf '\033')"
+service_logs() { echo "暂无日志"; }
+[ -z "$(show_tunnel_errors)" ]
+unset -f service_logs
+
+# --- DDNS 看门狗：sing-box 只在启动时解析一次落地机域名，家宽换 IP 后必须重启才能重连 ---
+exit_host_is_domain home.example.com
+! exit_host_is_domain 198.51.100.7
+! exit_host_is_domain 2001:db8::7
+! exit_host_is_domain ""
+WATCHDOG_SCRIPT="$tmp/landing-watchdog.sh"
+WATCHDOG_LOG="$tmp/landing-watchdog.log"
+CRONTAB_FILE="$tmp/crontab"
+crontab() { if [ "${1:-}" = "-l" ]; then cat "$CRONTAB_FILE" 2>/dev/null; else cat > "$CRONTAB_FILE"; fi; }
+shim="$tmp/shim"; mkdir -p "$shim"
+cat > "$shim/getent" <<'EOF'
+#!/bin/sh
+[ -s "$WD_DNS" ] || exit 2
+while read -r a; do printf '%s STREAM %s\n%s DGRAM\n' "$a" "$2" "$a"; done < "$WD_DNS"
+EOF
+cat > "$shim/systemctl" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$WD_CALLS"
+exit 0
+EOF
+chmod +x "$shim/getent" "$shim/systemctl"
+export WD_DNS="$tmp/wd-dns" WD_CALLS="$tmp/wd-calls"
+printf '198.51.100.7\n' > "$WD_DNS"
+: > "$WD_CALLS"
+_saved_path="$PATH"
+INIT_SYS=systemd
+PATH="$shim:$PATH" ensure_exit_watchdog quiet
+INIT_SYS=none
+[ -x "$WATCHDOG_SCRIPT" ]
+sh -n "$WATCHDOG_SCRIPT"
+grep -qF "*/2 * * * * $WATCHDOG_SCRIPT" "$CRONTAB_FILE"
+[ "$(cat "$LANDING_META/exit_resolved")" = "home.example.com 198.51.100.7" ]
+[ ! -s "$WD_CALLS" ]
+PATH="$shim:$PATH" sh "$WATCHDOG_SCRIPT"
+[ ! -s "$WD_CALLS" ]
+# 解析失败不重启
+: > "$WD_DNS"
+PATH="$shim:$PATH" sh "$WATCHDOG_SCRIPT"
+[ ! -s "$WD_CALLS" ]
+[ "$(cat "$LANDING_META/exit_resolved")" = "home.example.com 198.51.100.7" ]
+# 家宽换 IP：重启一次并记录
+printf '198.51.100.9\n' > "$WD_DNS"
+PATH="$shim:$PATH" sh "$WATCHDOG_SCRIPT"
+grep -qx 'restart landing-server' "$WD_CALLS"
+[ "$(grep -c '^restart' "$WD_CALLS")" = 1 ]
+grep -q '198.51.100.7 -> 198.51.100.9' "$WATCHDOG_LOG"
+PATH="$shim:$PATH" sh "$WATCHDOG_SCRIPT"
+[ "$(grep -c '^restart' "$WD_CALLS")" = 1 ]
+# 落地机地址被修改后的首次解析只记录，不重启
+awk '{ sub(/^EXIT_HOST=.*/, "EXIT_HOST=ddns.example.net") } 1' "$LANDING_META/config.env" > "$tmp/env" && cat "$tmp/env" > "$LANDING_META/config.env"
+PATH="$shim:$PATH" sh "$WATCHDOG_SCRIPT"
+[ "$(grep -c '^restart' "$WD_CALLS")" = 1 ]
+[ "$(cat "$LANDING_META/exit_resolved")" = "ddns.example.net 198.51.100.9" ]
+write_meta
+# 改回 IP 地址：看门狗与定时任务一并移除
+EXIT_HOST=198.51.100.7
+ensure_exit_watchdog quiet
+[ ! -e "$WATCHDOG_SCRIPT" ]
+! grep -qF "$WATCHDOG_SCRIPT" "$CRONTAB_FILE"
+[ ! -e "$LANDING_META/exit_resolved" ]
+EXIT_HOST=home.example.com
+PATH="$_saved_path"
+unset WD_DNS WD_CALLS
+
 ! grep -q 'bind_interface' "$LANDING_CONFIG"
 if [ -n "${REAL_SING_BOX_BIN:-}" ]; then
     "$REAL_SING_BOX_BIN" check -c "$LANDING_CONFIG"

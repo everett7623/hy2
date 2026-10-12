@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.51
+# 版本：v2.0.52
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -94,6 +94,8 @@ SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/landing-server.service}"
 OPENRC_SERVICE="${OPENRC_SERVICE:-/etc/init.d/landing-server}"
 AUTO_UPDATE_SCRIPT="${AUTO_UPDATE_SCRIPT:-/usr/local/bin/landing-autoupdate.sh}"
 AUTO_UPDATE_LOG="${AUTO_UPDATE_LOG:-/var/log/landing-autoupdate.log}"
+WATCHDOG_SCRIPT="${WATCHDOG_SCRIPT:-/usr/local/bin/landing-watchdog.sh}"
+WATCHDOG_LOG="${WATCHDOG_LOG:-/var/log/landing-watchdog.log}"
 BBR_SYSCTL_CONF="${BBR_SYSCTL_CONF:-/etc/sysctl.d/99-singbox-tools-bbr.conf}"
 LANDING_SCRIPT_URL="${LANDING_SCRIPT_URL:-https://raw.githubusercontent.com/everett7623/hy2/main/landing.sh}"
 
@@ -1551,9 +1553,11 @@ install_config_file() {
 
 # 线路机：VLESS REALITY 入站 + 本机探测入口，业务出站经 WireGuard 进入落地机。
 # 域名先经隧道交给落地机解析，再以 IP 进入隧道，CDN 就近解析与家宽出口保持一致。
-# route.final 必须是 direct：只有 vless-in / probe-in 显式走 wg-out。
-# 若 final=wg-out，REALITY 握手与 WireGuard 自身拨号也可能被卷进隧道；
-# 落地机常访问不了伪装站，外网表现为 TCP 通但 TLS/延迟 -1，而本机探测仍可能绿。
+# route.final 为 direct，只有 vless-in / probe-in 显式走 wg-out。
+# REALITY 握手与 WireGuard 端点自身拨号属于 dial 字段，不经过路由，未设 detour 时本就直连。
+# 严禁写 "detour": "direct"：direct 出站没有任何拨号选项时，sing-box 会在拨号时报
+# “detour to an empty direct outbound makes no sense”，WireGuard 握手发不出去、REALITY 握手失败，
+# 而 sing-box check 不会报错（v2.0.47–v2.0.51 因此隧道永远不通）。
 write_relay_config() {
     local _tmp _reality_strategy _local_strategy _exit_strategy
     _reality_strategy=$(reality_domain_strategy)
@@ -1599,7 +1603,6 @@ write_relay_config() {
           "handshake": {
             "server": "${SERVER_NAME}",
             "server_port": ${HANDSHAKE_PORT},
-            "detour": "direct",
             "domain_resolver": {
               "server": "local",
               "strategy": "${_reality_strategy}"
@@ -1637,8 +1640,7 @@ write_relay_config() {
           "allowed_ips": ["0.0.0.0/0", "::/0"],
           "persistent_keepalive_interval": ${WG_KEEPALIVE}
         }
-      ],
-      "detour": "direct"
+      ]
     }
   ],
   "outbounds": [
@@ -2202,6 +2204,17 @@ probe_via_tunnel() {
         "$_url" 2>/dev/null | extract_probe_ip
 }
 
+# 隧道不通时把线路机日志里的 WireGuard 报错直接展示出来，避免只能猜“是不是防火墙”。
+show_tunnel_errors() {
+    local _esc _lines
+    _esc=$(printf '\033')
+    _lines=$(service_logs 2>/dev/null | sed "s/${_esc}\[[0-9;]*m//g" \
+        | grep -iE 'wireguard|wg-out' | grep -iE 'error|fail|timeout' | tail -n 5)
+    [ -n "$_lines" ] || return 0
+    echo -e "${YELLOW}  线路机日志中的 WireGuard 报错（最近 5 条）：${PLAIN}"
+    printf '%s\n' "$_lines" | sed 's/^/    /'
+}
+
 # 先用免 DNS 的字面量地址确认隧道已握手，再用域名确认 DNS 路径可用；
 # 出口仍是线路机自身 IP 说明流量没有进入隧道，必须判定失败。
 verify_exit_egress() {
@@ -2217,6 +2230,7 @@ verify_exit_egress() {
     if [ -z "$_ip" ]; then
         echo -e "${RED}✗ 经 WireGuard 隧道访问外网失败（隧道未握手或落地机无法出网）${PLAIN}"
         echo -e "${YELLOW}  常见原因：落地机面板 / 云防火墙未放行 UDP ${WG_PORT:-?}，或落地机地址填写错误${PLAIN}"
+        show_tunnel_errors
         return 1
     fi
     if [ -n "${PUBLIC_IP:-}" ] && [ "$_ip" = "$PUBLIC_IP" ] && [ "$_ip" != "${EXIT_IPV4:-}" ]; then
@@ -2620,8 +2634,9 @@ uninstall_landing_files() {
     if command -v crontab >/dev/null 2>&1; then
         crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
     fi
+    remove_exit_watchdog
     rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$LANDING_BIN"
-    rm -f "$LANDING_CONFIG" "$AUTO_UPDATE_LOG"
+    rm -f "$LANDING_CONFIG" "$AUTO_UPDATE_LOG" "$WATCHDOG_LOG"
     rm -rf "$LANDING_META" "$LANDING_PENDING_DIR"
     if [ -d "$LANDING_DIR" ]; then
         _other_file=$(find "$LANDING_DIR" -mindepth 1 -maxdepth 1 ! -name '.singbox-tools-managed' -print -quit 2>/dev/null)
@@ -2678,6 +2693,7 @@ prompt_exit_target() {
     local _exit_net="A"
     echo -e "\n${SKYBLUE}--- 落地机（家宽机）信息 ---${PLAIN}"
     echo -e "${DIM}落地机需要：能 SSH 登录、有公网 IPv4 出口、线路机能打到它的一个 UDP 端口。${PLAIN}"
+    echo -e "${DIM}家宽公网 IP 会变时，建议填写 DDNS 域名：线路机会自动跟随解析变化重连。${PLAIN}"
     echo -e "  [1] A：公网直达 / 云主机（面板或安全组放行 UDP）"
     echo -e "  [2] B：真·家宽在路由器后（先在路由器做 UDP 端口转发）"
     while true; do
@@ -2931,6 +2947,7 @@ deploy_landing() {
     cleanup_script_source
     close_replaced_install_port
     discard_install_backup
+    ensure_exit_watchdog || true
     echo -e "${GREEN}✓ 部署完成：客户端流量将从落地机 ${LAST_EGRESS_IP} 出网${PLAIN}"
     show_config
 }
@@ -2957,6 +2974,7 @@ update_exit_address() {
     EXIT_HOST="$_input"
     if write_config && write_meta && check_config && service_restart && wait_for_health && verify_exit_egress 6; then
         rm -f "${LANDING_CONFIG}.bak" "$LANDING_META/config.env.bak"
+        ensure_exit_watchdog || true
         echo -e "${GREEN}✓ 落地机地址已更新为 ${EXIT_HOST}${PLAIN}"
         return 0
     fi
@@ -3114,6 +3132,13 @@ show_config() {
     fi
     echo -e "伪装 SNI  : ${YELLOW}${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
     echo -e "落地机    : ${YELLOW}${EXIT_HOST}${PLAIN}（UDP ${WG_PORT}）"
+    if exit_host_is_domain "$EXIT_HOST"; then
+        if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$WATCHDOG_SCRIPT"; then
+            echo -e "DDNS 看门狗: ${GREEN}已启用${PLAIN}（换 IP 后约 2 分钟内自动重连）"
+        else
+            echo -e "DDNS 看门狗: ${RED}未启用${PLAIN}（家宽换 IP 后需重启服务；可在「升级 sing-box」或重新部署时自动补上）"
+        fi
+    fi
     echo -e "落地出口  : ${YELLOW}${EXIT_IPV4:-未知}${PLAIN}（${_country} / $(get_country_name "$_country")）"
     echo -e "${DIM}客户端连接线路机，网站看到的是落地机出口 IP。${PLAIN}"
     echo -e "${DIM}请导入「线路机」IPv4 节点，不要填落地出口 IP；若同时给出 IPv6 节点，客户端网络需能访问 IPv6。${PLAIN}"
@@ -3141,7 +3166,9 @@ show_config() {
 # ============================================================
 # 诊断
 # ============================================================
-# 已部署线路机：把路由默认改回 direct，并保证 REALITY 握手 / WG 拨号不经家宽。
+# 已部署线路机：把路由默认改回 direct（仅业务入站走 wg-out），
+# 并去掉 v2.0.47–v2.0.51 写入的 "detour": "direct"（指向空 direct 出站，会让 WG / REALITY 拨号直接报错）。
+# 每周自动更新与诊断都会调用这里，已部署节点无需重新对接即可自愈。
 ensure_reality_handshake_direct() {
     local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0
     [ -f "$LANDING_CONFIG" ] || return 0
@@ -3149,10 +3176,10 @@ ensure_reality_handshake_direct() {
     grep -q '"handshake"' "$LANDING_CONFIG" || return 0
     grep -q '"final": "wg-out"' "$LANDING_CONFIG" && _need=1
     grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG" || _need=1
-    grep -q '"detour": "direct"' "$LANDING_CONFIG" || _need=1
+    grep -q '"detour": "direct"' "$LANDING_CONFIG" && _need=1
     [ "$_need" = "1" ] || return 0
     read_config >/dev/null 2>&1 || return 1
-    echo -e "${YELLOW}正在修复线路机路由：默认直连，仅业务入站走家宽隧道...${PLAIN}"
+    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道...${PLAIN}"
     cp -p "$LANDING_CONFIG" "$_bak" || return 1
     if ! write_config || ! check_config; then
         mv -f "$_bak" "$LANDING_CONFIG"
@@ -3169,7 +3196,7 @@ ensure_reality_handshake_direct() {
         fi
     fi
     rm -f "$_bak"
-    echo -e "${GREEN}✓ 线路机路由已修复（final=direct，业务走 wg-out）${PLAIN}"
+    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，握手 / WG 拨号直连）${PLAIN}"
     return 0
 }
 
@@ -3219,6 +3246,7 @@ diagnose_landing() {
 
     echo -e "  ${DIM}本机角色: 线路机 | 落地机: ${EXIT_HOST} UDP ${WG_PORT}${PLAIN}"
     ensure_reality_handshake_direct || true
+    ensure_exit_watchdog quiet || true
     tcp_port_is_listening "$LISTEN_PORT" && echo -e "  ${GREEN}✓ TCP ${LISTEN_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
     if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         echo -e "  ${GREEN}✓ REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 可达${PLAIN}"
@@ -3303,7 +3331,10 @@ _upgrade_core_locked() {
     _latest_version="${LAST_VERSION_TAG#v}"
     if [ -n "$_current_version" ] && [ "$_current_version" = "$_latest_version" ]; then
         echo -e "${GREEN}sing-box 已是最新版本 ${_current_version}${PLAIN}"
-        [ "$ROLE" = "relay" ] && ensure_reality_handshake_direct || true
+        if [ "$ROLE" = "relay" ]; then
+            ensure_reality_handshake_direct || true
+            ensure_exit_watchdog quiet || true
+        fi
         return 0
     fi
 
@@ -3348,6 +3379,10 @@ _upgrade_core_locked() {
     fi
     rm -f "${SING_BOX_BIN}.bak"
     echo -e "${GREEN}✓ sing-box 已从 ${_current_version:-未知版本} 升级到 ${_latest_version}${PLAIN}"
+    if [ "$ROLE" = "relay" ]; then
+        ensure_reality_handshake_direct || true
+        ensure_exit_watchdog quiet || true
+    fi
     return 0
 }
 
@@ -3443,6 +3478,118 @@ remove_auto_update() {
     rm -f "$AUTO_UPDATE_SCRIPT"
     echo -e "${GREEN}✓ 已移除家宽中转自动更新任务${PLAIN}"
     sleep 2
+}
+
+# ============================================================
+# DDNS 看门狗（线路机）
+# ============================================================
+# sing-box 的 WireGuard 端点只在启动时解析一次落地机域名，且单 peer 时使用
+# 已 connect 到该 IP 的 UDP 套接字；家宽换 IP 后隧道会一直断，直到服务重启。
+# 落地机填写域名（DDNS）时，由 cron 每 2 分钟重新解析，地址集合变化才重启服务。
+exit_host_is_domain() {
+    [ -n "$1" ] || return 1
+    is_valid_ipv4 "$1" && return 1
+    is_valid_ipv6 "$1" && return 1
+    return 0
+}
+
+write_exit_watchdog() {
+    local _tmp
+    _tmp=$(mktemp "${WATCHDOG_SCRIPT}.new.XXXXXX" 2>/dev/null) || return 1
+    {
+        printf '#!/bin/sh\n'
+        printf '# 家宽中转 DDNS 看门狗：落地机域名解析变化时重启 landing-server（由 landing.sh 生成）\n'
+        printf 'CONF=%s\n' "'$LANDING_META/config.env'"
+        printf 'STATE=%s\n' "'$LANDING_META/exit_resolved'"
+        printf 'LOG=%s\n' "'$WATCHDOG_LOG'"
+        printf 'INIT_SYS=%s\n' "'$INIT_SYS'"
+        printf 'LANDING_BIN=%s\n' "'$LANDING_BIN'"
+        cat <<'WATCHDOG_EOF'
+[ -f "$CONF" ] || exit 0
+meta() { awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$CONF"; }
+[ "$(meta ROLE)" = "relay" ] || exit 0
+HOST=$(meta EXIT_HOST)
+case "$HOST" in
+    ''|*:*) exit 0 ;;
+esac
+printf '%s\n' "$HOST" | grep -qE '^[0-9.]+$' && exit 0
+
+resolve_host() {
+    _r=""
+    if command -v getent >/dev/null 2>&1; then
+        _r=$(getent ahosts "$1" 2>/dev/null | awk '{ print $1 }')
+        [ -n "$_r" ] || _r=$(getent hosts "$1" 2>/dev/null | awk '{ print $1 }')
+    fi
+    if [ -z "$_r" ] && command -v nslookup >/dev/null 2>&1; then
+        _r=$(nslookup "$1" 2>/dev/null | awk '/^Name:/ { seen = 1; next } seen && /^Address/ { print $NF }')
+    fi
+    printf '%s\n' "$_r"
+}
+
+ADDRS=$(resolve_host "$HOST" | grep -E '^[0-9A-Fa-f:.]+$' | sort -u | tr '\n' ' ' | sed 's/ *$//')
+# 解析失败（DNS 暂时不可用）时保持现状，避免误重启。
+[ -n "$ADDRS" ] || exit 0
+CUR="$HOST $ADDRS"
+OLD=$(cat "$STATE" 2>/dev/null)
+[ "$CUR" = "$OLD" ] && exit 0
+printf '%s\n' "$CUR" > "$STATE.new" && chmod 600 "$STATE.new" && mv -f "$STATE.new" "$STATE" || exit 1
+# 首次记录或落地机地址刚被修改：只记录，不重启。
+case "$OLD" in
+    "$HOST "*) ;;
+    *) exit 0 ;;
+esac
+
+active=0
+case "$INIT_SYS" in
+    systemd) systemctl is-active --quiet landing-server && active=1 ;;
+    openrc) rc-service landing-server status 2>/dev/null | grep -q started && active=1 ;;
+    *) [ -f /var/run/landing-server.pid ] && kill -0 "$(cat /var/run/landing-server.pid)" 2>/dev/null && active=1 ;;
+esac
+[ "$active" = "1" ] || exit 0
+echo "[$(date '+%F %T')] ${HOST} 解析变化: ${OLD#"$HOST "} -> ${ADDRS}，重启 landing-server" >> "$LOG"
+case "$INIT_SYS" in
+    systemd) systemctl restart landing-server ;;
+    openrc) rc-service landing-server restart ;;
+    *)
+        kill "$(cat /var/run/landing-server.pid)" 2>/dev/null
+        sleep 1
+        nohup "$LANDING_BIN" >/var/log/landing-server.log 2>&1 &
+        echo $! > /var/run/landing-server.pid
+        ;;
+esac
+WATCHDOG_EOF
+    } > "$_tmp" || { rm -f "$_tmp"; return 1; }
+    chmod 700 "$_tmp" && mv -f "$_tmp" "$WATCHDOG_SCRIPT" || { rm -f "$_tmp"; return 1; }
+}
+
+remove_exit_watchdog() {
+    if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$WATCHDOG_SCRIPT"; then
+        crontab -l 2>/dev/null | grep -vF "$WATCHDOG_SCRIPT" | crontab - 2>/dev/null || true
+    fi
+    rm -f "$WATCHDOG_SCRIPT" "$LANDING_META/exit_resolved"
+}
+
+# 线路机落地地址为域名时启用看门狗，为 IP 时移除；$1=quiet 时只在失败时提示。
+ensure_exit_watchdog() {
+    local _mode="${1:-}"
+    [ "${ROLE:-}" = "relay" ] || return 0
+    if ! exit_host_is_domain "${EXIT_HOST:-}"; then
+        remove_exit_watchdog
+        return 0
+    fi
+    if ! command -v crontab >/dev/null 2>&1; then
+        echo -e "${YELLOW}! 未安装 cron：落地机域名 ${EXIT_HOST} 换 IP 后需手动重启服务，建议安装 cron 后重新部署${PLAIN}"
+        return 1
+    fi
+    write_exit_watchdog || { echo -e "${YELLOW}! DDNS 看门狗写入失败${PLAIN}"; return 1; }
+    if ! (crontab -l 2>/dev/null | grep -vF "$WATCHDOG_SCRIPT"; echo "*/2 * * * * $WATCHDOG_SCRIPT >/dev/null 2>&1") | crontab - 2>/dev/null; then
+        echo -e "${YELLOW}! DDNS 看门狗定时任务设置失败${PLAIN}"
+        return 1
+    fi
+    # 立即记录一次当前解析结果，作为后续比对基准（首次记录不会重启服务）。
+    "$WATCHDOG_SCRIPT" >/dev/null 2>&1 || true
+    [ "$_mode" = "quiet" ] || echo -e "${GREEN}✓ 已启用 DDNS 看门狗：每 2 分钟检查 ${EXIT_HOST} 的解析，家宽换 IP 后自动重连${PLAIN}"
+    return 0
 }
 
 show_bbr_status() {
@@ -3686,7 +3833,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.51${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.52${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

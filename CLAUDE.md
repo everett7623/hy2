@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.51 (2026-10-12)
+v2.0.52 (2026-10-12)
 
 ## Project overview
 
@@ -28,7 +28,7 @@ When testing local changes to `install.sh`, run it directly (`bash install.sh`) 
 - **`anytls.sh`** — Standalone shell management around sing-box >= 1.12.0 native AnyTLS inbound. Generates JSON, TLS certificates, wrapper and service files without Python.
 - **`vless.sh`** — Standalone shell management around sing-box >= 1.12.0 native VLESS inbound with TCP, REALITY, and `xtls-rprx-vision`. Generates UUID, REALITY key pair, short ID, JSON, wrapper and service files without Python.
 - **`proxy.sh`** — Standalone shell management around sing-box >= 1.12.0 native `mixed` inbound (HTTP + SOCKS5 on one port). Generates JSON with username/password users, optional `bind_interface` direct outbound, wrapper and service files without Python. Intended as an independent protocol for residential IP / streaming-friendly egress.
-- **`landing.sh`** — Relay + landing ("线路机 + 落地机 / 家宽机") node scheme on sing-box >= 1.12.0. The relay runs a VLESS REALITY inbound whose route `final` is a userspace WireGuard endpoint (`system: false`) to the landing machine; the landing machine runs a WireGuard endpoint inbound with a `direct` outbound. No kernel WireGuard, `ip_forward`, iptables NAT or system route changes on either side. Run only on the relay: it SSHes (OpenSSH ControlMaster, password read by ssh itself) into the landing machine, uploads itself and runs `--remote-exit-install|commit|abort|uninstall|upgrade|status`. The landing side keeps a pending rollback until the relay has verified the egress IP through a loopback-only authenticated `mixed` probe inbound. One service `landing-server`; the role is stored as `ROLE=relay|exit` in `landing-meta/config.env`.
+- **`landing.sh`** — Relay + landing ("线路机 + 落地机 / 家宽机") node scheme on sing-box >= 1.12.0. The relay runs a VLESS REALITY inbound whose traffic (plus the loopback probe inbound) is explicitly routed to a userspace WireGuard endpoint (`system: false`) to the landing machine, with route `final` = `direct`. Never add `"detour": "direct"` to dial fields: the `direct` outbound has no options, and sing-box fails such dials at runtime with "detour to an empty direct outbound" while `sing-box check` still passes. When the landing address is a hostname, a cron watchdog (`/usr/local/bin/landing-watchdog.sh`, every 2 min) restarts the relay on DNS change, because sing-box resolves WireGuard peer hostnames only at startup; the landing machine runs a WireGuard endpoint inbound with a `direct` outbound. No kernel WireGuard, `ip_forward`, iptables NAT or system route changes on either side. Run only on the relay: it SSHes (OpenSSH ControlMaster, password read by ssh itself) into the landing machine, uploads itself and runs `--remote-exit-install|commit|abort|uninstall|upgrade|status`. The landing side keeps a pending rollback until the relay has verified the egress IP through a loopback-only authenticated `mixed` probe inbound. One service `landing-server`; the role is stored as `ROLE=relay|exit` in `landing-meta/config.env`.
 - **`euservhy2.sh`** — Standalone EUserv IPv6-only script. Does NOT share code with hy2.sh.
 
 ## `install.sh` references
@@ -115,7 +115,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.51" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.52" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation
@@ -315,6 +315,7 @@ Each protocol script generates different client config formats. Use the protocol
 | Landing relay metadata | `/etc/sing-box/landing-meta/` |
 | Landing pending rollback (exit side) | `/etc/sing-box/landing-pending/` |
 | Landing auto-update script | `/usr/local/bin/landing-autoupdate.sh` |
+| Landing DDNS watchdog (relay, hostname exits only) | `/usr/local/bin/landing-watchdog.sh` (state `landing-meta/exit_resolved`, log `/var/log/landing-watchdog.log`) |
 | Landing systemd / OpenRC service | `/etc/systemd/system/landing-server.service` / `/etc/init.d/landing-server` |
 | Shared sing-box ownership marker | `/etc/sing-box/.singbox-tools-managed` |
 | Hysteria 2 auto-update script | `/usr/local/bin/hy2-autoupdate.sh` |
