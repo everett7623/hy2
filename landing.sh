@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.49
+# 版本：v2.0.50
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -2675,8 +2675,19 @@ configure_relay_vless() {
 
 prompt_exit_target() {
     local _input _default_host="${EXIT_HOST:-}" _default_port="${SSH_PORT:-22}" _default_user="${SSH_USER:-root}"
+    local _exit_net="A"
     echo -e "\n${SKYBLUE}--- 落地机（家宽机）信息 ---${PLAIN}"
-    echo -e "${DIM}落地机需要：能 SSH 登录、有公网 IPv4 出口、可放行一个 UDP 端口。${PLAIN}"
+    echo -e "${DIM}落地机需要：能 SSH 登录、有公网 IPv4 出口、线路机能打到它的一个 UDP 端口。${PLAIN}"
+    echo -e "  [1] A：公网直达 / 云主机（面板或安全组放行 UDP）"
+    echo -e "  [2] B：真·家宽在路由器后（先在路由器做 UDP 端口转发）"
+    while true; do
+        read -r -p "落地机网络类型 [默认 1]: " _input
+        case "${_input:-1}" in
+            1) _exit_net="A"; break ;;
+            2) _exit_net="B"; break ;;
+            *) echo -e "${RED}请输入 1 或 2${PLAIN}" ;;
+        esac
+    done
     while true; do
         if [ -n "$_default_host" ]; then
             read -r -p "落地机公网 IP 或域名 [当前 ${_default_host}]: " _input
@@ -2713,23 +2724,41 @@ prompt_exit_target() {
     done
     SSH_USER="$_input"
     [ "$SSH_USER" = "root" ] || echo -e "${YELLOW}提示：非 root 用户需在落地机配置免密 sudo（sudo -n）${PLAIN}"
-    echo -e "${DIM}落地机隧道使用一个 UDP 端口。家宽机在路由器后面时，请先在路由器把该 UDP 端口转发到落地机，再在此填写。${PLAIN}"
-    while true; do
-        if validate_port "${WG_PORT:-}"; then
-            read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}，输入 0 改为随机]: " _input
-            [ -z "$_input" ] && _input="$WG_PORT"
-        else
-            read -r -p "落地机 WireGuard UDP 端口 [留空随机]: " _input
-        fi
-        case "$_input" in
-            ""|0) REQUESTED_WG_PORT=""; break ;;
-        esac
-        if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
-            REQUESTED_WG_PORT="$_input"
-            break
-        fi
-        echo -e "${RED}端口必须为 1024-65535 的整数${PLAIN}"
-    done
+    if [ "$_exit_net" = "B" ]; then
+        echo -e "${YELLOW}场景 B：请先在家宽路由器把某个 UDP 端口转发到落地机局域网 IP，再填写同一端口（不要留空随机）。${PLAIN}"
+        echo -e "${DIM}例：路由器 UDP 51820 → 192.168.1.50:51820，此处填 51820。${PLAIN}"
+        while true; do
+            if validate_port "${WG_PORT:-}"; then
+                read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}]: " _input
+                [ -z "$_input" ] && _input="$WG_PORT"
+            else
+                read -r -p "落地机 WireGuard UDP 端口（必填，与路由器转发一致）: " _input
+            fi
+            if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
+                REQUESTED_WG_PORT="$_input"
+                break
+            fi
+            echo -e "${RED}场景 B 必须填写 1024-65535 的端口，且需与路由器转发一致${PLAIN}"
+        done
+    else
+        echo -e "${DIM}场景 A：请在云面板/安全组放行下方 UDP；可留空由脚本随机并自动放行本机防火墙。${PLAIN}"
+        while true; do
+            if validate_port "${WG_PORT:-}"; then
+                read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}，输入 0 改为随机]: " _input
+                [ -z "$_input" ] && _input="$WG_PORT"
+            else
+                read -r -p "落地机 WireGuard UDP 端口 [留空随机]: " _input
+            fi
+            case "$_input" in
+                ""|0) REQUESTED_WG_PORT=""; break ;;
+            esac
+            if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
+                REQUESTED_WG_PORT="$_input"
+                break
+            fi
+            echo -e "${RED}端口必须为 1024-65535 的整数${PLAIN}"
+        done
+    fi
     read -r -p "落地机开启每周自动更新 sing-box（推荐）？[Y/n]: " _input
     case "$_input" in
         [nN]*) AUTO_UPDATE=0 ;;
@@ -2773,6 +2802,9 @@ print_deploy_intro() {
     echo -e "  ${DIM}只需在本机操作：脚本会 SSH 登录落地机自动部署，并验证出口 IP。${PLAIN}"
     echo -e "  ${DIM}只有本节点的流量从落地机出网；本机 SSH、系统更新和其他协议保持直连。${PLAIN}"
     echo -e "  ${DIM}两端均不修改系统路由、不开启 ip_forward，失败会自动回滚。${PLAIN}"
+    echo -e "  ${DIM}落地机两种常见情况均可部署（不限国家/地区）：${PLAIN}"
+    echo -e "  ${DIM}  A 公网直达/云主机：面板放行一个 UDP${PLAIN}"
+    echo -e "  ${DIM}  B 真·家宽在路由器后：路由器先做 UDP 端口转发${PLAIN}"
     echo -e "${SKYBLUE}-----------------------------------------------${PLAIN}"
 }
 
@@ -3638,7 +3670,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.49${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.50${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
