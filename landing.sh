@@ -818,7 +818,7 @@ get_native_egress_interface() {
 IPV4_PROBE_URLS="${IPV4_PROBE_URLS:-https://api.ipify.org https://1.1.1.1/cdn-cgi/trace https://checkip.amazonaws.com https://ip.gs https://ipv4.icanhazip.com}"
 IPV6_PROBE_URLS="${IPV6_PROBE_URLS:-https://api6.ipify.org https://[2606:4700:4700::1111]/cdn-cgi/trace https://ipv6.icanhazip.com}"
 # 经隧道验证出口：先用免 DNS 的字面量地址确认隧道本身，再用域名确认 DNS 路径。
-TUNNEL_IP_PROBE_URL="${TUNNEL_IP_PROBE_URL:-https://1.1.1.1/cdn-cgi/trace}"
+TUNNEL_IP_PROBE_URL="${TUNNEL_IP_PROBE_URL:-http://1.1.1.1/cdn-cgi/trace}"
 TUNNEL_DNS_PROBE_URLS="${TUNNEL_DNS_PROBE_URLS:-https://api.ipify.org https://checkip.amazonaws.com}"
 
 # 探测响应可能是纯地址，也可能是 Cloudflare trace 的 key=value 多行文本。
@@ -2195,16 +2195,9 @@ wait_for_health() {
 # 出口验证（线路机）
 # ============================================================
 probe_via_tunnel() {
-    local _url="$1" _tls_opts=()
+    local _url="$1"
     validate_port "${PROBE_PORT:-}" || return 1
-    # The IP-only probe intentionally avoids DNS, but Cloudflare's certificate
-    # is issued for its hostname rather than the literal 1.1.1.1 address.
-    # Keep normal certificate validation for all hostname probes.
-    case "$_url" in
-        https://1.1.1.1/*) _tls_opts+=(--insecure) ;;
-    esac
     curl -s --connect-timeout 5 --max-time 10 \
-        "${_tls_opts[@]}" \
         -x "socks5h://${PROBE_USER}:${PROBE_PASS}@127.0.0.1:${PROBE_PORT}" \
         "$_url" 2>/dev/null | extract_probe_ip
 }
