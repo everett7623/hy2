@@ -4,6 +4,10 @@
 
 ---
 
+## v2.0.49 (2026-10-12)
+
+- 修复家宽中转外网 TCP 通但 REALITY/延迟 `-1`：线路机 `route.final` 从 `wg-out` 改为 `direct`，仅 `vless-in` / `probe-in` 显式路由进隧道；WireGuard endpoint 增加 `detour: direct`。此前默认 final 过宽，伪装站握手仍可能走家宽失败。诊断/升级会自动改写已部署配置。
+
 ## v2.0.48 (2026-10-12)
 
 - `install.sh` 把「家宽 / 落地中转」并入安装、节点信息、导出、二维码的协议选择列表，排在 HTTP/SOCKS 之后、EUserv 之前为 `[6]`（部分导出格式隐藏 HTTP/SOCKS 时为 `[5]`）。

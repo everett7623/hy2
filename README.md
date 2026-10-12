@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.48（2026-10-12） · 本次更新：家宽中转并入安装/节点/导出协议列表为 `[6]`，卸载中心同步为 `[6]`。
+> 当前版本：v2.0.49（2026-10-12） · 本次更新：修复家宽中转线路机默认路由过宽导致 REALITY 握手失败（延迟 -1）。
 
 ## 目录
 

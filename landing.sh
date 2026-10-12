@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.48
+# 版本：v2.0.49
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1551,9 +1551,9 @@ install_config_file() {
 
 # 线路机：VLESS REALITY 入站 + 本机探测入口，业务出站经 WireGuard 进入落地机。
 # 域名先经隧道交给落地机解析，再以 IP 进入隧道，CDN 就近解析与家宽出口保持一致。
-# REALITY 握手必须从线路机直连伪装站：route.final 是 wg-out，若不设 handshake.detour，
-# 握手会经家宽出去。落地机往往访问不了安装时在线路机上探测通过的 SNI，
-# 客户端就会连不上，但本机 mixed 探测仍显示隧道正常。
+# route.final 必须是 direct：只有 vless-in / probe-in 显式走 wg-out。
+# 若 final=wg-out，REALITY 握手与 WireGuard 自身拨号也可能被卷进隧道；
+# 落地机常访问不了伪装站，外网表现为 TCP 通但 TLS/延迟 -1，而本机探测仍可能绿。
 write_relay_config() {
     local _tmp _reality_strategy _local_strategy _exit_strategy
     _reality_strategy=$(reality_domain_strategy)
@@ -1637,7 +1637,8 @@ write_relay_config() {
           "allowed_ips": ["0.0.0.0/0", "::/0"],
           "persistent_keepalive_interval": ${WG_KEEPALIVE}
         }
-      ]
+      ],
+      "detour": "direct"
     }
   ],
   "outbounds": [
@@ -1646,9 +1647,10 @@ write_relay_config() {
   "route": {
     "rules": [
       { "inbound": ["vless-in", "probe-in"], "action": "resolve", "server": "exit-dns", "strategy": "${_exit_strategy}" },
-      { "ip_is_private": true, "action": "reject" }
+      { "ip_is_private": true, "action": "reject" },
+      { "inbound": ["vless-in", "probe-in"], "action": "route", "outbound": "wg-out" }
     ],
-    "final": "wg-out",
+    "final": "direct",
     "default_domain_resolver": { "server": "local", "strategy": "${_local_strategy}" }
   }
 }
@@ -3091,19 +3093,22 @@ show_config() {
 # ============================================================
 # 诊断
 # ============================================================
-# 已部署节点升级脚本后，把 REALITY 握手改回线路机直连，无需整段重装。
+# 已部署线路机：把路由默认改回 direct，并保证 REALITY 握手 / WG 拨号不经家宽。
 ensure_reality_handshake_direct() {
-    local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0
+    local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0
     [ -f "$LANDING_CONFIG" ] || return 0
     [ "${ROLE:-}" = "relay" ] || [ "$(installed_role 2>/dev/null)" = "relay" ] || return 0
     grep -q '"handshake"' "$LANDING_CONFIG" || return 0
-    grep -q '"detour": "direct"' "$LANDING_CONFIG" && return 0
+    grep -q '"final": "wg-out"' "$LANDING_CONFIG" && _need=1
+    grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG" || _need=1
+    grep -q '"detour": "direct"' "$LANDING_CONFIG" || _need=1
+    [ "$_need" = "1" ] || return 0
     read_config >/dev/null 2>&1 || return 1
-    echo -e "${YELLOW}正在把 REALITY 握手改为线路机直连（不再经家宽隧道）...${PLAIN}"
+    echo -e "${YELLOW}正在修复线路机路由：默认直连，仅业务入站走家宽隧道...${PLAIN}"
     cp -p "$LANDING_CONFIG" "$_bak" || return 1
     if ! write_config || ! check_config; then
         mv -f "$_bak" "$LANDING_CONFIG"
-        echo -e "${RED}握手直连修复失败，已恢复原配置。备份仍在: ${_bak}${PLAIN}"
+        echo -e "${RED}路由修复失败，已恢复原配置。备份仍在: ${_bak}${PLAIN}"
         return 1
     fi
     service_is_active && _was_active=1 || true
@@ -3111,12 +3116,12 @@ ensure_reality_handshake_direct() {
         if ! service_restart || ! wait_for_health; then
             mv -f "$_bak" "$LANDING_CONFIG"
             service_restart || true
-            echo -e "${RED}握手直连修复后服务异常，已回滚。备份仍在: ${_bak}${PLAIN}"
+            echo -e "${RED}路由修复后服务异常，已回滚。备份仍在: ${_bak}${PLAIN}"
             return 1
         fi
     fi
     rm -f "$_bak"
-    echo -e "${GREEN}✓ REALITY 握手已改为线路机直连${PLAIN}"
+    echo -e "${GREEN}✓ 线路机路由已修复（final=direct，业务走 wg-out）${PLAIN}"
     return 0
 }
 
@@ -3633,7 +3638,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.48${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.49${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

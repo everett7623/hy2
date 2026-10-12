@@ -227,18 +227,24 @@ grep -q '"persistent_keepalive_interval": 25' "$LANDING_CONFIG"
 grep -q '"server": "10.233.0.1", "detour": "wg-out"' "$LANDING_CONFIG"
 grep -A8 '"handshake"' "$LANDING_CONFIG" | grep -q '"detour": "direct"'
 grep -q '"action": "resolve", "server": "exit-dns", "strategy": "ipv4_only"' "$LANDING_CONFIG"
-grep -q '"final": "wg-out"' "$LANDING_CONFIG"
+grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG"
+grep -q '"final": "direct"' "$LANDING_CONFIG"
+grep -q '"detour": "direct"' "$LANDING_CONFIG"
+! grep -q '"final": "wg-out"' "$LANDING_CONFIG"
 grep -q '"default_domain_resolver": { "server": "local", "strategy": "prefer_ipv4" }' "$LANDING_CONFIG"
 ! grep -q '"listen_port": 47821' "$LANDING_CONFIG"
 
-# 旧线路机配置缺少 handshake.detour 时，诊断/升级应写回直连，避免 REALITY 握手走家宽。
-awk '!/"detour": "direct",/' "$LANDING_CONFIG" > "$LANDING_CONFIG.stripped" && mv "$LANDING_CONFIG.stripped" "$LANDING_CONFIG"
-! grep -A8 '"handshake"' "$LANDING_CONFIG" | grep -q '"detour": "direct"'
+# 旧线路机 final=wg-out 时，诊断/升级应改写为 final=direct + 入站显式走 wg-out。
+cp "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+awk '{gsub(/"final": "direct"/, "\"final\": \"wg-out\"")}1' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
+grep -q '"final": "wg-out"' "$LANDING_CONFIG"
 service_is_active() { return 1; }
 ensure_reality_handshake_direct >/dev/null
+grep -q '"final": "direct"' "$LANDING_CONFIG"
+grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG"
 grep -A8 '"handshake"' "$LANDING_CONFIG" | grep -q '"detour": "direct"'
 unset -f service_is_active
-rm -f "${LANDING_CONFIG}.handshake.bak"
+rm -f "${LANDING_CONFIG}.handshake.bak" "$LANDING_CONFIG.good"
 ! grep -q 'bind_interface' "$LANDING_CONFIG"
 if [ -n "${REAL_SING_BOX_BIN:-}" ]; then
     "$REAL_SING_BOX_BIN" check -c "$LANDING_CONFIG"
