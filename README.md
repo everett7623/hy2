@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.47（2026-10-12） · 本次更新：修复家宽中转 REALITY 握手误走落地机导致客户端连不上。
+> 当前版本：v2.0.48（2026-10-12） · 本次更新：家宽中转并入安装/节点/导出协议列表为 `[6]`，卸载中心同步为 `[6]`。
 
 ## 目录
 
@@ -132,7 +132,7 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 客户端 ──VLESS REALITY──▶ 线路机 ══WireGuard（UDP）══▶ 落地机 / 家宽机 ──▶ 互联网
 ```
 
-使用方法：在**线路机**上运行 `sb` → `[5] 家宽 / 落地中转` → `1. 一键部署`，按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
+使用方法：在**线路机**上运行 `sb` → `[1] 安装 / 重装协议` → `[6] 家宽 / 落地中转` → `1. 一键部署`，按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
 
 1. 在线路机生成 VLESS REALITY 节点参数与 WireGuard 密钥；
 2. 经 SSH 在落地机安装 sing-box 并启动 WireGuard 落地端（UDP 端口可指定，留空随机，自动放行本机防火墙）；

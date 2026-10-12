@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.47 (2026-10-12)
+v2.0.48 (2026-10-12)
 
 ## Project overview
 
@@ -33,7 +33,7 @@ When testing local changes to `install.sh`, run it directly (`bash install.sh`) 
 
 ## `install.sh` references
 
-`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`, `landing.sh`, and `euservhy2.sh` on the GitHub `main` branch. `landing.sh` is reached from main-menu `[5]` (its own menu), service management `[10]`, update centre `[9]` and uninstall centre `[10]`; it is intentionally not part of `select_protocol_and_run` or the batch upgrade/uninstall loops because its upgrade/uninstall can prompt for the landing machine's SSH password.
+`install.sh` points to `hy2.sh`, `ss.sh`, `anytls.sh`, `vless.sh`, `proxy.sh`, `landing.sh`, and `euservhy2.sh` on the GitHub `main` branch. `landing.sh` is reached from `select_protocol_and_run` as `[6]` (or `[5]` when HTTP/SOCKS is hidden for some export formats), service management `[10]`, update centre `[9]` and uninstall centre `[6]`; it is intentionally not part of the batch upgrade/uninstall loops because its upgrade/uninstall can prompt for the landing machine's SSH password.
 
 `install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2.sh`) rather than going through `install.sh`.
 
@@ -115,7 +115,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.47" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.48" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation
