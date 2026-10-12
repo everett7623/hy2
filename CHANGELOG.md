@@ -4,6 +4,14 @@
 
 ---
 
+## v2.0.53 (2026-10-12)
+
+- 家宽中转新增并默认使用「落地机主动连接线路机」（reverse）：线路机监听一个 UDP 并自动放行本机防火墙，落地机只需出站 UDP，不再需要在落地机面板放行端口或在家里路由器做端口转发；落地机重启或家宽换 IP 后由 WireGuard 自动恢复，无需 DDNS 与看门狗。实测 sing-box 1.12.0 / 1.13.14 两个方向均可建立隧道。
+- 原「线路机拨号落地机」保留为选项 2（A 云主机）/ 3（B 路由器后），线路机是 NAT 机或未确认公网 IPv4 时自动改用；旧部署元数据没有 `WG_MODE` 时按原方式读取，行为不变。
+- 修复部署失败时展示的 WireGuard 报错其实是以前几次部署的旧日志（`journalctl -u` 历史尾部）：现在按本次服务的 InvocationID 取日志，过滤探测超时的 `context canceled` 噪音；日志为空时提示握手包被防火墙拦截，`no known endpoint for peer` 时提示落地机从未连上。
+- 落地机确认生效时关闭被替换掉的旧 UDP 监听端口（改为 reverse 或换端口），线路机重新对接时同样关闭旧的 UDP 端口。
+- 诊断：reverse 线路机检查 UDP 监听，并在本机公网 IP 变化时提示重新部署。
+
 ## v2.0.52 (2026-10-12)
 
 - 修复家宽中转隧道永远无法握手、一键部署总在「出口验证失败」后回滚的问题：v2.0.47 / v2.0.49 给 REALITY 握手和 WireGuard 端点加了 `"detour": "direct"`，而 `direct` 出站没有任何拨号选项，sing-box（1.12 / 1.13 实测）会在拨号时报 `detour to an empty direct outbound makes no sense`，`sing-box check` 却不报错。现已去掉该字段（dial 字段不经路由，本来就是直连）。

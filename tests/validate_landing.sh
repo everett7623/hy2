@@ -261,14 +261,21 @@ cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 unset -f service_is_active
 rm -f "${LANDING_CONFIG}.handshake.bak" "$LANDING_CONFIG.good"
 # --- 隧道失败时展示线路机日志里的 WireGuard 报错（去掉颜色码） ---
-service_logs() { printf '\033[31mERROR\033[0m endpoint/wireguard[wg-out]: peer(abc) - failed to send handshake initiation: detour to an empty direct outbound makes no sense\nINFO inbound/vless[vless-in]: started\n'; }
+# 只看本次运行：探测超时被取消的连接（context canceled）是噪音，不能当成原因展示。
+service_logs_current() { printf '\033[31mERROR\033[0m endpoint/wireguard[wg-out]: peer(abc) - failed to send handshake initiation: detour to an empty direct outbound makes no sense\nINFO inbound/vless[vless-in]: started\nERROR connection: open connection to 1.1.1.1:443 using outbound/wireguard[wg-out]: context canceled\n'; }
 _out=$(show_tunnel_errors)
 printf '%s\n' "$_out" | grep -q 'failed to send handshake initiation: detour to an empty direct outbound'
 ! printf '%s\n' "$_out" | grep -q 'vless-in'
+! printf '%s\n' "$_out" | grep -q 'context canceled'
 ! printf '%s\n' "$_out" | grep -q "$(printf '\033')"
-service_logs() { echo "暂无日志"; }
-[ -z "$(show_tunnel_errors)" ]
-unset -f service_logs
+service_logs_current() { echo 'ERROR endpoint/wireguard[wg-out]: peer(x) - failed to send handshake initiation: no known endpoint for peer'; }
+show_tunnel_errors | grep -q '落地机一直没有连上本机'
+service_logs_current() { echo "暂无日志"; }
+show_tunnel_errors | grep -q '握手包被防火墙'
+unset -f service_logs_current
+# systemd 下按 InvocationID 取本次运行的日志，而不是 journalctl -u 的历史尾部。
+grep -q '_SYSTEMD_INVOCATION_ID=' landing.sh
+grep -q 'systemctl show -p InvocationID --value landing-server' landing.sh
 
 # --- DDNS 看门狗：sing-box 只在启动时解析一次落地机域名，家宽换 IP 后必须重启才能重连 ---
 exit_host_is_domain home.example.com
@@ -365,6 +372,88 @@ sed -i 's/^EXIT_HOST=.*/EXIT_HOST=-oProxyCommand=id/' "$LANDING_META/config.env"
 ! read_config
 cp "$tmp/relay-meta.bak" "$LANDING_META/config.env"
 read_config
+
+# --- reverse 模式：落地机主动拨号线路机，落地机无需入站端口 ---
+_saved_fns=$(declare -f tcp_port_is_listening udp_port_is_listening service_is_active close_ports 2>/dev/null || true)
+restore_fns() { unset -f tcp_port_is_listening udp_port_is_listening service_is_active close_ports; eval "$_saved_fns"; }
+cp "$LANDING_CONFIG" "$tmp/fwd-relay.json"; cp "$LANDING_META/config.env" "$tmp/fwd-relay.env"
+WG_MODE=reverse; RELAY_HOST=192.0.2.10; WG_PORT=52011
+write_config
+grep -q '"listen_port": 52011' "$LANDING_CONFIG"
+! grep -q '"address": "home.example.com"' "$LANDING_CONFIG"
+! grep -q '"persistent_keepalive_interval"' "$LANDING_CONFIG"
+grep -q '"allowed_ips": \["0.0.0.0/0", "::/0"\]' "$LANDING_CONFIG"
+! grep -q '"detour": "direct"' "$LANDING_CONFIG"
+if [ -n "${REAL_SING_BOX_BIN:-}" ]; then "$REAL_SING_BOX_BIN" check -c "$LANDING_CONFIG"; fi
+write_meta
+reset_config_vars; read_config
+[ "$WG_MODE" = reverse ] && [ "$RELAY_HOST" = 192.0.2.10 ] && [ "$WG_PORT" = 52011 ]
+# reverse 线路机健康检查还要求 UDP 端口在监听
+tcp_port_is_listening() { return 0; }
+udp_port_is_listening() { [ "$1" = 52011 ]; }
+service_is_active() { return 0; }
+service_is_healthy
+udp_port_is_listening() { return 1; }
+! service_is_healthy
+# 关闭端口时 reverse 线路机要同时关闭 TCP 节点端口与 UDP 隧道端口
+_closed=""
+close_ports() { _closed="${_closed}${1}/${2} "; }
+close_role_ports
+[ "$_closed" = "34567/tcp 52011/udp " ]
+# 看门狗只服务 forward 模式；reverse 下必须移除
+WATCHDOG_SCRIPT="$tmp/landing-watchdog.sh"; CRONTAB_FILE="$tmp/crontab"
+crontab() { if [ "${1:-}" = "-l" ]; then cat "$CRONTAB_FILE" 2>/dev/null; else cat > "$CRONTAB_FILE"; fi; }
+printf '*/2 * * * * %s >/dev/null 2>&1\n' "$WATCHDOG_SCRIPT" > "$CRONTAB_FILE"; : > "$WATCHDOG_SCRIPT"
+EXIT_HOST=home.example.com ensure_exit_watchdog quiet
+[ ! -e "$WATCHDOG_SCRIPT" ]
+! grep -qF "$WATCHDOG_SCRIPT" "$CRONTAB_FILE"
+unset -f crontab
+restore_fns
+
+# 落地机 reverse：不监听端口，peer 指向线路机并保持心跳
+reset_config_vars
+ROLE=exit; WG_MODE=reverse; RELAY_HOST=192.0.2.10; WG_PORT=52011
+WG_PRIVATE_KEY="$TEST_WG_PRIV_B"; WG_PUBLIC_KEY="$TEST_WG_PUB_B"
+WG_PEER_PUBLIC_KEY="$TEST_WG_PUB_A"; WG_PSK="$TEST_WG_PSK"; EXIT_IPV4=198.51.100.7; EXIT_HAS_IPV6=0
+LANDING_CONFIG="$tmp/exit-rev.json"
+write_exit_config
+! grep -q '"listen_port"' "$LANDING_CONFIG"
+grep -q '"address": "192.0.2.10"' "$LANDING_CONFIG"
+grep -q '"port": 52011' "$LANDING_CONFIG"
+grep -q '"persistent_keepalive_interval": 25' "$LANDING_CONFIG"
+grep -q '"allowed_ips": \["10.233.0.2/32", "fdcc:233::2/128"\]' "$LANDING_CONFIG"
+if [ -n "${REAL_SING_BOX_BIN:-}" ]; then "$REAL_SING_BOX_BIN" check -c "$LANDING_CONFIG"; fi
+service_is_active() { return 0; }
+udp_port_is_listening() { return 1; }
+service_is_healthy
+restore_fns
+LANDING_CONFIG="$LANDING_DIR/landing.json"
+
+# 对接参数：reverse 必须带合法端口与线路机 IP
+printf 'RELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nWG_PORT=52011\nWG_MODE=reverse\nRELAY_HOST=192.0.2.10\n' "$TEST_WG_PUB_A" "$TEST_WG_PSK" > "$stage/params"
+read_remote_params "$stage"
+[ "$REMOTE_PARAM_WG_MODE" = reverse ] && [ "$REMOTE_PARAM_RELAY_HOST" = 192.0.2.10 ]
+printf 'RELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nWG_PORT=52011\nWG_MODE=reverse\nRELAY_HOST=evil;id\n' "$TEST_WG_PUB_A" "$TEST_WG_PSK" > "$stage/params"
+! read_remote_params "$stage"
+printf 'RELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nWG_MODE=reverse\nRELAY_HOST=192.0.2.10\n' "$TEST_WG_PUB_A" "$TEST_WG_PSK" > "$stage/params"
+! read_remote_params "$stage"
+printf 'RELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nWG_MODE=sideways\n' "$TEST_WG_PUB_A" "$TEST_WG_PSK" > "$stage/params"
+! read_remote_params "$stage"
+_params=$(WG_PUBLIC_KEY="$TEST_WG_PUB_A" WG_PSK="$TEST_WG_PSK" AUTO_UPDATE=1 REQUESTED_WG_PORT=52011 WG_MODE=reverse RELAY_HOST=192.0.2.10 write_remote_params)
+grep -qx 'WG_MODE=reverse' "$_params" && grep -qx 'RELAY_HOST=192.0.2.10' "$_params"
+rm -f "$_params"
+
+# 旧版本元数据没有 WG_MODE 时按 forward 读取，原部署行为不变
+cp "$tmp/fwd-relay.json" "$LANDING_DIR/landing.json"
+grep -v '^WG_MODE=\|^RELAY_HOST=' "$tmp/fwd-relay.env" > "$LANDING_META/config.env"
+reset_config_vars; read_config
+[ "$WG_MODE" = forward ] && [ "$WG_PORT" = 47821 ] && [ "$EXIT_HOST" = home.example.com ]
+write_config
+grep -q '"address": "home.example.com"' "$LANDING_CONFIG"
+grep -q '"port": 47821' "$LANDING_CONFIG"
+! grep -q '"listen_port"' "$LANDING_CONFIG"
+cmp -s "$LANDING_CONFIG" "$tmp/fwd-relay.json"
+write_meta
 
 # --- 客户端导出 ---
 _uri=$(render_uri 192.0.2.10 34567 "$UUID" 'test node')

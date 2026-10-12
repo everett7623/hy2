@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.52
+# 版本：v2.0.53
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -138,6 +138,10 @@ WG_PUBLIC_KEY=""
 WG_PEER_PUBLIC_KEY=""
 WG_PSK=""
 WG_PORT=""
+# 隧道方向：forward = 线路机拨号落地机（落地机需放行 / 转发 UDP）；
+# reverse = 落地机主动拨号线路机（落地机无需入站端口，家宽换 IP 自动重连）。
+WG_MODE="forward"
+RELAY_HOST=""
 EXIT_HOST=""
 EXIT_IPV4=""
 EXIT_HAS_IPV6=0
@@ -170,6 +174,8 @@ REMOTE_PARAM_PUBLIC_KEY=""
 REMOTE_PARAM_PSK=""
 REMOTE_PARAM_AUTO_UPDATE=1
 REMOTE_PARAM_WG_PORT=""
+REMOTE_PARAM_WG_MODE="forward"
+REMOTE_PARAM_RELAY_HOST=""
 REQUESTED_WG_PORT=""
 
 
@@ -1144,6 +1150,15 @@ role_proto() {
     esac
 }
 
+# 关闭本角色放行过的端口；reverse 模式的线路机还额外监听一个 UDP 端口。
+# close_ports 只处理本脚本留下标记的规则，不会误删他人放行的端口。
+close_role_ports() {
+    close_ports "$(role_port)" "$(role_proto)"
+    if [ "$ROLE" = "relay" ] && [ "${WG_MODE:-forward}" = "reverse" ]; then
+        close_ports "${WG_PORT:-}" udp
+    fi
+}
+
 # ============================================================
 # 二进制下载 / 校验
 # ============================================================
@@ -1570,6 +1585,19 @@ write_relay_config() {
     else
         _exit_strategy="ipv4_only"
     fi
+    # reverse：线路机固定监听 UDP，peer 不写地址，由落地机握手后自动学习（WireGuard roaming）。
+    # 心跳由落地机发送即可（还能维持家宽 NAT 映射）；线路机此时不知道对端地址，发心跳只会刷错误日志。
+    local _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
+    if [ "${WG_MODE:-forward}" = "reverse" ]; then
+        _wg_listen="
+      \"listen_port\": ${WG_PORT},"
+    else
+        _wg_peer_dest="
+          \"address\": \"${EXIT_HOST}\",
+          \"port\": ${WG_PORT},"
+        _wg_keepalive=",
+          \"persistent_keepalive_interval\": ${WG_KEEPALIVE}"
+    fi
     mkdir -p "$LANDING_DIR" || return 1
     _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
     if ! cat > "$_tmp" <<CFG
@@ -1630,15 +1658,12 @@ write_relay_config() {
       "system": false,
       "mtu": ${WG_MTU},
       "address": ["${WG_RELAY_ADDR4}", "${WG_RELAY_ADDR6}"],
-      "private_key": "${WG_PRIVATE_KEY}",
+      "private_key": "${WG_PRIVATE_KEY}",${_wg_listen}
       "peers": [
-        {
-          "address": "${EXIT_HOST}",
-          "port": ${WG_PORT},
+        {${_wg_peer_dest}
           "public_key": "${WG_PEER_PUBLIC_KEY}",
           "pre_shared_key": "${WG_PSK}",
-          "allowed_ips": ["0.0.0.0/0", "::/0"],
-          "persistent_keepalive_interval": ${WG_KEEPALIVE}
+          "allowed_ips": ["0.0.0.0/0", "::/0"]${_wg_keepalive}
         }
       ]
     }
@@ -1667,7 +1692,18 @@ CFG
 # 落地机：WireGuard 入站只接受线路机的隧道地址；DNS 交给本机系统解析器，
 # 私网与本机回环目标一律拒绝，避免线路机经隧道访问家宽内网或落地机本地服务。
 write_exit_config() {
-    local _tmp
+    local _tmp _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
+    if [ "${WG_MODE:-forward}" = "reverse" ]; then
+        # 落地机主动拨号线路机并保持心跳：家宽 NAT 后无需端口转发，换 IP 后线路机自动跟随。
+        _wg_peer_dest="
+          \"address\": \"${RELAY_HOST}\",
+          \"port\": ${WG_PORT},"
+        _wg_keepalive=",
+          \"persistent_keepalive_interval\": ${WG_KEEPALIVE}"
+    else
+        _wg_listen="
+      \"listen_port\": ${WG_PORT},"
+    fi
     mkdir -p "$LANDING_DIR" || return 1
     _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
     if ! cat > "$_tmp" <<CFG
@@ -1685,13 +1721,12 @@ write_exit_config() {
       "system": false,
       "mtu": ${WG_MTU},
       "address": ["${WG_EXIT_ADDR4}", "${WG_EXIT_ADDR6}"],
-      "private_key": "${WG_PRIVATE_KEY}",
-      "listen_port": ${WG_PORT},
+      "private_key": "${WG_PRIVATE_KEY}",${_wg_listen}
       "peers": [
-        {
+        {${_wg_peer_dest}
           "public_key": "${WG_PEER_PUBLIC_KEY}",
           "pre_shared_key": "${WG_PSK}",
-          "allowed_ips": ["${WG_RELAY_ADDR4}", "${WG_RELAY_ADDR6}"]
+          "allowed_ips": ["${WG_RELAY_ADDR4}", "${WG_RELAY_ADDR6}"]${_wg_keepalive}
         }
       ]
     }
@@ -1747,6 +1782,8 @@ WG_PUBLIC_KEY=${WG_PUBLIC_KEY}
 WG_PEER_PUBLIC_KEY=${WG_PEER_PUBLIC_KEY}
 WG_PSK=${WG_PSK}
 WG_PORT=${WG_PORT}
+WG_MODE=${WG_MODE}
+RELAY_HOST=${RELAY_HOST}
 EXIT_HOST=${EXIT_HOST}
 EXIT_IPV4=${EXIT_IPV4}
 EXIT_HAS_IPV6=${EXIT_HAS_IPV6}
@@ -1775,6 +1812,7 @@ reset_config_vars() {
     ROLE=""; LISTEN_PORT=""; EXT_PORT=""; UUID=""; REALITY_PRIVATE_KEY=""; REALITY_PUBLIC_KEY=""
     SHORT_ID=""; NAT_MODE=0; BIND_FAMILY="v4"; LISTEN_HOST="::"; SERVER_NAME=""; HANDSHAKE_PORT="443"
     WG_PRIVATE_KEY=""; WG_PUBLIC_KEY=""; WG_PEER_PUBLIC_KEY=""; WG_PSK=""; WG_PORT=""
+    WG_MODE="forward"; RELAY_HOST=""
     EXIT_HOST=""; EXIT_IPV4=""; EXIT_HAS_IPV6=0; SSH_PORT="22"; SSH_USER="root"
     PROBE_PORT=""; PROBE_USER=""; PROBE_PASS=""; AUTO_UPDATE=0; MANAGED_SING_BOX=0; CONFIG_SCHEMA=0
 }
@@ -1809,6 +1847,8 @@ load_meta_file() {
             WG_PEER_PUBLIC_KEY) WG_PEER_PUBLIC_KEY="$_value" ;;
             WG_PSK) WG_PSK="$_value" ;;
             WG_PORT) WG_PORT="$_value" ;;
+            WG_MODE) WG_MODE="$_value" ;;
+            RELAY_HOST) RELAY_HOST="$_value" ;;
             EXIT_HOST) EXIT_HOST="$_value" ;;
             EXIT_IPV4) EXIT_IPV4="$_value" ;;
             EXIT_HAS_IPV6) EXIT_HAS_IPV6="$_value" ;;
@@ -1833,6 +1873,16 @@ validate_wg_meta() {
     validate_port "$WG_PORT" || return 1
     [ -z "$EXIT_IPV4" ] || is_valid_ipv4 "$EXIT_IPV4" || return 1
     case "$EXIT_HAS_IPV6" in 0|1) ;; *) return 1 ;; esac
+    # 旧版本元数据没有 WG_MODE，按原有的 forward 处理。
+    case "${WG_MODE:-}" in
+        ""|forward) WG_MODE="forward" ;;
+        reverse)
+            if [ "$ROLE" = "exit" ]; then
+                is_valid_ipv4 "$RELAY_HOST" || is_valid_ipv6 "$RELAY_HOST" || return 1
+            fi
+            ;;
+        *) return 1 ;;
+    esac
     return 0
 }
 
@@ -1956,7 +2006,7 @@ restore_current_install() {
         [ -f "$_marker" ] || continue
         rm -f "$LANDING_META/firewall/$(basename "$_marker")"
     done
-    close_ports "$(role_port)" "$(role_proto)"
+    close_role_ports
     rm -f "$LANDING_CONFIG" "$LANDING_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
     rm -f "$SING_BOX_MANAGED_MARKER"
     rm -rf "$LANDING_META"
@@ -1988,10 +2038,18 @@ restore_current_install() {
 }
 
 close_replaced_install_port() {
-    local _old_port="" _old_role=""
+    local _old_port="" _old_role="" _old_mode="" _old_wg=""
     [ -f "$INSTALL_BACKUP_DIR/meta/config.env" ] || return 0
     _old_role=$(awk -F= '$1 == "ROLE" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
     [ "$_old_role" = "$ROLE" ] || return 0
+    if [ "$ROLE" = "relay" ]; then
+        _old_mode=$(awk -F= '$1 == "WG_MODE" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
+        _old_wg=$(awk -F= '$1 == "WG_PORT" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
+        if [ "$_old_mode" = "reverse" ] && validate_port "$_old_wg" && \
+            { [ "${WG_MODE:-forward}" != "reverse" ] || [ "$_old_wg" != "$WG_PORT" ]; }; then
+            close_ports "$_old_wg" udp
+        fi
+    fi
     case "$ROLE" in
         exit) _old_port=$(awk -F= '$1 == "WG_PORT" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env") ;;
         *) _old_port=$(awk -F= '$1 == "LISTEN_PORT" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env") ;;
@@ -2172,12 +2230,17 @@ service_is_healthy() {
     service_is_active || return 1
     case "$ROLE" in
         exit)
+            # reverse 模式落地机只主动拨出，不监听固定 UDP 端口。
+            [ "${WG_MODE:-forward}" = "reverse" ] && return 0
             validate_port "${WG_PORT:-}" || return 1
             udp_port_is_listening "$WG_PORT"
             ;;
         *)
             validate_port "${LISTEN_PORT:-}" || return 1
-            tcp_port_is_listening "$LISTEN_PORT"
+            tcp_port_is_listening "$LISTEN_PORT" || return 1
+            [ "${WG_MODE:-forward}" = "reverse" ] || return 0
+            validate_port "${WG_PORT:-}" || return 1
+            udp_port_is_listening "$WG_PORT"
             ;;
     esac
 }
@@ -2205,14 +2268,35 @@ probe_via_tunnel() {
 }
 
 # 隧道不通时把线路机日志里的 WireGuard 报错直接展示出来，避免只能猜“是不是防火墙”。
+# 只取本次服务运行期间的日志：journalctl -u 会带出以前几次部署的旧报错，容易误导排查。
+service_logs_current() {
+    local _inv=""
+    if [ "$INIT_SYS" = "systemd" ]; then
+        _inv=$(systemctl show -p InvocationID --value landing-server 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$_inv" ]; then
+            journalctl -q --no-pager "_SYSTEMD_INVOCATION_ID=${_inv}" 2>/dev/null
+            return 0
+        fi
+        journalctl -u landing-server -n 40 --no-pager 2>/dev/null
+        return 0
+    fi
+    tail -n 40 /var/log/landing-server.log 2>/dev/null
+}
+
 show_tunnel_errors() {
     local _esc _lines
     _esc=$(printf '\033')
-    _lines=$(service_logs 2>/dev/null | sed "s/${_esc}\[[0-9;]*m//g" \
-        | grep -iE 'wireguard|wg-out' | grep -iE 'error|fail|timeout' | tail -n 5)
-    [ -n "$_lines" ] || return 0
-    echo -e "${YELLOW}  线路机日志中的 WireGuard 报错（最近 5 条）：${PLAIN}"
+    _lines=$(service_logs_current 2>/dev/null | sed "s/${_esc}\[[0-9;]*m//g" \
+        | grep -iE 'wireguard|wg-out' | grep -iE 'error|fail|timeout' | grep -v 'context canceled' | tail -n 5)
+    if [ -z "$_lines" ]; then
+        echo -e "${DIM}  本次运行的日志中没有 WireGuard 报错：通常是握手包被防火墙 / 安全组拦截，没有到达对端。${PLAIN}"
+        return 0
+    fi
+    echo -e "${YELLOW}  线路机本次运行的 WireGuard 报错（最近 5 条）：${PLAIN}"
     printf '%s\n' "$_lines" | sed 's/^/    /'
+    if printf '%s\n' "$_lines" | grep -q 'no known endpoint for peer'; then
+        echo -e "${YELLOW}  → 落地机一直没有连上本机：请放行本机（线路机）UDP ${WG_PORT:-?} 入站，并确认落地机能出站访问 UDP${PLAIN}"
+    fi
 }
 
 # 先用免 DNS 的字面量地址确认隧道已握手，再用域名确认 DNS 路径可用；
@@ -2229,7 +2313,12 @@ verify_exit_egress() {
     done
     if [ -z "$_ip" ]; then
         echo -e "${RED}✗ 经 WireGuard 隧道访问外网失败（隧道未握手或落地机无法出网）${PLAIN}"
-        echo -e "${YELLOW}  常见原因：落地机面板 / 云防火墙未放行 UDP ${WG_PORT:-?}，或落地机地址填写错误${PLAIN}"
+        if [ "${WG_MODE:-forward}" = "reverse" ]; then
+            echo -e "${YELLOW}  常见原因：线路机商家面板 / 安全组未放行 UDP ${WG_PORT:-?}（入站），或落地机出站 UDP 被限制${PLAIN}"
+        else
+            echo -e "${YELLOW}  常见原因：落地机面板 / 云防火墙未放行 UDP ${WG_PORT:-?}，或落地机地址填写错误${PLAIN}"
+            echo -e "${YELLOW}  建议：重新部署并选择「落地机主动连接」，落地机无需放行任何端口${PLAIN}"
+        fi
         show_tunnel_errors
         return 1
     fi
@@ -2413,8 +2502,8 @@ write_remote_params() {
     local _file
     _file=$(mktemp "$(disk_tmp_dir)/landing-params.XXXXXX" 2>/dev/null) || return 1
     chmod 600 "$_file" || { rm -f "$_file"; return 1; }
-    printf 'RELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nAUTO_UPDATE=%s\nWG_PORT=%s\n' \
-        "$WG_PUBLIC_KEY" "$WG_PSK" "$AUTO_UPDATE" "$REQUESTED_WG_PORT" > "$_file" || {
+    printf 'RELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nAUTO_UPDATE=%s\nWG_PORT=%s\nWG_MODE=%s\nRELAY_HOST=%s\n' \
+        "$WG_PUBLIC_KEY" "$WG_PSK" "$AUTO_UPDATE" "$REQUESTED_WG_PORT" "${WG_MODE:-forward}" "${RELAY_HOST:-}" > "$_file" || {
         rm -f "$_file"
         return 1
     }
@@ -2427,6 +2516,8 @@ read_remote_params() {
     REMOTE_PARAM_PSK=""
     REMOTE_PARAM_AUTO_UPDATE=1
     REMOTE_PARAM_WG_PORT=""
+    REMOTE_PARAM_WG_MODE="forward"
+    REMOTE_PARAM_RELAY_HOST=""
     [ -f "$_file" ] || return 1
     while IFS= read -r _line || [ -n "$_line" ]; do
         _key="${_line%%=*}"
@@ -2436,6 +2527,8 @@ read_remote_params() {
             WG_PSK) REMOTE_PARAM_PSK="$_value" ;;
             AUTO_UPDATE) REMOTE_PARAM_AUTO_UPDATE="$_value" ;;
             WG_PORT) REMOTE_PARAM_WG_PORT="$_value" ;;
+            WG_MODE) REMOTE_PARAM_WG_MODE="$_value" ;;
+            RELAY_HOST) REMOTE_PARAM_RELAY_HOST="$_value" ;;
         esac
     done < "$_file"
     rm -f "$_file"
@@ -2443,6 +2536,14 @@ read_remote_params() {
     validate_wg_key "$REMOTE_PARAM_PSK" || return 1
     [ -z "$REMOTE_PARAM_WG_PORT" ] || validate_port "$REMOTE_PARAM_WG_PORT" || return 1
     case "$REMOTE_PARAM_AUTO_UPDATE" in 0|1) ;; *) REMOTE_PARAM_AUTO_UPDATE=1 ;; esac
+    case "$REMOTE_PARAM_WG_MODE" in
+        ""|forward) REMOTE_PARAM_WG_MODE="forward" ;;
+        reverse)
+            validate_port "$REMOTE_PARAM_WG_PORT" || return 1
+            is_valid_ipv4 "$REMOTE_PARAM_RELAY_HOST" || is_valid_ipv6 "$REMOTE_PARAM_RELAY_HOST" || return 1
+            ;;
+        *) return 1 ;;
+    esac
     return 0
 }
 
@@ -2497,7 +2598,12 @@ remote_exit_install() {
 
     ROLE="exit"
     HAS_IPV6="$EXIT_HAS_IPV6"
-    if [ -n "$REMOTE_PARAM_WG_PORT" ]; then
+    WG_MODE="$REMOTE_PARAM_WG_MODE"
+    RELAY_HOST="$REMOTE_PARAM_RELAY_HOST"
+    if [ "$WG_MODE" = "reverse" ]; then
+        # 端口属于线路机，落地机只拨出，不需要检查本机占用或放行防火墙。
+        WG_PORT="$REMOTE_PARAM_WG_PORT"
+    elif [ -n "$REMOTE_PARAM_WG_PORT" ]; then
         if [ "$REMOTE_PARAM_WG_PORT" != "$_old_port" ] && udp_port_is_listening "$REMOTE_PARAM_WG_PORT"; then
             echo -e "${RED}落地机 UDP ${REMOTE_PARAM_WG_PORT} 已被占用，请换一个端口${PLAIN}"
             restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
@@ -2522,7 +2628,10 @@ remote_exit_install() {
         echo -e "${RED}落地端配置写入或校验失败${PLAIN}"
         restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
     fi
-    if ! write_service_files || ! service_enable || ! open_ports "$WG_PORT" udp; then
+    if ! write_service_files || ! service_enable; then
+        restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
+    fi
+    if [ "$WG_MODE" != "reverse" ] && ! open_ports "$WG_PORT" udp; then
         restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
     fi
     if service_is_active; then
@@ -2539,13 +2648,27 @@ remote_exit_install() {
     if [ "$AUTO_UPDATE" = "1" ]; then
         setup_auto_update quiet || true
     fi
-    echo -e "${GREEN}✓ 落地端已启动，监听 UDP ${WG_PORT}${PLAIN}"
+    if [ "$WG_MODE" = "reverse" ]; then
+        echo -e "${GREEN}✓ 落地端已启动，主动连接线路机 ${RELAY_HOST} UDP ${WG_PORT}（落地机无需放行端口）${PLAIN}"
+    else
+        echo -e "${GREEN}✓ 落地端已启动，监听 UDP ${WG_PORT}${PLAIN}"
+    fi
     echo "LANDING_EXIT_RESULT=${WG_PUBLIC_KEY}|${WG_PORT}|${EXIT_IPV4}|${EXIT_HAS_IPV6}"
     return 0
 }
 
 remote_exit_commit() {
+    local _old_mode="" _old_port=""
     check_root
+    # 新配置已验证通过：关闭被替换掉的旧监听端口（改为 reverse 或换了端口时）。
+    if [ -f "$LANDING_PENDING_DIR/meta/config.env" ] && read_config >/dev/null 2>&1; then
+        _old_mode=$(awk -F= '$1 == "WG_MODE" { print $2; exit }' "$LANDING_PENDING_DIR/meta/config.env")
+        _old_port=$(awk -F= '$1 == "WG_PORT" { print $2; exit }' "$LANDING_PENDING_DIR/meta/config.env")
+        if [ "$_old_mode" != "reverse" ] && validate_port "$_old_port" && \
+            { [ "$WG_MODE" = "reverse" ] || [ "$_old_port" != "$WG_PORT" ]; }; then
+            close_ports "$_old_port" udp
+        fi
+    fi
     rm -rf "$LANDING_PENDING_DIR"
     echo -e "${GREEN}✓ 落地机配置已确认生效${PLAIN}"
 }
@@ -2604,10 +2727,18 @@ remote_exit_status() {
         return 1
     fi
     service_is_active && echo -e "  ${GREEN}✓ 落地端服务运行中${PLAIN}" || echo -e "  ${RED}✗ 落地端服务未运行${PLAIN}"
-    udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
+    if [ "$WG_MODE" = "reverse" ]; then
+        echo -e "  ${DIM}隧道方向：落地机主动连接线路机 ${RELAY_HOST} UDP ${WG_PORT}${PLAIN}"
+    else
+        udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
+    fi
     detect_exit_egress
     [ -n "$EXIT_IPV4" ] && echo -e "  ${GREEN}✓ 落地机出口 IPv4: ${EXIT_IPV4}${PLAIN}" || echo -e "  ${RED}✗ 落地机无法访问 IPv4 外网${PLAIN}"
-    echo -e "  ${DIM}若服务与监听正常但线路机无法握手，请在落地机面板 / 云防火墙放行 UDP ${WG_PORT}${PLAIN}"
+    if [ "$WG_MODE" = "reverse" ]; then
+        echo -e "  ${DIM}若服务正常但仍无法握手，请在线路机面板 / 安全组放行 UDP ${WG_PORT}（入站）${PLAIN}"
+    else
+        echo -e "  ${DIM}若服务与监听正常但线路机无法握手，请在落地机面板 / 云防火墙放行 UDP ${WG_PORT}${PLAIN}"
+    fi
 }
 
 # ============================================================
@@ -2619,6 +2750,7 @@ uninstall_landing_files() {
         WG_PORT=$(awk -F= '$1 == "WG_PORT" { print $2; exit }' "$LANDING_META/config.env")
         LISTEN_PORT=$(awk -F= '$1 == "LISTEN_PORT" { print $2; exit }' "$LANDING_META/config.env")
         MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$LANDING_META/config.env")
+        WG_MODE=$(awk -F= '$1 == "WG_MODE" { print $2; exit }' "$LANDING_META/config.env")
     fi
     local _managed_core=0 _other_file=""
     if [ "$MANAGED_SING_BOX" = "1" ] || [ -f "$SING_BOX_MANAGED_MARKER" ]; then
@@ -2630,7 +2762,7 @@ uninstall_landing_files() {
     fi
     service_stop
     service_disable
-    close_ports "$(role_port)" "$(role_proto)"
+    close_role_ports
     if command -v crontab >/dev/null 2>&1; then
         crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
     fi
@@ -2690,20 +2822,36 @@ configure_relay_vless() {
 
 prompt_exit_target() {
     local _input _default_host="${EXIT_HOST:-}" _default_port="${SSH_PORT:-22}" _default_user="${SSH_USER:-root}"
-    local _exit_net="A"
+    local _exit_net="R" _can_reverse=0 _default_net=1 _old_mode="${WG_MODE:-forward}"
+    # 落地机主动连接需要线路机有可直达的公网 IPv4（NAT 机的 UDP 端口映射不可控）。
+    if [ "${NAT_MODE:-0}" = "0" ] && is_valid_ipv4 "${PUBLIC_IP:-}"; then
+        _can_reverse=1
+    else
+        _default_net=2
+    fi
     echo -e "\n${SKYBLUE}--- 落地机（家宽机）信息 ---${PLAIN}"
-    echo -e "${DIM}落地机需要：能 SSH 登录、有公网 IPv4 出口、线路机能打到它的一个 UDP 端口。${PLAIN}"
-    echo -e "${DIM}家宽公网 IP 会变时，建议填写 DDNS 域名：线路机会自动跟随解析变化重连。${PLAIN}"
-    echo -e "  [1] A：公网直达 / 云主机（面板或安全组放行 UDP）"
-    echo -e "  [2] B：真·家宽在路由器后（先在路由器做 UDP 端口转发）"
+    echo -e "${DIM}落地机需要：能 SSH 登录、有公网 IPv4 出口。${PLAIN}"
+    if [ "$_can_reverse" = "1" ]; then
+        echo -e "  [1] 落地机主动连接本机（推荐）：落地机无需放行端口、无需路由器端口转发，家宽换 IP 自动重连"
+    else
+        echo -e "  ${DIM}[1] 落地机主动连接本机：本机是 NAT 机或未确认公网 IPv4，不可用${PLAIN}"
+    fi
+    echo -e "  [2] A：公网直达 / 云主机（面板或安全组放行 UDP）"
+    echo -e "  [3] B：真·家宽在路由器后（先在路由器做 UDP 端口转发）"
     while true; do
-        read -r -p "落地机网络类型 [默认 1]: " _input
-        case "${_input:-1}" in
-            1) _exit_net="A"; break ;;
-            2) _exit_net="B"; break ;;
-            *) echo -e "${RED}请输入 1 或 2${PLAIN}" ;;
+        read -r -p "落地机网络类型 [默认 ${_default_net}]: " _input
+        case "${_input:-$_default_net}" in
+            1)
+                if [ "$_can_reverse" = "1" ]; then _exit_net="R"; break; fi
+                echo -e "${RED}本机无法使用 [1]，请选择 2 或 3${PLAIN}"
+                ;;
+            2) _exit_net="A"; break ;;
+            3) _exit_net="B"; break ;;
+            *) echo -e "${RED}请输入 1、2 或 3${PLAIN}" ;;
         esac
     done
+    [ "$_exit_net" = "R" ] || \
+        echo -e "${DIM}家宽公网 IP 会变时，建议填写 DDNS 域名：线路机会自动跟随解析变化重连。${PLAIN}"
     while true; do
         if [ -n "$_default_host" ]; then
             read -r -p "落地机公网 IP 或域名 [当前 ${_default_host}]: " _input
@@ -2740,9 +2888,26 @@ prompt_exit_target() {
     done
     SSH_USER="$_input"
     [ "$SSH_USER" = "root" ] || echo -e "${YELLOW}提示：非 root 用户需在落地机配置免密 sudo（sudo -n）${PLAIN}"
-    if [ "$_exit_net" = "B" ]; then
+    if [ "$_exit_net" = "R" ]; then
+        WG_MODE="reverse"
+        RELAY_HOST="$PUBLIC_IP"
+        # 重新对接时沿用原端口，客户端与面板规则都不用变。
+        if [ "$_old_mode" = "reverse" ] && validate_port "${WG_PORT:-}"; then
+            REQUESTED_WG_PORT="$WG_PORT"
+        else
+            REQUESTED_WG_PORT=$(generate_random_port) || {
+                echo -e "${RED}无法生成随机 UDP 端口${PLAIN}"
+                return 1
+            }
+        fi
+        echo -e "${YELLOW}本机将监听 UDP ${REQUESTED_WG_PORT}，等待落地机连接；脚本会自动放行本机防火墙。${PLAIN}"
+        echo -e "${DIM}若本机（线路机）商家面板 / 安全组默认拦截入站，请同时放行 UDP ${REQUESTED_WG_PORT}；落地机无需任何操作。${PLAIN}"
+    elif [ "$_exit_net" = "B" ]; then
+        WG_MODE="forward"
+        RELAY_HOST=""
         echo -e "${YELLOW}场景 B：请先在家宽路由器把某个 UDP 端口转发到落地机局域网 IP，再填写同一端口（不要留空随机）。${PLAIN}"
         echo -e "${DIM}例：路由器 UDP 51820 → 192.168.1.50:51820，此处填 51820。${PLAIN}"
+        [ "$_old_mode" = "forward" ] || WG_PORT=""
         while true; do
             if validate_port "${WG_PORT:-}"; then
                 read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}]: " _input
@@ -2757,8 +2922,11 @@ prompt_exit_target() {
             echo -e "${RED}场景 B 必须填写 1024-65535 的端口，且需与路由器转发一致${PLAIN}"
         done
     else
+        WG_MODE="forward"
+        RELAY_HOST=""
         echo -e "${YELLOW}场景 A：云主机本机常无无防火墙，必须先在云面板/安全组放行 UDP，否则隧道必然失败（看起来像脚本 bug）。${PLAIN}"
         echo -e "${DIM}可指定端口，或留空由脚本先随机一个端口，再请你去面板放行后继续。${PLAIN}"
+        [ "$_old_mode" = "forward" ] || WG_PORT=""
         while true; do
             if validate_port "${WG_PORT:-}"; then
                 read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}，输入 0 改为随机]: " _input
@@ -2834,7 +3002,8 @@ print_deploy_intro() {
     echo -e "  ${DIM}只需在本机操作：脚本会 SSH 登录落地机自动部署，并验证出口 IP。${PLAIN}"
     echo -e "  ${DIM}只有本节点的流量从落地机出网；本机 SSH、系统更新和其他协议保持直连。${PLAIN}"
     echo -e "  ${DIM}两端均不修改系统路由、不开启 ip_forward，失败会自动回滚。${PLAIN}"
-    echo -e "  ${DIM}落地机两种常见情况均可部署（不限国家/地区）：${PLAIN}"
+    echo -e "  ${DIM}落地机三种部署方式（不限国家/地区）：${PLAIN}"
+    echo -e "  ${DIM}  1 落地机主动连接本机（推荐）：落地机无需放行端口或路由器端口转发${PLAIN}"
     echo -e "  ${DIM}  A 公网直达/云主机：面板放行一个 UDP${PLAIN}"
     echo -e "  ${DIM}  B 真·家宽在路由器后：路由器先做 UDP 端口转发${PLAIN}"
     echo -e "${SKYBLUE}-----------------------------------------------${PLAIN}"
@@ -2896,7 +3065,8 @@ deploy_landing() {
         _remote_ok=1
     fi
     rm -f "$_params"
-    if [ "$_remote_ok" = "1" ] && apply_remote_result "$REMOTE_RESULT"; then
+    if [ "$_remote_ok" = "1" ] && apply_remote_result "$REMOTE_RESULT" && \
+        { [ "$WG_MODE" != "reverse" ] || [ "$WG_PORT" = "$REQUESTED_WG_PORT" ]; }; then
         LANDING_REMOTE_COMMITTABLE=1
     elif [ "$_remote_ok" = "1" ]; then
         LANDING_REMOTE_COMMITTABLE=1
@@ -2922,6 +3092,10 @@ deploy_landing() {
     fi
     if ! open_ports "$LISTEN_PORT" tcp; then
         deploy_fail "线路机防火墙放行失败"
+        return 1
+    fi
+    if [ "$WG_MODE" = "reverse" ] && ! open_ports "$WG_PORT" udp; then
+        deploy_fail "线路机 UDP ${WG_PORT} 防火墙放行失败"
         return 1
     fi
     if service_is_active; then
@@ -2959,6 +3133,9 @@ update_exit_address() {
         echo -e "${RED}本机不是已部署的线路机${PLAIN}"; sleep 2; return 1
     fi
     _old_host="$EXIT_HOST"
+    if [ "$WG_MODE" = "reverse" ]; then
+        echo -e "${DIM}当前为「落地机主动连接」模式：家宽换 IP 后隧道会自动恢复，这里的地址只用于 SSH 管理落地机。${PLAIN}"
+    fi
     echo -e "${DIM}当前落地机地址: ${EXIT_HOST}（UDP ${WG_PORT}）${PLAIN}"
     read -r -p "新的落地机公网 IP 或域名 [留空取消]: " _input
     _input=$(trim_string "$_input")
@@ -2972,7 +3149,13 @@ update_exit_address() {
     }
     service_is_active && _was_active=1 || true
     EXIT_HOST="$_input"
-    if write_config && write_meta && check_config && service_restart && wait_for_health && verify_exit_egress 6; then
+    if [ "$WG_MODE" = "reverse" ]; then
+        if write_meta; then
+            rm -f "${LANDING_CONFIG}.bak" "$LANDING_META/config.env.bak"
+            echo -e "${GREEN}✓ 落地机 SSH 地址已更新为 ${EXIT_HOST}（隧道无需重启）${PLAIN}"
+            return 0
+        fi
+    elif write_config && write_meta && check_config && service_restart && wait_for_health && verify_exit_egress 6; then
         rm -f "${LANDING_CONFIG}.bak" "$LANDING_META/config.env.bak"
         ensure_exit_watchdog || true
         echo -e "${GREEN}✓ 落地机地址已更新为 ${EXIT_HOST}${PLAIN}"
@@ -3096,7 +3279,11 @@ show_exit_role_info() {
     echo -e "\n${GREEN}本机角色：落地机（家宽机）${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     service_is_active && echo -e "服务状态 : ${GREEN}运行中${PLAIN}" || echo -e "服务状态 : ${RED}已停止${PLAIN}"
-    echo -e "监听端口 : ${YELLOW}UDP ${WG_PORT}${PLAIN}"
+    if [ "$WG_MODE" = "reverse" ]; then
+        echo -e "隧道方向 : ${YELLOW}主动连接线路机 ${RELAY_HOST} UDP ${WG_PORT}${PLAIN}"
+    else
+        echo -e "监听端口 : ${YELLOW}UDP ${WG_PORT}${PLAIN}"
+    fi
     [ -n "$EXIT_IPV4" ] && echo -e "出口 IPv4: ${YELLOW}${EXIT_IPV4}${PLAIN}"
     echo -e "${DIM}落地机没有客户端节点；节点链接请在线路机上查看。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -3131,8 +3318,12 @@ show_config() {
         echo -e "节点端口  : ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
     echo -e "伪装 SNI  : ${YELLOW}${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
-    echo -e "落地机    : ${YELLOW}${EXIT_HOST}${PLAIN}（UDP ${WG_PORT}）"
-    if exit_host_is_domain "$EXIT_HOST"; then
+    if [ "$WG_MODE" = "reverse" ]; then
+        echo -e "落地机    : ${YELLOW}${EXIT_HOST}${PLAIN}（主动连接本机 UDP ${WG_PORT}，落地机无需放行端口）"
+    else
+        echo -e "落地机    : ${YELLOW}${EXIT_HOST}${PLAIN}（UDP ${WG_PORT}）"
+    fi
+    if [ "$WG_MODE" != "reverse" ] && exit_host_is_domain "$EXIT_HOST"; then
         if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$WATCHDOG_SCRIPT"; then
             echo -e "DDNS 看门狗: ${GREEN}已启用${PLAIN}（换 IP 后约 2 分钟内自动重连）"
         else
@@ -3201,7 +3392,7 @@ ensure_reality_handshake_direct() {
 }
 
 diagnose_landing() {
-    local _confirm
+    local _confirm _cur_ip
     echo -e "\n${GREEN}家宽中转诊断${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     if [ ! -f "$LANDING_CONFIG" ] && [ ! -f "$LANDING_META/config.env" ]; then
@@ -3236,18 +3427,33 @@ diagnose_landing() {
 
     if [ "$ROLE" = "exit" ]; then
         echo -e "  ${DIM}本机角色: 落地机${PLAIN}"
-        udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
+        if [ "$WG_MODE" = "reverse" ]; then
+            echo -e "  ${DIM}隧道方向: 主动连接线路机 ${RELAY_HOST} UDP ${WG_PORT}（本机无需放行端口）${PLAIN}"
+        else
+            udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
+        fi
         detect_exit_egress
         [ -n "$EXIT_IPV4" ] && echo -e "  ${GREEN}✓ 出口 IPv4: ${EXIT_IPV4}${PLAIN}" || echo -e "  ${RED}✗ 无法访问 IPv4 外网${PLAIN}"
-        echo -e "  ${DIM}请确认落地机面板 / 云防火墙已放行 UDP ${WG_PORT}${PLAIN}"
+        [ "$WG_MODE" = "reverse" ] || echo -e "  ${DIM}请确认落地机面板 / 云防火墙已放行 UDP ${WG_PORT}${PLAIN}"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
         return 0
     fi
 
-    echo -e "  ${DIM}本机角色: 线路机 | 落地机: ${EXIT_HOST} UDP ${WG_PORT}${PLAIN}"
+    if [ "$WG_MODE" = "reverse" ]; then
+        echo -e "  ${DIM}本机角色: 线路机 | 落地机 ${EXIT_HOST} 主动连接本机 UDP ${WG_PORT}${PLAIN}"
+    else
+        echo -e "  ${DIM}本机角色: 线路机 | 落地机: ${EXIT_HOST} UDP ${WG_PORT}${PLAIN}"
+    fi
     ensure_reality_handshake_direct || true
     ensure_exit_watchdog quiet || true
     tcp_port_is_listening "$LISTEN_PORT" && echo -e "  ${GREEN}✓ TCP ${LISTEN_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
+    if [ "$WG_MODE" = "reverse" ]; then
+        udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听（等待落地机连接）${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
+        _cur_ip=$(get_native_public_ipv4 2>/dev/null || get_default_public_ipv4 2>/dev/null || true)
+        if [ -n "$RELAY_HOST" ] && is_valid_ipv4 "$_cur_ip" && [ "$RELAY_HOST" != "$_cur_ip" ]; then
+            echo -e "  ${YELLOW}! 本机公网 IP 已变为 ${_cur_ip}，落地机仍在连接 ${RELAY_HOST}；请重新部署${PLAIN}"
+        fi
+    fi
     if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         echo -e "  ${GREEN}✓ REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 可达${PLAIN}"
     else
@@ -3508,6 +3714,7 @@ write_exit_watchdog() {
 [ -f "$CONF" ] || exit 0
 meta() { awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$CONF"; }
 [ "$(meta ROLE)" = "relay" ] || exit 0
+[ "$(meta WG_MODE)" = "reverse" ] && exit 0
 HOST=$(meta EXIT_HOST)
 case "$HOST" in
     ''|*:*) exit 0 ;;
@@ -3573,7 +3780,8 @@ remove_exit_watchdog() {
 ensure_exit_watchdog() {
     local _mode="${1:-}"
     [ "${ROLE:-}" = "relay" ] || return 0
-    if ! exit_host_is_domain "${EXIT_HOST:-}"; then
+    # reverse 模式由落地机主动连接，换 IP 由 WireGuard 自动跟随，无需看门狗。
+    if [ "${WG_MODE:-forward}" = "reverse" ] || ! exit_host_is_domain "${EXIT_HOST:-}"; then
         remove_exit_watchdog
         return 0
     fi
@@ -3833,7 +4041,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.52${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.53${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
