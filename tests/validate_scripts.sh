@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.50"
+EXPECTED_VERSION="v2.0.51"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -275,6 +275,8 @@ grep -q '47 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' landing.sh
 grep -q 'A：公网直达 / 云主机' landing.sh
 grep -q 'B：真·家宽在路由器后' landing.sh
 grep -q '场景 B 必须填写' landing.sh
+grep -q '已放行 UDP' landing.sh
+grep -q '看起来像脚本 bug' landing.sh
 grep -q '^ensure_reality_handshake_direct()' landing.sh
 grep -q '"detour": "direct"' landing.sh
 grep -q '"action": "route", "outbound": "wg-out"' landing.sh

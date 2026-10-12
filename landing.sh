@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.50
+# 版本：v2.0.51
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -2741,22 +2741,38 @@ prompt_exit_target() {
             echo -e "${RED}场景 B 必须填写 1024-65535 的端口，且需与路由器转发一致${PLAIN}"
         done
     else
-        echo -e "${DIM}场景 A：请在云面板/安全组放行下方 UDP；可留空由脚本随机并自动放行本机防火墙。${PLAIN}"
+        echo -e "${YELLOW}场景 A：云主机本机常无无防火墙，必须先在云面板/安全组放行 UDP，否则隧道必然失败（看起来像脚本 bug）。${PLAIN}"
+        echo -e "${DIM}可指定端口，或留空由脚本先随机一个端口，再请你去面板放行后继续。${PLAIN}"
         while true; do
             if validate_port "${WG_PORT:-}"; then
                 read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}，输入 0 改为随机]: " _input
                 [ -z "$_input" ] && _input="$WG_PORT"
             else
-                read -r -p "落地机 WireGuard UDP 端口 [留空随机]: " _input
+                read -r -p "落地机 WireGuard UDP 端口 [留空=先随机再确认]: " _input
             fi
             case "$_input" in
-                ""|0) REQUESTED_WG_PORT=""; break ;;
+                ""|0)
+                    REQUESTED_WG_PORT=$(generate_random_port) || {
+                        echo -e "${RED}无法生成随机 UDP 端口${PLAIN}"
+                        return 1
+                    }
+                    ;;
+                *)
+                    if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
+                        REQUESTED_WG_PORT="$_input"
+                    else
+                        echo -e "${RED}端口必须为 1024-65535 的整数${PLAIN}"
+                        continue
+                    fi
+                    ;;
             esac
-            if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
-                REQUESTED_WG_PORT="$_input"
-                break
-            fi
-            echo -e "${RED}端口必须为 1024-65535 的整数${PLAIN}"
+            echo -e "${YELLOW}请立刻在落地机云面板放行 UDP ${REQUESTED_WG_PORT}（入站），放行完成后再继续。${PLAIN}"
+            echo -e "${DIM}未放行时部署会在「隧道验证」失败并自动回滚，与换哪台落地机无关。${PLAIN}"
+            read -r -p "已放行 UDP ${REQUESTED_WG_PORT}？按回车继续，或输入 n 重选端口: " _input
+            case "$_input" in
+                [nN]*) continue ;;
+                *) break ;;
+            esac
         done
     fi
     read -r -p "落地机开启每周自动更新 sing-box（推荐）？[Y/n]: " _input
@@ -3670,7 +3686,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.50${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.51${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
