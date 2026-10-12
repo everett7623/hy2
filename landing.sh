@@ -2195,9 +2195,16 @@ wait_for_health() {
 # 出口验证（线路机）
 # ============================================================
 probe_via_tunnel() {
-    local _url="$1"
+    local _url="$1" _tls_opts=()
     validate_port "${PROBE_PORT:-}" || return 1
+    # The IP-only probe intentionally avoids DNS, but Cloudflare's certificate
+    # is issued for its hostname rather than the literal 1.1.1.1 address.
+    # Keep normal certificate validation for all hostname probes.
+    case "$_url" in
+        https://1.1.1.1/*) _tls_opts+=(--insecure) ;;
+    esac
     curl -s --connect-timeout 5 --max-time 10 \
+        "${_tls_opts[@]}" \
         -x "socks5h://${PROBE_USER}:${PROBE_PASS}@127.0.0.1:${PROBE_PORT}" \
         "$_url" 2>/dev/null | extract_probe_ip
 }
