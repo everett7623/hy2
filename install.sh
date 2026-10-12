@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.45
+# 版本：v2.0.46
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-10-10
+# 更新日期: 2026-10-12
 #====================================================================================
 
 # ============================================================
@@ -449,7 +449,7 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}╭────────────────────────────────────────────────────────╮${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.45${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}│${PLAIN} ${WHITE}${BOLD}Sing-box Multi-Protocol Tools${PLAIN} ${GREEN}${BOLD}v2.0.46${PLAIN} ${DIM}VLESS · AnyTLS · HY2 · SS · HTTP/SOCKS${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}╰────────────────────────────────────────────────────────╯${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -840,7 +840,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.0.45" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.46" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -1209,14 +1209,14 @@ main_menu() {
         echo -e "  [2] 查看节点信息"
         echo -e "  [3] 导出客户端配置"
         echo -e "  [4] 生成二维码"
-        echo -e "  [10] 家宽 / 落地中转（线路机 + 落地机）"
+        echo -e "  [5] 家宽 / 落地中转（线路机 + 落地机）"
         echo ""
         echo -e "  ${DIM}运维与安全${PLAIN}"
-        echo -e "  [5] 服务管理"
-        echo -e "  [6] 系统检测 / BBR 优化"
-        echo -e "  [7] 备份 / 恢复"
-        echo -e "  [8] 更新 / 升级中心"
-        echo -e "  [9] 卸载 / 清理中心"
+        echo -e "  [6] 服务管理"
+        echo -e "  [7] 系统检测 / BBR 优化"
+        echo -e "  [8] 备份 / 恢复"
+        echo -e "  [9] 更新 / 升级中心"
+        echo -e "  [10] 卸载 / 清理中心"
         echo -e "  [0] 退出"
         echo ""
         read -r -p "  请输入选项 [0-10]: " choice
@@ -1226,12 +1226,12 @@ main_menu() {
             2) node_info_menu ;;
             3) export_config_menu ;;
             4) qrcode_menu ;;
-            5) service_management_menu ;;
-            6) system_tools_menu ;;
-            7) backup_restore_menu ;;
-            8) update_menu ;;
-            9) uninstall_menu ;;
-            10) run_script "家宽中转" "$LANDING_URL" "menu" ;;
+            5) run_script "家宽中转" "$LANDING_URL" "menu" ;;
+            6) service_management_menu ;;
+            7) system_tools_menu ;;
+            8) backup_restore_menu ;;
+            9) update_menu ;;
+            10) uninstall_menu ;;
             0|q|quit|exit)
                 echo ""
                 echo -e "${DIM}感谢使用 Sing-box Multi-Protocol Tools，再见！${PLAIN}"

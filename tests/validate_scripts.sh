@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.45"
+EXPECTED_VERSION="v2.0.46"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -143,7 +143,7 @@ grep -q 'LANDING_URL="${BASE_URL}/landing.sh"' install.sh
 grep -q 'landing-server:start) nohup /usr/local/bin/landing-server' install.sh
 grep -q '"landing-server /var/run/landing-server.pid"' install.sh
 grep -q 'etc/systemd/system/landing-server.service' install.sh
-grep -q '10) run_script "家宽中转" "$LANDING_URL" "menu"' install.sh
+grep -q '5) run_script "家宽中转" "$LANDING_URL" "menu"' install.sh
 grep -q 'download_script_to_cache landing.sh "$LANDING_URL"' install.sh
 grep -q '^ensure_outbound_bind()' anytls.sh
 grep -q '^ensure_outbound_bind()' vless.sh
@@ -187,7 +187,10 @@ grep -q 'select_protocol_and_run "选择协议以导出 Shadowrocket 配置" "sh
 grep -q 'select_protocol_and_run "生成二维码" "qrcode"' install.sh
 ! grep -q '协议脚本会输出当前支持的全部格式' install.sh
 grep -q '\[4\] 生成二维码' install.sh
-grep -q '\[5\] 服务管理' install.sh
+grep -q '\[5\] 家宽 / 落地中转（线路机 + 落地机）' install.sh
+grep -q '\[6\] 服务管理' install.sh
+grep -q '\[10\] 卸载 / 清理中心' install.sh
+! grep -q '\[10\] 家宽 / 落地中转（线路机 + 落地机）' install.sh
 ! grep -q '\[5\] 生成二维码' install.sh
 grep -q 'etc/sysctl.d/99-singbox-tools-bbr.conf' install.sh
 ! grep -R -qE 'bbr3|tcp_bbr3' install.sh hy2.sh ss.sh README.md CHANGELOG.md

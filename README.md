@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.45（2026-10-10） · 本次更新：修复 VLESS 在 mawk 环境下生成 UUID 失败，以及 AnyTLS / VLESS / HTTP/SOCKS 安装回滚时因共享核心运行中无法恢复 sing-box 的问题。
+> 当前版本：v2.0.46（2026-10-12） · 本次更新：主菜单按分区连续编号，家宽 / 落地中转改为 `[5]`，运维项顺延为 `[6]`–`[10]`。
 
 ## 目录
 
@@ -132,7 +132,7 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 客户端 ──VLESS REALITY──▶ 线路机 ══WireGuard（UDP）══▶ 落地机 / 家宽机 ──▶ 互联网
 ```
 
-使用方法：在**线路机**上运行 `sb` → `[10] 家宽 / 落地中转` → `1. 一键部署`，按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
+使用方法：在**线路机**上运行 `sb` → `[5] 家宽 / 落地中转` → `1. 一键部署`，按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
 
 1. 在线路机生成 VLESS REALITY 节点参数与 WireGuard 密钥；
 2. 经 SSH 在落地机安装 sing-box 并启动 WireGuard 落地端（UDP 端口可指定，留空随机，自动放行本机防火墙）；
