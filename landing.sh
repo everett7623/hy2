@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.55
+# 版本：v2.0.56
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -111,6 +111,8 @@ WG_EXIT_DNS="10.233.0.1"
 # 小包（Telegram、延迟测试、部署时的出口探测）一切正常，浏览器跨两个包的 ClientHello 与上传却卡死。
 # 1280 时外层 IPv4 包约 1324 字节，可穿过 PPPoE、DS-Lite、移动网络、家宽 VPS 隧道等小 MTU 路径；
 # 1280 也是 IPv6 最小 MTU，不能再低。v2.0.44–v2.0.54 用 1380（外层约 1420），这类路径上网页打不开。
+# 两端端点另写 "udp_fragment": true 去掉 DF（与内核 WireGuard 一致）：路径 MTU 比 1324 还小时
+# 由路由器分片送达，而不是丢弃。
 WG_MTU=1280
 WG_KEEPALIVE=25
 
@@ -1665,6 +1667,7 @@ write_relay_config() {
       "tag": "wg-out",
       "system": false,
       "mtu": ${WG_MTU},
+      "udp_fragment": true,
       "address": ["${WG_RELAY_ADDR4}", "${WG_RELAY_ADDR6}"],
       "private_key": "${WG_PRIVATE_KEY}",${_wg_listen}
       "peers": [
@@ -1728,6 +1731,7 @@ write_exit_config() {
       "tag": "wg-in",
       "system": false,
       "mtu": ${WG_MTU},
+      "udp_fragment": true,
       "address": ["${WG_EXIT_ADDR4}", "${WG_EXIT_ADDR6}"],
       "private_key": "${WG_PRIVATE_KEY}",${_wg_listen}
       "peers": [
@@ -3406,6 +3410,7 @@ show_config() {
 # 并去掉 v2.0.47–v2.0.51 写入的 "detour": "direct"（指向空 direct 出站，会让 WG / REALITY 拨号直接报错）。
 # 隧道 MTU 不是当前值（v2.0.54 及以前为 1380）时同样重写：隧道内 TCP 的 MSS 取两端较小值，
 # 只改线路机就能让两个方向都不再发出超过路径 MTU 的包，落地机无需重新对接。
+# 缺少 "udp_fragment": true（v2.0.55 及以前）时同样重写：线路机发出的隧道包不再带 DF。
 # 每周自动更新与诊断都会调用这里，已部署节点无需重新对接即可自愈。
 ensure_reality_handshake_direct() {
     local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0
@@ -3416,9 +3421,10 @@ ensure_reality_handshake_direct() {
     grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG" || _need=1
     grep -q '"detour": "direct"' "$LANDING_CONFIG" && _need=1
     grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1
+    grep -q '"udp_fragment": true' "$LANDING_CONFIG" || _need=1
     [ "$_need" = "1" ] || return 0
     read_config >/dev/null 2>&1 || return 1
-    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道，隧道 MTU ${WG_MTU}...${PLAIN}"
+    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道，隧道 MTU ${WG_MTU} 且允许分片...${PLAIN}"
     cp -p "$LANDING_CONFIG" "$_bak" || return 1
     if ! write_config || ! check_config; then
         mv -f "$_bak" "$LANDING_CONFIG"
@@ -3435,7 +3441,7 @@ ensure_reality_handshake_direct() {
         fi
     fi
     rm -f "$_bak"
-    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，隧道 MTU ${WG_MTU}）${PLAIN}"
+    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，隧道 MTU ${WG_MTU}，允许分片）${PLAIN}"
     return 0
 }
 
@@ -4089,7 +4095,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.55${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.56${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

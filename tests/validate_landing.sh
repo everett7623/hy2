@@ -145,6 +145,7 @@ grep -q '"action": "hijack-dns"' "$LANDING_CONFIG"
 grep -q '"ip_is_private": true, "action": "reject"' "$LANDING_CONFIG"
 grep -q '"default_domain_resolver": "local"' "$LANDING_CONFIG"
 grep -q '"mtu": 1280,' "$LANDING_CONFIG"
+grep -q '"udp_fragment": true,' "$LANDING_CONFIG"
 ! grep -q '"inbounds"' "$LANDING_CONFIG"
 [ "$(stat -c %a "$LANDING_CONFIG" 2>/dev/null || echo 600)" = 600 ]
 [ "$(stat -c %a "$LANDING_META/config.env" 2>/dev/null || echo 600)" = 600 ]
@@ -237,6 +238,8 @@ grep -q '"default_domain_resolver": { "server": "local", "strategy": "prefer_ipv
 # WireGuard 套接字带 DF：外层包超过路径 MTU 即被静默丢弃，隧道 MTU 必须留足余量。
 grep -q '"mtu": 1280,' "$LANDING_CONFIG"
 ! grep -q '"mtu": 1380' "$LANDING_CONFIG"
+# udp_fragment 去掉 DF（与内核 WireGuard 一致），路径 MTU 更小时分片送达而不是丢弃。
+grep -q '"udp_fragment": true,' "$LANDING_CONFIG"
 
 # 旧线路机 final=wg-out 时，诊断/升级应改写为 final=direct + 入站显式走 wg-out。
 cp "$LANDING_CONFIG" "$LANDING_CONFIG.good"
@@ -267,6 +270,12 @@ cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 # Telegram 正常而网页打不开。诊断/升级只需改写线路机（隧道内 TCP 的 MSS 取两端较小值）。
 sed 's/"mtu": 1280,/"mtu": 1380,/' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
 grep -q '"mtu": 1380,' "$LANDING_CONFIG"
+ensure_reality_handshake_direct >/dev/null
+cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+# v2.0.55 部署的线路机已是 MTU 1280 但没有 udp_fragment：同样补上。
+grep -v '"udp_fragment": true,' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
+grep -q '"mtu": 1280,' "$LANDING_CONFIG"
+! grep -q '"udp_fragment"' "$LANDING_CONFIG"
 ensure_reality_handshake_direct >/dev/null
 cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 # 已是当前模板时不重写、不输出。

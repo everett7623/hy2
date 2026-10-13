@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.55"
+EXPECTED_VERSION="v2.0.56"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -295,6 +295,10 @@ grep -q 'TUNNEL_IP_PROBE_URLS="${TUNNEL_IP_PROBE_URLS:-https://1.1.1.1/cdn-cgi/t
 grep -qx 'WG_MTU=1280' landing.sh
 grep -qF 'probe_via_tunnel "$_ok_url" "$TUNNEL_PAD_BYTES"' landing.sh
 grep -qF 'grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1' landing.sh
+# 两端端点都要 "udp_fragment": true 去掉 DF（与内核 WireGuard 一致）：路径 MTU 比 1280 隧道的外层包还小时分片送达，而不是丢弃。
+[ "$(grep -c '^      "udp_fragment": true,$' landing.sh)" = "2" ]
+grep -qF "grep -q '\"udp_fragment\": true' \"\$LANDING_CONFIG\" || _need=1" landing.sh
+! grep -q '"udp_fragment": false' landing.sh
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh

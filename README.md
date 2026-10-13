@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.55（2026-10-13） · 本次更新：修复家宽中转 Telegram 能用、网页 / YouTube 打不开的问题（隧道 MTU 改为 1280，部署与诊断新增大包复测）；已部署的线路机执行「出口检测与诊断」或「升级 sing-box」即可自动修复。
+> 当前版本：v2.0.56（2026-10-13） · 本次更新：家宽中转两端隧道包去掉 DF（`udp_fragment`，与内核 WireGuard 一致），路径 MTU 再小也是分片送达而不是丢包；已部署的线路机执行「出口检测与诊断」或「升级 sing-box」即可自动生效。
 
 ## 目录
 
@@ -153,7 +153,7 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 
 - 落地机需要能 SSH 登录（root，或配置了免密 `sudo` 的用户）并能访问外网。
 - 部署失败时会直接显示线路机日志里的 WireGuard 报错；也可在菜单「出口检测与诊断」中经 SSH 查看落地机状态。
-- Telegram 能用、网页 / YouTube 打不开，多为隧道大包被丢（线路机与落地机之间路径 MTU 偏小）。v2.0.55 起隧道 MTU 为 1280，部署与诊断都会用大请求复测；更早部署的节点在线路机执行「出口检测与诊断」或「升级 sing-box」即可自动修复，无需重新对接。
+- Telegram 能用、网页 / YouTube 打不开，多为隧道大包被丢（线路机与落地机之间路径 MTU 偏小）。v2.0.55 起隧道 MTU 为 1280，部署与诊断都会用大请求复测；v2.0.56 起两端隧道包不再带 DF，路径更小时分片送达。更早部署的节点在线路机执行「出口检测与诊断」或「升级 sing-box」即可自动修复，无需重新对接。
 - 只有本节点流量从落地机出网；REALITY 握手从线路机直连伪装站，SSH 与系统更新也不走隧道。
 - 两端都不修改系统路由、不开启 `ip_forward`、不写 iptables NAT；落地机拒绝隧道访问其局域网与本机服务。
 - 选 1（落地机主动连接）时家宽换 IP 无需任何操作；「更新落地机地址」只改 SSH 管理地址。选 2/3 时推荐给落地机配置 DDNS 域名：线路机每 2 分钟检查一次解析（需要 cron），变化后自动重启服务重连；若填固定 IP，换 IP 后在线路机菜单选择「更新落地机地址」。
