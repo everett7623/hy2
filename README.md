@@ -307,6 +307,10 @@ VLESS 诊断会检查 REALITY 目标、Cloudflare 下载探针和当前 TCP 拥�
 
 ![AnyTLS 安装与节点导出](docs/assets/screenshots/02-anytls-install-export.png)
 
+### 家宽 / 落地中转
+
+![家宽 / 落地中转一键部署与节点导出](docs/assets/screenshots/08-home-broadband-deploy.png)
+
 ### 系统检测
 
 ![系统检测](docs/assets/screenshots/03-system-detect.png)
