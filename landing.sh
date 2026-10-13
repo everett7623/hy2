@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.54
+# 版本：v2.0.55
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -107,7 +107,11 @@ WG_EXIT_ADDR6="fdcc:233::1/128"
 WG_RELAY_ADDR4="10.233.0.2/32"
 WG_RELAY_ADDR6="fdcc:233::2/128"
 WG_EXIT_DNS="10.233.0.1"
-WG_MTU=1380
+# sing-box 的 WireGuard 套接字默认带 DF（IP_PMTUDISC_DO），外层包超过路径 MTU 会被静默丢弃：
+# 小包（Telegram、延迟测试、部署时的出口探测）一切正常，浏览器跨两个包的 ClientHello 与上传却卡死。
+# 1280 时外层 IPv4 包约 1324 字节，可穿过 PPPoE、DS-Lite、移动网络、家宽 VPS 隧道等小 MTU 路径；
+# 1280 也是 IPv6 最小 MTU，不能再低。v2.0.44–v2.0.54 用 1380（外层约 1420），这类路径上网页打不开。
+WG_MTU=1280
 WG_KEEPALIVE=25
 
 # --- 运行时变量 ---
@@ -830,6 +834,8 @@ IPV6_PROBE_URLS="${IPV6_PROBE_URLS:-https://api6.ipify.org https://[2606:4700:47
 # v2.0.52–v2.0.53 因此隧道已通也判失败并回滚。其证书含这两个 IP 的 SAN，正常校验即可。
 TUNNEL_IP_PROBE_URLS="${TUNNEL_IP_PROBE_URLS:-https://1.1.1.1/cdn-cgi/trace https://1.0.0.1/cdn-cgi/trace}"
 TUNNEL_DNS_PROBE_URLS="${TUNNEL_DNS_PROBE_URLS:-https://api.ipify.org https://checkip.amazonaws.com https://ipv4.icanhazip.com}"
+# 大包验证的请求头长度：保证线路机→落地机方向发出满尺寸隧道包（浏览器 ClientHello 约 1.8KB）。
+TUNNEL_PAD_BYTES=3000
 
 # 探测响应可能是纯地址，也可能是 Cloudflare trace 的 key=value 多行文本。
 extract_probe_ip() {
@@ -2261,10 +2267,15 @@ wait_for_health() {
 # ============================================================
 # 出口验证（线路机）
 # ============================================================
+# 第二个参数为填充字节数：附带等长请求头，强制上行方向发出满尺寸隧道包。
 probe_via_tunnel() {
-    local _url="$1"
+    local _url="$1" _pad_len="${2:-0}" _pad=""
     validate_port "${PROBE_PORT:-}" || return 1
+    if [ "$_pad_len" -gt 0 ] 2>/dev/null; then
+        _pad=$(dd if=/dev/zero bs="$_pad_len" count=1 2>/dev/null | tr '\000' 'a')
+    fi
     curl -s --connect-timeout 5 --max-time 10 \
+        ${_pad:+-H "X-Pad: ${_pad}"} \
         -x "socks5h://${PROBE_USER}:${PROBE_PASS}@127.0.0.1:${PROBE_PORT}" \
         "$_url" 2>/dev/null | extract_probe_ip
 }
@@ -2311,8 +2322,10 @@ show_tunnel_errors() {
 # 每轮换一个探测站（字面量地址在前，免 DNS 也能确认隧道本身）：隧道刚建立时前几轮可能落空，
 # 个别探测站在落地机所在网络被屏蔽时也不会误判。出口 IP 来自字面量地址时，再用域名确认 DNS 路径；
 # 出口仍是线路机自身 IP 说明流量没有进入隧道，必须判定失败。
+# 最后用大请求头复测成功过的探测站：只丢满尺寸包的 MTU 黑洞下小请求照样通过，
+# 不复测就会部署出 Telegram 能用、网页与 YouTube 打不开的节点（v2.0.54 及以前）。
 verify_exit_egress() {
-    local _attempts="${1:-8}" _i=0 _ip="" _dns_ip="" _url
+    local _attempts="${1:-8}" _i=0 _ip="" _dns_ip="" _url _ok_url="" _big_ip=""
     local -a _urls
     read -r -a _urls <<EOF
 $TUNNEL_IP_PROBE_URLS $TUNNEL_DNS_PROBE_URLS
@@ -2323,6 +2336,7 @@ EOF
         _url="${_urls[$((_i % ${#_urls[@]}))]}"
         _ip=$(probe_via_tunnel "$_url" || true)
         if is_valid_ipv4 "$_ip"; then
+            _ok_url="$_url"
             case " $TUNNEL_DNS_PROBE_URLS " in
                 *" $_url "*) _dns_ip="$_ip" ;;
             esac
@@ -2356,6 +2370,14 @@ EOF
     fi
     if [ -z "$_dns_ip" ]; then
         echo -e "${RED}✗ 隧道已通，但经落地机解析域名失败，请检查落地机的系统 DNS${PLAIN}"
+        return 1
+    fi
+    # 同一探测站、同一路径，只差请求大小：重试一次仍不通即为大包被丢。
+    _big_ip=$(probe_via_tunnel "$_ok_url" "$TUNNEL_PAD_BYTES" || true)
+    is_valid_ipv4 "$_big_ip" || _big_ip=$(probe_via_tunnel "$_ok_url" "$TUNNEL_PAD_BYTES" || true)
+    if ! is_valid_ipv4 "$_big_ip"; then
+        echo -e "${RED}✗ 隧道小包正常、大包不通：线路机到落地机方向的路径 MTU 过小，Telegram 能用但网页 / YouTube 打不开${PLAIN}"
+        echo -e "${YELLOW}  新版隧道 MTU 为 ${WG_MTU}；仍出现此提示时，请在两端执行 ip link 检查网卡 mtu，并确认落地机外网没有再经过其他隧道${PLAIN}"
         return 1
     fi
     LAST_EGRESS_IP="$_ip"
@@ -3382,6 +3404,8 @@ show_config() {
 # ============================================================
 # 已部署线路机：把路由默认改回 direct（仅业务入站走 wg-out），
 # 并去掉 v2.0.47–v2.0.51 写入的 "detour": "direct"（指向空 direct 出站，会让 WG / REALITY 拨号直接报错）。
+# 隧道 MTU 不是当前值（v2.0.54 及以前为 1380）时同样重写：隧道内 TCP 的 MSS 取两端较小值，
+# 只改线路机就能让两个方向都不再发出超过路径 MTU 的包，落地机无需重新对接。
 # 每周自动更新与诊断都会调用这里，已部署节点无需重新对接即可自愈。
 ensure_reality_handshake_direct() {
     local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0
@@ -3391,13 +3415,14 @@ ensure_reality_handshake_direct() {
     grep -q '"final": "wg-out"' "$LANDING_CONFIG" && _need=1
     grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG" || _need=1
     grep -q '"detour": "direct"' "$LANDING_CONFIG" && _need=1
+    grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1
     [ "$_need" = "1" ] || return 0
     read_config >/dev/null 2>&1 || return 1
-    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道...${PLAIN}"
+    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道，隧道 MTU ${WG_MTU}...${PLAIN}"
     cp -p "$LANDING_CONFIG" "$_bak" || return 1
     if ! write_config || ! check_config; then
         mv -f "$_bak" "$LANDING_CONFIG"
-        echo -e "${RED}路由修复失败，已恢复原配置。备份仍在: ${_bak}${PLAIN}"
+        echo -e "${RED}配置修复失败，已恢复原配置。备份仍在: ${_bak}${PLAIN}"
         return 1
     fi
     service_is_active && _was_active=1 || true
@@ -3405,12 +3430,12 @@ ensure_reality_handshake_direct() {
         if ! service_restart || ! wait_for_health; then
             mv -f "$_bak" "$LANDING_CONFIG"
             service_restart || true
-            echo -e "${RED}路由修复后服务异常，已回滚。备份仍在: ${_bak}${PLAIN}"
+            echo -e "${RED}配置修复后服务异常，已回滚。备份仍在: ${_bak}${PLAIN}"
             return 1
         fi
     fi
     rm -f "$_bak"
-    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，握手 / WG 拨号直连）${PLAIN}"
+    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，隧道 MTU ${WG_MTU}）${PLAIN}"
     return 0
 }
 
@@ -4064,7 +4089,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.54${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.55${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

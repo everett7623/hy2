@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.54"
+EXPECTED_VERSION="v2.0.55"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -289,6 +289,12 @@ grep -q 'grep -q '\''"final": "wg-out"'\'' "$LANDING_CONFIG"' landing.sh
 # 隧道明明已通也被判“握手失败”并回滚（v2.0.52–v2.0.53）。1.1.1.1 证书含 IP SAN，https 可正常校验。
 ! grep -qE 'http://1\.(1\.1\.1|0\.0\.1)' landing.sh
 grep -q 'TUNNEL_IP_PROBE_URLS="${TUNNEL_IP_PROBE_URLS:-https://1.1.1.1/cdn-cgi/trace' landing.sh
+# WireGuard 套接字带 DF：隧道 MTU 1380 时外层包约 1420 字节，路径 MTU 偏小即被静默丢弃。
+# Telegram 与部署时的小请求探测都正常，浏览器跨两个包的 ClientHello 却卡死，网页 / YouTube 打不开（v2.0.44–v2.0.54）。
+! grep -qx 'WG_MTU=1380' landing.sh
+grep -qx 'WG_MTU=1280' landing.sh
+grep -qF 'probe_via_tunnel "$_ok_url" "$TUNNEL_PAD_BYTES"' landing.sh
+grep -qF 'grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1' landing.sh
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh

@@ -144,6 +144,7 @@ grep -q '"system": false' "$LANDING_CONFIG"
 grep -q '"action": "hijack-dns"' "$LANDING_CONFIG"
 grep -q '"ip_is_private": true, "action": "reject"' "$LANDING_CONFIG"
 grep -q '"default_domain_resolver": "local"' "$LANDING_CONFIG"
+grep -q '"mtu": 1280,' "$LANDING_CONFIG"
 ! grep -q '"inbounds"' "$LANDING_CONFIG"
 [ "$(stat -c %a "$LANDING_CONFIG" 2>/dev/null || echo 600)" = 600 ]
 [ "$(stat -c %a "$LANDING_META/config.env" 2>/dev/null || echo 600)" = 600 ]
@@ -233,6 +234,9 @@ grep -q '"final": "direct"' "$LANDING_CONFIG"
 ! grep -q '"final": "wg-out"' "$LANDING_CONFIG"
 grep -q '"default_domain_resolver": { "server": "local", "strategy": "prefer_ipv4" }' "$LANDING_CONFIG"
 ! grep -q '"listen_port": 47821' "$LANDING_CONFIG"
+# WireGuard 套接字带 DF：外层包超过路径 MTU 即被静默丢弃，隧道 MTU 必须留足余量。
+grep -q '"mtu": 1280,' "$LANDING_CONFIG"
+! grep -q '"mtu": 1380' "$LANDING_CONFIG"
 
 # 旧线路机 final=wg-out 时，诊断/升级应改写为 final=direct + 入站显式走 wg-out。
 cp "$LANDING_CONFIG" "$LANDING_CONFIG.good"
@@ -258,6 +262,15 @@ ensure_reality_handshake_direct >/dev/null
 ! grep -q '"detour": "direct"' "$LANDING_CONFIG"
 grep -q '"final": "direct"' "$LANDING_CONFIG"
 cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+
+# v2.0.44–v2.0.54 部署的线路机隧道 MTU 为 1380：路径 MTU 偏小时只丢满尺寸包，
+# Telegram 正常而网页打不开。诊断/升级只需改写线路机（隧道内 TCP 的 MSS 取两端较小值）。
+sed 's/"mtu": 1280,/"mtu": 1380,/' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
+grep -q '"mtu": 1380,' "$LANDING_CONFIG"
+ensure_reality_handshake_direct >/dev/null
+cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+# 已是当前模板时不重写、不输出。
+[ -z "$(ensure_reality_handshake_direct)" ]
 unset -f service_is_active
 rm -f "${LANDING_CONFIG}.handshake.bak" "$LANDING_CONFIG.good"
 # --- 隧道失败时展示线路机日志里的 WireGuard 报错（去掉颜色码） ---
@@ -484,6 +497,15 @@ for _url in $TUNNEL_IP_PROBE_URLS; do
     case "$_url" in https://*) ;; *) false ;; esac
 done
 PUBLIC_IP=192.0.2.10
+# 真实 probe_via_tunnel：带填充参数时附加等长请求头（dd 生成，不用非 POSIX 的 head -c），不带时不附加。
+curl() { printf '%s\n' "$@" > "$tmp/curl-args"; printf 'ip=198.51.100.7\n'; }
+[ "$(probe_via_tunnel https://1.1.1.1/cdn-cgi/trace)" = 198.51.100.7 ]
+! grep -q '^X-Pad:' "$tmp/curl-args"
+[ "$(probe_via_tunnel https://1.1.1.1/cdn-cgi/trace "$TUNNEL_PAD_BYTES")" = 198.51.100.7 ]
+grep -qx -- '-H' "$tmp/curl-args"
+[ "$(awk '/^X-Pad: a+$/ { print length($0) }' "$tmp/curl-args")" = $((7 + TUNNEL_PAD_BYTES)) ]
+grep -qxF 'https://1.1.1.1/cdn-cgi/trace' "$tmp/curl-args"
+unset -f curl
 probe_via_tunnel() { printf '198.51.100.7'; }
 sleep() { :; }
 verify_exit_egress 2 >/dev/null
@@ -491,7 +513,7 @@ verify_exit_egress 2 >/dev/null
 # 落地机所在网络屏蔽字面量探测站与部分域名站时，轮换到可用站点仍判定通过，且已验证 DNS 路径。
 # probe_via_tunnel 在 $(...) 子 shell 中执行，调用记录只能写文件。
 probe_via_tunnel() {
-    printf '%s\n' "$1" >> "$tmp/probed"
+    printf '%s\n' "$1${2:+ pad=$2}" >> "$tmp/probed"
     case "$1" in
         *amazonaws*) printf '198.51.100.7' ;;
         *) return 1 ;;
@@ -502,7 +524,10 @@ verify_exit_egress 4 >/dev/null
 [ "$LAST_EGRESS_IP" = 198.51.100.7 ]
 grep -qxF 'https://1.1.1.1/cdn-cgi/trace' "$tmp/probed"
 grep -qxF 'https://1.0.0.1/cdn-cgi/trace' "$tmp/probed"
-[ "$(grep -c amazonaws "$tmp/probed")" = 1 ]
+[ "$(grep -cxF 'https://checkip.amazonaws.com' "$tmp/probed")" = 1 ]
+# 大包复测用刚才成功的同一探测站，只差请求大小。
+grep -qxF "https://checkip.amazonaws.com pad=${TUNNEL_PAD_BYTES}" "$tmp/probed"
+[ "$(grep -c 'pad=' "$tmp/probed")" = 1 ]
 : > "$tmp/probed"
 ! verify_exit_egress 3 >/dev/null
 ! grep -q amazonaws "$tmp/probed"
@@ -517,6 +542,24 @@ probe_via_tunnel() {
     esac
 }
 ! verify_exit_egress 2 >/dev/null
+# MTU 黑洞：小请求全部成功、带大请求头的全部超时。v2.0.54 及以前会判通过，
+# 部署出 Telegram 能用、网页与 YouTube 打不开的节点；现在必须判失败并提示 MTU。
+probe_via_tunnel() { [ -z "${2:-}" ] && printf '198.51.100.7'; }
+! verify_exit_egress 2 >/dev/null
+[ -z "$LAST_EGRESS_IP" ]
+verify_exit_egress 2 | grep -q '大包不通'
+# 大包偶发丢一次（重试成功）不能误判。
+: > "$tmp/big"
+probe_via_tunnel() {
+    if [ -n "${2:-}" ]; then
+        printf 'x\n' >> "$tmp/big"
+        [ "$(grep -c . "$tmp/big")" -ge 2 ] || return 1
+    fi
+    printf '198.51.100.7'
+}
+verify_exit_egress 2 >/dev/null
+[ "$LAST_EGRESS_IP" = 198.51.100.7 ]
+[ "$(grep -c . "$tmp/big")" = 2 ]
 unset -f sleep
 
 # --- 卸载：线路机，共享核心无其他使用者时随最后一个协议移除 ---
