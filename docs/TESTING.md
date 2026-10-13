@@ -124,7 +124,8 @@ bash tests/validate_scripts.sh
 
 - 在线路机一键部署：首次 SSH 确认指纹后，落地机自动安装 sing-box；`[1]`（落地机主动连接）时落地机不开放任何端口，`[2]` 时只开放一个 UDP 端口；线路机显示的出口 IP 必须等于落地机公网 IP。
 - 部署结束前必须依次看到「✓ 隧道出口验证通过」与「✓ 从落地机（境外）可以连通线路机节点端口」；在线路机商家面板拦截节点 TCP 端口时，后者必须改为 ✗ 并提示放行该端口。
-- 双栈线路机：客户端只导入带二维码的 IPv4 节点；落地机只有 IPv4 时，客户端关闭 IPv6（Exclave「IPv6 路由」设为禁用）后网页与 YouTube 必须正常（2026-10-13 已在 Android Exclave 实测）。不关闭 IPv6 时，线路机日志会出现 IPv6 地址的 `connection was refused`。
+- 双栈线路机：客户端只导入带二维码的 IPv4 节点；落地机只有 IPv4 时，客户端关闭 IPv6（Exclave「IPv6 路由」设为禁用）后网页与 YouTube 必须正常（2026-10-13 已在 Android Exclave 实测）。不关闭 IPv6 时，v2.0.58 及以前的线路机日志会出现 IPv6 地址的 `connection was refused`。
+- v2.0.59 起落地机只有 IPv4 时：客户端**保持 IPv6 开启**、远程 DNS 用明文（Exclave 默认 `tcp://1.1.1.1`），网页与 YouTube 也必须正常；线路机日志（debug 级别）应出现 `port=53 => hijack-dns` 与 `query_type=AAAA => predefined`。客户端改用 DoH / DoT 时仍需关闭 IPv6。
 - 真实客户端经线路机访问 IP、域名与 DNS 均从落地机出口；停止落地机服务后流量应失败，证明不存在绕过隧道的直连。
 - 内网目标（RFC1918、回环）被拒绝。
 - 重新部署失败（例如指定的 UDP 端口被占用）时两端配置、服务和防火墙恢复到部署前状态；重新部署成功时保留客户端 UUID。

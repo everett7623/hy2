@@ -241,6 +241,14 @@ grep -q '"mtu": 1280,' "$LANDING_CONFIG"
 ( ! grep -q '"mtu": 1380' "$LANDING_CONFIG" )
 # udp_fragment 去掉 DF（与内核 WireGuard 一致），路径 MTU 更小时分片送达而不是丢弃。
 grep -q '"udp_fragment": true,' "$LANDING_CONFIG"
+# 客户端经节点的明文 DNS（TCP / UDP 53）由线路机接管并交给落地机解析，且必须排在 resolve 之前；
+# 落地机没有 IPv6 时 AAAA 回空，客户端拿不到 IPv6 地址，就不会把落地机连不出去的 IPv6 目标发进隧道。
+grep -q '{ "inbound": \["vless-in"\], "port": 53, "action": "hijack-dns" },' "$LANDING_CONFIG"
+[ "$(grep -n '"action": "hijack-dns"' "$LANDING_CONFIG" | cut -d: -f1)" -lt "$(grep -n '"action": "resolve"' "$LANDING_CONFIG" | cut -d: -f1)" ]
+grep -q '{ "inbound": \["vless-in"\], "query_type": \["AAAA"\], "action": "predefined" },' "$LANDING_CONFIG"
+grep -q '{ "inbound": \["vless-in"\], "action": "route", "server": "exit-dns" }' "$LANDING_CONFIG"
+# DNS 规则的 strategy 在 sing-box 1.14 已弃用、1.16 删除，自动升级后配置会校验失败。
+( ! grep -qE '"action": "route", "server": "[a-z-]+", "strategy"' "$LANDING_CONFIG" )
 
 # 旧线路机 final=wg-out 时，诊断/升级应改写为 final=direct + 入站显式走 wg-out。
 cp "$LANDING_CONFIG" "$LANDING_CONFIG.good"
@@ -277,6 +285,11 @@ cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 grep -v '"udp_fragment": true,' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
 grep -q '"mtu": 1280,' "$LANDING_CONFIG"
 ( ! grep -q '"udp_fragment"' "$LANDING_CONFIG" )
+ensure_reality_handshake_direct >/dev/null
+cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+# v2.0.58 及以前没有接管客户端 DNS：诊断 / 升级时补上，客户端不必再关 IPv6。
+grep -v '"port": 53, "action": "hijack-dns"' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
+( ! grep -q '"action": "hijack-dns"' "$LANDING_CONFIG" )
 ensure_reality_handshake_direct >/dev/null
 cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 # 已是当前模板时不重写、不输出。
@@ -387,6 +400,10 @@ write_config
 grep -q '"action": "resolve", "server": "exit-dns", "strategy": "prefer_ipv4"' "$LANDING_CONFIG"
 grep -q '"strategy": "ipv6_only"' "$LANDING_CONFIG"
 grep -q '"default_domain_resolver": { "server": "local", "strategy": "prefer_ipv6" }' "$LANDING_CONFIG"
+# 落地机有 IPv6：客户端 DNS 仍交给落地机解析，但不过滤 AAAA（IPv6 目标能从落地机出去）。
+grep -q '"port": 53, "action": "hijack-dns"' "$LANDING_CONFIG"
+( ! grep -q '"query_type"' "$LANDING_CONFIG" )
+if [ -n "${REAL_SING_BOX_BIN:-}" ]; then "$REAL_SING_BOX_BIN" check -c "$LANDING_CONFIG"; fi
 EXIT_HAS_IPV6=0; BIND_FAMILY=v4
 write_config
 write_meta

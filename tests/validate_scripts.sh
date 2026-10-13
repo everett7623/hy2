@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.58"
+EXPECTED_VERSION="v2.0.59"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -305,6 +305,12 @@ grep -qF 'grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1' landing.sh
 [ "$(grep -c '^      "udp_fragment": true,$' landing.sh)" = "2" ]
 grep -qF "grep -q '\"udp_fragment\": true' \"\$LANDING_CONFIG\" || _need=1" landing.sh
 ( ! grep -q '"udp_fragment": false' landing.sh )
+# 客户端开着 IPv6、落地机只有 IPv4 时，IPv6 目标会被落地机拒绝（Telegram 能用、网页打不开）。
+# 线路机接管客户端明文 DNS 并对 AAAA 回空，客户端无需关 IPv6；DNS 规则不得用已弃用的 strategy（1.16 删除）。
+grep -qF '{ "inbound": ["vless-in"], "port": 53, "action": "hijack-dns" },' landing.sh
+grep -qF '{ "inbound": ["vless-in"], "query_type": ["AAAA"], "action": "predefined" },' landing.sh
+grep -qF "grep -q '\"port\": 53, \"action\": \"hijack-dns\"' \"\$LANDING_CONFIG\" || _need=1" landing.sh
+( ! grep -qE '"action": "route", "server": "[a-z-]+", "strategy"' landing.sh )
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh

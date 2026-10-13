@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.58
+# 版本：v2.0.59
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1583,8 +1583,13 @@ install_config_file() {
 # 严禁写 "detour": "direct"：direct 出站没有任何拨号选项时，sing-box 会在拨号时报
 # “detour to an empty direct outbound makes no sense”，WireGuard 握手发不出去、REALITY 握手失败，
 # 而 sing-box check 不会报错（v2.0.47–v2.0.51 因此隧道永远不通）。
+# 客户端经节点发出的明文 DNS（端口 53，TCP / UDP）由线路机接管，统一交给落地机解析。
+# 落地机没有 IPv6 时 AAAA 直接回空：客户端拿不到 IPv6 地址，就不会把 IPv6 目标发进隧道
+# （落地机连不出去，表现为 Telegram 能用、网页打不开）。不能用 DNS 规则的 strategy：
+# 它在 sing-box 1.14 已弃用、1.16 删除，自动升级后配置会校验失败；predefined 空应答效果相同。
+# 指定了 server 的查询（REALITY 握手的 local、resolve 的 exit-dns）不经过 DNS 规则，不受影响。
 write_relay_config() {
-    local _tmp _reality_strategy _local_strategy _exit_strategy
+    local _tmp _reality_strategy _local_strategy _exit_strategy _dns_aaaa_rule=""
     _reality_strategy=$(reality_domain_strategy)
     case "${BIND_FAMILY:-v4}" in
         v6) _local_strategy="prefer_ipv6" ;;
@@ -1594,6 +1599,8 @@ write_relay_config() {
         _exit_strategy="prefer_ipv4"
     else
         _exit_strategy="ipv4_only"
+        _dns_aaaa_rule='
+      { "inbound": ["vless-in"], "query_type": ["AAAA"], "action": "predefined" },'
     fi
     # reverse：线路机固定监听 UDP，peer 不写地址，由落地机握手后自动学习（WireGuard roaming）。
     # 心跳由落地机发送即可（还能维持家宽 NAT 映射）；线路机此时不知道对端地址，发心跳只会刷错误日志。
@@ -1617,6 +1624,9 @@ write_relay_config() {
     "servers": [
       { "type": "local", "tag": "local" },
       { "type": "udp", "tag": "exit-dns", "server": "${WG_EXIT_DNS}", "detour": "wg-out" }
+    ],
+    "rules": [${_dns_aaaa_rule}
+      { "inbound": ["vless-in"], "action": "route", "server": "exit-dns" }
     ],
     "final": "local"
   },
@@ -1684,6 +1694,7 @@ write_relay_config() {
   ],
   "route": {
     "rules": [
+      { "inbound": ["vless-in"], "port": 53, "action": "hijack-dns" },
       { "inbound": ["vless-in", "probe-in"], "action": "resolve", "server": "exit-dns", "strategy": "${_exit_strategy}" },
       { "ip_is_private": true, "action": "reject" },
       { "inbound": ["vless-in", "probe-in"], "action": "route", "outbound": "wg-out" }
@@ -3387,7 +3398,7 @@ show_config() {
     echo -e "${DIM}客户端连接线路机，网站看到的是落地机出口 IP。${PLAIN}"
     echo -e "${DIM}请导入「线路机」IPv4 节点，不要填落地出口 IP；若同时给出 IPv6 节点，客户端网络需能访问 IPv6。${PLAIN}"
     [ "${EXIT_HAS_IPV6:-0}" = "1" ] || \
-        echo -e "${DIM}落地机没有 IPv6：客户端请关闭 IPv6（如 Exclave「IPv6 路由」设为禁用），否则发往 IPv6 地址的连接会被拒绝。${PLAIN}"
+        echo -e "${DIM}落地机没有 IPv6：经本节点查询的 DNS 已自动去掉 IPv6 地址，客户端一般无需改设置；若客户端用加密 DNS（https:// / tls://）或本地解析，请关闭客户端 IPv6（如 Exclave「IPv6 路由」设为禁用）。${PLAIN}"
     echo -e "${DIM}提示: 客户端 DNS 须经本节点（Mihomo 开启 fake-ip 或 nameserver 走节点），否则可能泄露本地 DNS。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -3425,6 +3436,7 @@ show_config() {
 # 隧道 MTU 不是当前值（v2.0.54 及以前为 1380）时同样重写：隧道内 TCP 的 MSS 取两端较小值，
 # 只改线路机就能让两个方向都不再发出超过路径 MTU 的包，落地机无需重新对接。
 # 缺少 "udp_fragment": true（v2.0.55 及以前）时同样重写：线路机发出的隧道包不再带 DF。
+# 没有接管客户端 DNS（v2.0.58 及以前）时同样重写：落地机无 IPv6 时客户端不必再关 IPv6。
 # 每周自动更新与诊断都会调用这里，已部署节点无需重新对接即可自愈。
 ensure_reality_handshake_direct() {
     local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0
@@ -3436,9 +3448,10 @@ ensure_reality_handshake_direct() {
     grep -q '"detour": "direct"' "$LANDING_CONFIG" && _need=1
     grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1
     grep -q '"udp_fragment": true' "$LANDING_CONFIG" || _need=1
+    grep -q '"port": 53, "action": "hijack-dns"' "$LANDING_CONFIG" || _need=1
     [ "$_need" = "1" ] || return 0
     read_config >/dev/null 2>&1 || return 1
-    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道，隧道 MTU ${WG_MTU} 且允许分片...${PLAIN}"
+    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道，隧道 MTU ${WG_MTU} 且允许分片，客户端 DNS 交给落地机解析...${PLAIN}"
     cp -p "$LANDING_CONFIG" "$_bak" || return 1
     if ! write_config || ! check_config; then
         mv -f "$_bak" "$LANDING_CONFIG"
@@ -3455,7 +3468,7 @@ ensure_reality_handshake_direct() {
         fi
     fi
     rm -f "$_bak"
-    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，隧道 MTU ${WG_MTU}，允许分片）${PLAIN}"
+    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，隧道 MTU ${WG_MTU}，允许分片，接管客户端 DNS）${PLAIN}"
     return 0
 }
 
@@ -4109,7 +4122,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.58${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.59${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
