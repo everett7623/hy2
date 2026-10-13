@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.56"
+EXPECTED_VERSION="v2.0.57"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -272,11 +272,17 @@ grep -q '17 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' anytls.sh
 grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
 grep -q '37 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '47 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' landing.sh
-grep -q 'A：公网直达 / 云主机' landing.sh
-grep -q 'B：真·家宽在路由器后' landing.sh
-grep -q '场景 B 必须填写' landing.sh
+# 连接方式只有两种：[2] 本机拨号落地机，面板放行与路由器端口转发只是放行位置不同，合并为一项，格式与 [1] 统一。
+grep -q '\[1\] 落地机主动连接本机（推荐）' landing.sh
+grep -q '\[2\] 本机主动连接落地机：' landing.sh
+grep -q '请输入 1 或 2' landing.sh
+# set -e 不会因为 `! cmd` 失败而退出，否定断言必须包进子 shell：( ! cmd )。
+( ! grep -qE 'A：公网直达|B：真·家宽|场景 [AB]|\[3\] ' landing.sh )
 grep -q '已放行 UDP' landing.sh
 grep -q '看起来像脚本 bug' landing.sh
+# 面板 / 安全组没放行节点 TCP 端口时，隧道验证全过、部署“成功”，客户端却只会超时：部署时由落地机（境外）实测一次。
+grep -q '^check_node_port_from_exit()' landing.sh
+grep -q 'check_node_port_from_exit || _port_warn=1' landing.sh
 grep -q '^ensure_reality_handshake_direct()' landing.sh
 # 线路机配置模板禁止 "detour": "direct"：direct 出站为空时 sing-box 拨号报
 # “detour to an empty direct outbound makes no sense”，WG 隧道与 REALITY 握手永远失败（v2.0.47–v2.0.51）。
@@ -291,14 +297,14 @@ grep -q 'grep -q '\''"final": "wg-out"'\'' "$LANDING_CONFIG"' landing.sh
 grep -q 'TUNNEL_IP_PROBE_URLS="${TUNNEL_IP_PROBE_URLS:-https://1.1.1.1/cdn-cgi/trace' landing.sh
 # WireGuard 套接字带 DF：隧道 MTU 1380 时外层包约 1420 字节，路径 MTU 偏小即被静默丢弃。
 # Telegram 与部署时的小请求探测都正常，浏览器跨两个包的 ClientHello 却卡死，网页 / YouTube 打不开（v2.0.44–v2.0.54）。
-! grep -qx 'WG_MTU=1380' landing.sh
+( ! grep -qx 'WG_MTU=1380' landing.sh )
 grep -qx 'WG_MTU=1280' landing.sh
 grep -qF 'probe_via_tunnel "$_ok_url" "$TUNNEL_PAD_BYTES"' landing.sh
 grep -qF 'grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1' landing.sh
 # 两端端点都要 "udp_fragment": true 去掉 DF（与内核 WireGuard 一致）：路径 MTU 比 1280 隧道的外层包还小时分片送达，而不是丢弃。
 [ "$(grep -c '^      "udp_fragment": true,$' landing.sh)" = "2" ]
 grep -qF "grep -q '\"udp_fragment\": true' \"\$LANDING_CONFIG\" || _need=1" landing.sh
-! grep -q '"udp_fragment": false' landing.sh
+( ! grep -q '"udp_fragment": false' landing.sh )
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh

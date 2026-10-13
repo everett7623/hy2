@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.56
+# 版本：v2.0.57
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -2885,18 +2885,17 @@ prompt_exit_target() {
     else
         echo -e "  ${DIM}[1] 落地机主动连接本机：本机是 NAT 机或未确认公网 IPv4，不可用${PLAIN}"
     fi
-    echo -e "  [2] A：公网直达 / 云主机（面板或安全组放行 UDP）"
-    echo -e "  [3] B：真·家宽在路由器后（先在路由器做 UDP 端口转发）"
+    # 本机拨号落地机只有一种连法：云主机在面板放行、路由器后做端口转发，只是放行 UDP 的位置不同。
+    echo -e "  [2] 本机主动连接落地机：本机是 NAT 机时使用，落地机需放行一个 UDP 端口（面板 / 安全组放行，或路由器端口转发）"
     while true; do
-        read -r -p "落地机网络类型 [默认 ${_default_net}]: " _input
+        read -r -p "连接方式 [默认 ${_default_net}]: " _input
         case "${_input:-$_default_net}" in
             1)
                 if [ "$_can_reverse" = "1" ]; then _exit_net="R"; break; fi
-                echo -e "${RED}本机无法使用 [1]，请选择 2 或 3${PLAIN}"
+                echo -e "${RED}本机无法使用 [1]，请选择 2${PLAIN}"
                 ;;
-            2) _exit_net="A"; break ;;
-            3) _exit_net="B"; break ;;
-            *) echo -e "${RED}请输入 1、2 或 3${PLAIN}" ;;
+            2) _exit_net="F"; break ;;
+            *) echo -e "${RED}请输入 1 或 2${PLAIN}" ;;
         esac
     done
     [ "$_exit_net" = "R" ] || \
@@ -2951,30 +2950,11 @@ prompt_exit_target() {
         fi
         echo -e "${YELLOW}本机将监听 UDP ${REQUESTED_WG_PORT}，等待落地机连接；脚本会自动放行本机防火墙。${PLAIN}"
         echo -e "${DIM}若本机（线路机）商家面板 / 安全组默认拦截入站，请同时放行 UDP ${REQUESTED_WG_PORT}；落地机无需任何操作。${PLAIN}"
-    elif [ "$_exit_net" = "B" ]; then
-        WG_MODE="forward"
-        RELAY_HOST=""
-        echo -e "${YELLOW}场景 B：请先在家宽路由器把某个 UDP 端口转发到落地机局域网 IP，再填写同一端口（不要留空随机）。${PLAIN}"
-        echo -e "${DIM}例：路由器 UDP 51820 → 192.168.1.50:51820，此处填 51820。${PLAIN}"
-        [ "$_old_mode" = "forward" ] || WG_PORT=""
-        while true; do
-            if validate_port "${WG_PORT:-}"; then
-                read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}]: " _input
-                [ -z "$_input" ] && _input="$WG_PORT"
-            else
-                read -r -p "落地机 WireGuard UDP 端口（必填，与路由器转发一致）: " _input
-            fi
-            if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
-                REQUESTED_WG_PORT="$_input"
-                break
-            fi
-            echo -e "${RED}场景 B 必须填写 1024-65535 的端口，且需与路由器转发一致${PLAIN}"
-        done
     else
         WG_MODE="forward"
         RELAY_HOST=""
-        echo -e "${YELLOW}场景 A：云主机本机常无无防火墙，必须先在云面板/安全组放行 UDP，否则隧道必然失败（看起来像脚本 bug）。${PLAIN}"
-        echo -e "${DIM}可指定端口，或留空由脚本先随机一个端口，再请你去面板放行后继续。${PLAIN}"
+        echo -e "${YELLOW}本机将主动连接落地机：落地机必须放行一个 UDP 端口，否则隧道必然失败（看起来像脚本 bug）。${PLAIN}"
+        echo -e "${DIM}云主机在面板 / 安全组放行入站；路由器后的家宽把该 UDP 端口转发到落地机的同一端口。可直接填已放行的端口，留空则先随机一个再去放行。${PLAIN}"
         [ "$_old_mode" = "forward" ] || WG_PORT=""
         while true; do
             if validate_port "${WG_PORT:-}"; then
@@ -2999,7 +2979,7 @@ prompt_exit_target() {
                     fi
                     ;;
             esac
-            echo -e "${YELLOW}请立刻在落地机云面板放行 UDP ${REQUESTED_WG_PORT}（入站），放行完成后再继续。${PLAIN}"
+            echo -e "${YELLOW}请现在放行落地机 UDP ${REQUESTED_WG_PORT}：云主机在面板 / 安全组放行入站，路由器后则转发到落地机 UDP ${REQUESTED_WG_PORT}。${PLAIN}"
             echo -e "${DIM}未放行时部署会在「隧道验证」失败并自动回滚，与换哪台落地机无关。${PLAIN}"
             read -r -p "已放行 UDP ${REQUESTED_WG_PORT}？按回车继续，或输入 n 重选端口: " _input
             case "$_input" in
@@ -3027,6 +3007,29 @@ prepare_probe_inbound() {
     PROBE_PASS=$(generate_probe_secret) || return 1
 }
 
+# 客户端从外网连线路机节点端口。面板 / 安全组没放行时，隧道验证照样全过、部署显示成功，
+# 客户端却只会超时，线路机日志里也一条连接都看不到。线路机测不出自己的外网可达性，
+# 借落地机（境外）实际连一次；只提示不回滚，放行后无需重新部署。
+check_node_port_from_exit() {
+    local _host="${PUBLIC_IP:-}" _port="${EXT_PORT:-}" _out=""
+    is_valid_ipv4 "$_host" && validate_port "$_port" || return 0
+    _out=$(ssh_run "if command -v timeout >/dev/null 2>&1; then timeout 6 bash -c '</dev/tcp/${_host}/${_port}' >/dev/null 2>&1 && echo NODE_PORT_OK || echo NODE_PORT_FAIL; else echo NODE_PORT_SKIP; fi" \
+        </dev/null 2>/dev/null | tr -d '\r' | tail -n 1)
+    case "$_out" in
+        NODE_PORT_OK)
+            echo -e "${GREEN}✓ 从落地机（境外）可以连通线路机节点端口 TCP ${_port}${PLAIN}"
+            return 0
+            ;;
+        NODE_PORT_FAIL)
+            echo -e "${RED}✗ 从落地机连不上线路机 ${_host}:${_port}（TCP），客户端也会连不上${PLAIN}"
+            echo -e "${YELLOW}  请在线路机商家面板 / 安全组放行 TCP ${_port}（入站），放行后无需重新部署${PLAIN}"
+            return 1
+            ;;
+    esac
+    echo -e "${DIM}  未能从落地机检测节点端口；若线路机商家面板 / 安全组默认拦截入站，请放行 TCP ${_port}${PLAIN}"
+    return 0
+}
+
 deploy_fail() {
     local _message="$1"
     echo -e "${RED}${_message}${PLAIN}"
@@ -3051,15 +3054,14 @@ print_deploy_intro() {
     echo -e "  ${DIM}只需在本机操作：脚本会 SSH 登录落地机自动部署，并验证出口 IP。${PLAIN}"
     echo -e "  ${DIM}只有本节点的流量从落地机出网；本机 SSH、系统更新和其他协议保持直连。${PLAIN}"
     echo -e "  ${DIM}两端均不修改系统路由、不开启 ip_forward，失败会自动回滚。${PLAIN}"
-    echo -e "  ${DIM}落地机三种部署方式（不限国家/地区）：${PLAIN}"
+    echo -e "  ${DIM}两种连接方式（不限国家/地区）：${PLAIN}"
     echo -e "  ${DIM}  1 落地机主动连接本机（推荐）：落地机无需放行端口或路由器端口转发${PLAIN}"
-    echo -e "  ${DIM}  A 公网直达/云主机：面板放行一个 UDP${PLAIN}"
-    echo -e "  ${DIM}  B 真·家宽在路由器后：路由器先做 UDP 端口转发${PLAIN}"
+    echo -e "  ${DIM}  2 本机主动连接落地机：本机是 NAT 机时使用，落地机需放行一个 UDP 端口${PLAIN}"
     echo -e "${SKYBLUE}-----------------------------------------------${PLAIN}"
 }
 
 deploy_landing() {
-    local _role _reuse=0 _answer _params="" _remote_ok=0
+    local _role _reuse=0 _answer _params="" _remote_ok=0 _port_warn=0
     clear_screen
     print_deploy_intro
     _role=$(installed_role 2>/dev/null || true)
@@ -3162,6 +3164,7 @@ deploy_landing() {
         deploy_fail "出口验证失败"
         return 1
     fi
+    check_node_port_from_exit || _port_warn=1
 
     remote_landing_action --remote-exit-commit >/dev/null 2>&1 || \
         echo -e "${YELLOW}! 落地机确认步骤未完成，不影响使用${PLAIN}"
@@ -3172,6 +3175,7 @@ deploy_landing() {
     discard_install_backup
     ensure_exit_watchdog || true
     echo -e "${GREEN}✓ 部署完成：客户端流量将从落地机 ${LAST_EGRESS_IP} 出网${PLAIN}"
+    [ "$_port_warn" = "0" ] || echo -e "${RED}! 客户端暂时连不上：请先在线路机商家面板 / 安全组放行 TCP ${EXT_PORT}${PLAIN}"
     show_config
 }
 
@@ -3339,7 +3343,7 @@ show_exit_role_info() {
 }
 
 show_config() {
-    local _mode="${1:-all}" _country _manual_addr
+    local _mode="${1:-all}" _country _manual_addr _v6_mode
     if ! read_config >/dev/null 2>&1; then
         echo -e "${RED}未找到家宽中转配置，请先在线路机执行一键部署${PLAIN}"
         sleep 2
@@ -3382,6 +3386,8 @@ show_config() {
     echo -e "落地出口  : ${YELLOW}${EXIT_IPV4:-未知}${PLAIN}（${_country} / $(get_country_name "$_country")）"
     echo -e "${DIM}客户端连接线路机，网站看到的是落地机出口 IP。${PLAIN}"
     echo -e "${DIM}请导入「线路机」IPv4 节点，不要填落地出口 IP；若同时给出 IPv6 节点，客户端网络需能访问 IPv6。${PLAIN}"
+    [ "${EXIT_HAS_IPV6:-0}" = "1" ] || \
+        echo -e "${DIM}落地机没有 IPv6：客户端请关闭 IPv6（如 Exclave「IPv6 路由」设为禁用），否则发往 IPv6 地址的连接会被拒绝。${PLAIN}"
     echo -e "${DIM}提示: 客户端 DNS 须经本节点（Mihomo 开启 fake-ip 或 nameserver 走节点），否则可能泄露本地 DNS。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -3390,8 +3396,16 @@ show_config() {
         show_node "$PUBLIC_IP" "$EXT_PORT" "v4" "$_mode" "$_country"
     fi
     if [ -n "$PUBLIC_IPV6" ]; then
-        echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
-        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6" "$_mode" "$_country"
+        _v6_mode="$_mode"
+        if [ -n "$PUBLIC_IP" ]; then
+            # 双栈线路机只给 IPv4 节点出二维码：部署输出最下方的二维码最容易被扫，
+            # 手机走 IPv6 连不上线路机时，线路机日志里一条连接都没有，看起来像节点坏了。
+            echo -e "${YELLOW}▼ IPv6 备用节点（仅客户端网络能访问 IPv6 时使用；国内请用上面的 IPv4 节点）${PLAIN}"
+            case "$_mode" in all|qrcode) _v6_mode="uri" ;; esac
+        else
+            echo -e "${YELLOW}▼ IPv6 节点配置${PLAIN}"
+        fi
+        show_node "$PUBLIC_IPV6" "$EXT_PORT" "v6" "$_v6_mode" "$_country"
     fi
     if [ -z "$PUBLIC_IP" ] && [ -z "$PUBLIC_IPV6" ]; then
         read -r -p "未检测到线路机公网 IP，请手动输入节点地址: " _manual_addr
@@ -4095,7 +4109,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.56${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.57${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

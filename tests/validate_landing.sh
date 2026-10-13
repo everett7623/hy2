@@ -237,7 +237,8 @@ grep -q '"default_domain_resolver": { "server": "local", "strategy": "prefer_ipv
 ! grep -q '"listen_port": 47821' "$LANDING_CONFIG"
 # WireGuard 套接字带 DF：外层包超过路径 MTU 即被静默丢弃，隧道 MTU 必须留足余量。
 grep -q '"mtu": 1280,' "$LANDING_CONFIG"
-! grep -q '"mtu": 1380' "$LANDING_CONFIG"
+# set -e 不会因为 `! cmd` 失败而退出，否定断言必须包进子 shell：( ! cmd )。
+( ! grep -q '"mtu": 1380' "$LANDING_CONFIG" )
 # udp_fragment 去掉 DF（与内核 WireGuard 一致），路径 MTU 更小时分片送达而不是丢弃。
 grep -q '"udp_fragment": true,' "$LANDING_CONFIG"
 
@@ -275,7 +276,7 @@ cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 # v2.0.55 部署的线路机已是 MTU 1280 但没有 udp_fragment：同样补上。
 grep -v '"udp_fragment": true,' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
 grep -q '"mtu": 1280,' "$LANDING_CONFIG"
-! grep -q '"udp_fragment"' "$LANDING_CONFIG"
+( ! grep -q '"udp_fragment"' "$LANDING_CONFIG" )
 ensure_reality_handshake_direct >/dev/null
 cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
 # 已是当前模板时不重写、不输出。
@@ -509,7 +510,7 @@ PUBLIC_IP=192.0.2.10
 # 真实 probe_via_tunnel：带填充参数时附加等长请求头（dd 生成，不用非 POSIX 的 head -c），不带时不附加。
 curl() { printf '%s\n' "$@" > "$tmp/curl-args"; printf 'ip=198.51.100.7\n'; }
 [ "$(probe_via_tunnel https://1.1.1.1/cdn-cgi/trace)" = 198.51.100.7 ]
-! grep -q '^X-Pad:' "$tmp/curl-args"
+( ! grep -q '^X-Pad:' "$tmp/curl-args" )
 [ "$(probe_via_tunnel https://1.1.1.1/cdn-cgi/trace "$TUNNEL_PAD_BYTES")" = 198.51.100.7 ]
 grep -qx -- '-H' "$tmp/curl-args"
 [ "$(awk '/^X-Pad: a+$/ { print length($0) }' "$tmp/curl-args")" = $((7 + TUNNEL_PAD_BYTES)) ]
@@ -554,7 +555,7 @@ probe_via_tunnel() {
 # MTU 黑洞：小请求全部成功、带大请求头的全部超时。v2.0.54 及以前会判通过，
 # 部署出 Telegram 能用、网页与 YouTube 打不开的节点；现在必须判失败并提示 MTU。
 probe_via_tunnel() { [ -z "${2:-}" ] && printf '198.51.100.7'; }
-! verify_exit_egress 2 >/dev/null
+( ! verify_exit_egress 2 >/dev/null )
 [ -z "$LAST_EGRESS_IP" ]
 verify_exit_egress 2 | grep -q '大包不通'
 # 大包偶发丢一次（重试成功）不能误判。
@@ -570,6 +571,50 @@ verify_exit_egress 2 >/dev/null
 [ "$LAST_EGRESS_IP" = 198.51.100.7 ]
 [ "$(grep -c . "$tmp/big")" = 2 ]
 unset -f sleep
+
+# --- 部署时从落地机（境外）实测线路机节点端口 ---
+# 面板 / 安全组没放行时，隧道验证全过、部署显示成功，客户端却只会超时，线路机日志里一条连接都没有。
+PUBLIC_IP=192.0.2.10; EXT_PORT=34567
+ssh_run() { printf '%s\n' "$*" > "$tmp/ssh-cmd"; printf 'NODE_PORT_OK\r\n'; }
+check_node_port_from_exit | grep -q '可以连通线路机节点端口 TCP 34567'
+grep -qF '/dev/tcp/192.0.2.10/34567' "$tmp/ssh-cmd"
+ssh_run() { printf 'noise\nNODE_PORT_FAIL\n'; }
+( ! check_node_port_from_exit >/dev/null )
+check_node_port_from_exit | grep -q '放行 TCP 34567'
+# 落地机没有 timeout 或 SSH 已断开：只提醒放行，不判失败。
+ssh_run() { printf 'NODE_PORT_SKIP\n'; }
+check_node_port_from_exit | grep -q '请放行 TCP 34567'
+ssh_run() { return 255; }
+check_node_port_from_exit >/dev/null
+# 地址或端口不合法时不拼进远程命令。
+rm -f "$tmp/ssh-cmd"
+ssh_run() { printf '%s\n' "$*" > "$tmp/ssh-cmd"; printf 'NODE_PORT_FAIL\n'; }
+PUBLIC_IP='192.0.2.10;id' check_node_port_from_exit >/dev/null
+EXT_PORT='34567;id' check_node_port_from_exit >/dev/null
+[ ! -e "$tmp/ssh-cmd" ]
+unset -f ssh_run
+
+# --- 双栈线路机：只有 IPv4 节点出二维码，IPv6 备用节点只给链接 ---
+# 部署输出最下方的二维码最容易被扫；手机走 IPv6 连不上线路机时日志里一条连接都没有，看起来像节点坏了。
+get_country_code() { printf 'US'; }
+get_country_name() { printf 'United States'; }
+show_node() { printf '%s|%s\n' "$1" "$4" >> "$tmp/shown"; }
+PUBLIC_IPV6=2001:db8::10
+: > "$tmp/shown"
+show_config </dev/null >/dev/null 2>&1 || true
+grep -qx '192.0.2.10|all' "$tmp/shown"
+grep -qx '2001:db8::10|uri' "$tmp/shown"
+: > "$tmp/shown"
+show_config qrcode </dev/null >/dev/null 2>&1 || true
+grep -qx '192.0.2.10|qrcode' "$tmp/shown"
+grep -qx '2001:db8::10|uri' "$tmp/shown"
+: > "$tmp/shown"
+show_config mihomo </dev/null >/dev/null 2>&1 || true
+grep -qx '2001:db8::10|mihomo' "$tmp/shown"
+# 落地机没有 IPv6：提示客户端关闭 IPv6，否则发往 IPv6 地址的连接会被拒绝。
+show_config </dev/null 2>&1 | grep -q 'IPv6 路由」设为禁用'
+PUBLIC_IPV6=""
+unset -f show_node get_country_code get_country_name
 
 # --- 卸载：线路机，共享核心无其他使用者时随最后一个协议移除 ---
 : > "$SING_BOX_MANAGED_MARKER"
