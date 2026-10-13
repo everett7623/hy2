@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.57"
+EXPECTED_VERSION="v2.0.58"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -519,7 +519,9 @@ for img in \
     docs/assets/screenshots/02-anytls-install-export.png \
     docs/assets/screenshots/03-system-detect.png \
     docs/assets/screenshots/04-upgrade-center.png \
-    docs/assets/screenshots/05-uninstall-center.png
+    docs/assets/screenshots/05-uninstall-center.png \
+    docs/assets/screenshots/06-install-menu.png \
+    docs/assets/screenshots/07-landing-deploy.png
 do
     [ -s "$img" ] || { echo "Required screenshot missing or empty: $img" >&2; exit 1; }
     grep -q "$img" README.md

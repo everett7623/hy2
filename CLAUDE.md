@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.57 (2026-10-13)
+v2.0.58 (2026-10-13)
 
 ## Project overview
 
@@ -115,7 +115,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.57" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.58" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation
@@ -177,8 +177,10 @@ Consequences when editing:
   original bug — **read that comment before "fixing" a failing negative assertion.** If one fires,
   you almost certainly reintroduced the bug rather than found a stale test.
 - It also asserts that `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `CHANGELOG.md` and all four
-  `docs/*.md` exist and are non-empty, and that the five `docs/assets/screenshots/*.png` files
+  `docs/*.md` exist and are non-empty, and that the seven `docs/assets/screenshots/*.png` files
   exist **and are referenced from `README.md`**. Deleting or renaming a doc or screenshot breaks CI.
+  Screenshots go into the public repo: crop out node links / QR codes and solid-mask every IP,
+  hostname and key before adding one (raw captures in a local `public/img` are never committed).
 - It extracts the auto-update heredoc from each protocol script and the `sb` shortcut heredoc from
   `install.sh`, then runs `bash -n` on the extracted text — generated scripts are syntax-checked too.
 - `tests/helpers/validators.bash` and `tests/helpers/generators.bash` are bats-core style helper
