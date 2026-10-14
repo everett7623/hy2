@@ -39,6 +39,16 @@ validate_server_address 192.0.2.1
 validate_server_address 2001:db8::1
 ! validate_server_address 'bad"address'
 ! reality_target_candidates | grep -qE '(^|\.)(cn)$|github|bing'
+# 大厂候选不含 Microsoft 与 Cloudflare；random_sni 每个分支都必须落在候选列表内。
+! reality_target_candidates | grep -qiE 'microsoft|cloudflare'
+[ "$(reality_target_candidates | wc -l | tr -d ' ')" = 6 ]
+for _n in 0 1 2 3 4 5; do
+    od() { printf ' %s\n' "$_n"; }
+    reality_target_candidates | grep -qxF "$(random_sni)"
+done
+unset -f od
+[ "$(for _n in 0 1 2 3 4 5; do od() { printf ' %s\n' "$_n"; }; random_sni; done | sort -u | wc -l | tr -d ' ')" = 6 ]
+unset -f od
 ss() { printf '%s\n' 'Netid State Recv-Q Send-Q Local Address:Port' 'tcp LISTEN 0 128 0.0.0.0:45678'; }
 port_is_listening 45678
 ! port_is_listening 45679

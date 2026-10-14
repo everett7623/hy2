@@ -48,6 +48,16 @@ is_valid_remote_stage_dir /tmp/landing-remote.Ab12Cd
 ! is_valid_remote_stage_dir /tmp/landing-remote.
 ! is_valid_remote_stage_dir '/tmp/landing-remote.x; rm -rf /'
 ! is_valid_remote_stage_dir /root/landing-remote.abc
+# REALITY 大厂候选不含 Microsoft 与 Cloudflare；random_sni 每个分支都必须落在候选列表内。
+! reality_target_candidates | grep -qiE 'microsoft|cloudflare'
+[ "$(reality_target_candidates | wc -l | tr -d ' ')" = 6 ]
+for _n in 0 1 2 3 4 5; do
+    od() { printf ' %s\n' "$_n"; }
+    reality_target_candidates | grep -qxF "$(random_sni)"
+done
+unset -f od
+[ "$(for _n in 0 1 2 3 4 5; do od() { printf ' %s\n' "$_n"; }; random_sni; done | sort -u | wc -l | tr -d ' ')" = 6 ]
+unset -f od
 
 # --- 密钥生成（模拟 sing-box 输出） ---
 tmp=$(mktemp -d)

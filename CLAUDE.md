@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.59 (2026-10-13)
+v2.0.60 (2026-10-15)
 
 ## Project overview
 
@@ -87,7 +87,7 @@ The generated value is only the interactive default. Users can still enter an ex
 
 ## VLESS REALITY target selection
 
-During installation, `vless.sh` offers two SNI sources. The default keeps the existing random Microsoft, Apple, Amazon, AMD, Mozilla, NVIDIA, Samsung, and Cloudflare candidate pool with parallel reachability probes. The optional custom SNI flow accepts any user-entered domain and validates syntax plus TLS 1.3 reachability over the active address-family strategy. It also provides `bgp.tools` lookup links as an optional way to find candidates; do not scrape its HTML or trust datacenter-default PTR names automatically.
+During installation, `vless.sh` offers two SNI sources. The default keeps the existing random Apple, Amazon, AMD, Mozilla, NVIDIA, and Samsung candidate pool with parallel reachability probes (Microsoft and Cloudflare were removed in v2.0.60; `landing.sh` and AnyTLS's default SNI use the same six). The optional custom SNI flow accepts any user-entered domain and validates syntax plus TLS 1.3 reachability over the active address-family strategy. It also provides `bgp.tools` lookup links as an optional way to find candidates; do not scrape its HTML or trust datacenter-default PTR names automatically.
 
 REALITY targets are only used for handshake camouflage — they do NOT carry client download traffic after the handshake. Users can manually specify alternative valid domains and ports during installation or config modification.
 
@@ -115,7 +115,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.59" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.60" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation

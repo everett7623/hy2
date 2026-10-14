@@ -29,10 +29,17 @@ validate_server_address 192.0.2.1
 validate_server_address 2001:db8::1
 ! validate_server_address 'bad"address'
 
-case "$(random_sni)" in
-    www.microsoft.com|www.apple.com|www.amazon.com|www.amd.com|www.mozilla.org|www.nvidia.com|www.samsung.com|www.cloudflare.com) ;;
-    *) exit 1 ;;
-esac
+# 默认 SNI 只从大厂候选中取，不含 Microsoft 与 Cloudflare；逐个覆盖 random_sni 的每个分支。
+for _n in 0 1 2 3 4 5; do
+    od() { printf ' %s\n' "$_n"; }
+    case "$(random_sni)" in
+        www.apple.com|www.amazon.com|www.amd.com|www.mozilla.org|www.nvidia.com|www.samsung.com) ;;
+        *) exit 1 ;;
+    esac
+done
+unset -f od
+[ "$(for _n in 0 1 2 3 4 5; do od() { printf ' %s\n' "$_n"; }; random_sni; done | sort -u | wc -l | tr -d ' ')" = 6 ]
+unset -f od
 
 NAT_MODE=0
 generate_random_port() { printf '45679'; }

@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.59（2026-10-13） · 本次更新：家宽中转的线路机接管客户端经节点发出的明文 DNS，落地机没有 IPv6 时自动去掉 IPv6 地址，客户端一般不用再关闭 IPv6；已部署的线路机执行「出口检测与诊断」或「升级 sing-box」即可生效。
+> 当前版本：v2.0.60（2026-10-15） · 本次更新：随机大厂 SNI 候选去掉 Microsoft 与 Cloudflare，只保留 Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung；已部署节点保留原有 SNI。
 
 ## 目录
 
@@ -117,7 +117,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/euservh
 
 安装时可选择两种 SNI 来源：
 
-1. 随机大厂 SNI：从 Microsoft、Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung 和 Cloudflare 中随机选择首选目标，再从当前 VPS 并行验证 HTTPS/TLS 可达性。
+1. 随机大厂 SNI：从 Apple、Amazon、AMD、Mozilla、NVIDIA 和 Samsung 中随机选择首选目标，再从当前 VPS 并行验证 HTTPS/TLS 可达性。
 2. 自定义 SNI：脚本提供域名输入和验证流程，也会输出 `bgp.tools` 查询入口作为可选筛选辅助。用户可输入任意候选域名，脚本验证域名格式、TLS 1.3 和当前 IPv4/IPv6 地址族可达性后才采用。
 
 脚本不会自动抓取 `bgp.tools` 页面，也不会直接采用可能无效的机房默认 PTR。自定义域名不可达或不支持 TLS 1.3 时必须重新输入。

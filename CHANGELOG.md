@@ -4,6 +4,12 @@
 
 ---
 
+## v2.0.60 (2026-10-15)
+
+- 随机大厂 SNI 候选去掉 `www.microsoft.com` 与 `www.cloudflare.com`，只保留 Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung 六个。VLESS 安装、修改配置时输入 `auto` 重选、诊断重选，家宽中转部署，以及 AnyTLS 安装时的随机默认 SNI 都用这份候选；手动输入的 SNI 不受限制，其他逻辑不变。
+- 已部署节点保留原有 SNI，不会被自动更换。需要换掉时：VLESS 在「5. 修改配置」的 SNI 提示处输入 `auto`；家宽中转重新部署并选择不保留现有节点参数。
+- 回归测试：候选列表不含 Microsoft / Cloudflare，`random_sni` 的每个分支都落在候选列表内（VLESS、家宽中转、AnyTLS 三处各自校验）。
+
 ## v2.0.59 (2026-10-13)
 
 - 家宽中转不再需要客户端关闭 IPv6。线路机现在会接管客户端经节点发出的明文 DNS（`vless-in` 入站的 53 端口，TCP / UDP 都接管），统一交给落地机解析。落地机没有 IPv6 时，AAAA 查询直接返回空结果，客户端拿不到 IPv6 地址，就不会把只有 IPv4 的落地机连不出去的 IPv6 目标发进隧道。此前这正是「Telegram 能用、网页 / YouTube 打不开」的实际原因。Exclave 默认的远程 DNS 是 `tcp://1.1.1.1`，属于明文 DNS，会被接管；只有加密 DNS（DoH / DoT）或本机直连解析时，仍需在客户端关闭 IPv6。

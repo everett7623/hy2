@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：VLESS Management Script
 # 作者：everettlabs
-# 版本：v2.0.59
+# 版本：v2.0.60
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-10-13
+# 更新日期: 2026-10-15
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -315,29 +315,25 @@ validate_server_address() {
 
 reality_target_candidates() {
     printf '%s\n' \
-        "www.microsoft.com" \
         "www.apple.com" \
         "www.amazon.com" \
         "www.amd.com" \
         "www.mozilla.org" \
         "www.nvidia.com" \
-        "www.samsung.com" \
-        "www.cloudflare.com"
+        "www.samsung.com"
 }
 
 random_sni() {
     local _number
     _number=$(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ')
     [ -z "$_number" ] && _number=$(date +%s)
-    case $((_number % 8)) in
-        0) echo "www.microsoft.com" ;;
-        1) echo "www.apple.com" ;;
-        2) echo "www.amazon.com" ;;
-        3) echo "www.amd.com" ;;
-        4) echo "www.mozilla.org" ;;
-        5) echo "www.nvidia.com" ;;
-        6) echo "www.samsung.com" ;;
-        *) echo "www.cloudflare.com" ;;
+    case $((_number % 6)) in
+        0) echo "www.apple.com" ;;
+        1) echo "www.amazon.com" ;;
+        2) echo "www.amd.com" ;;
+        3) echo "www.mozilla.org" ;;
+        4) echo "www.nvidia.com" ;;
+        *) echo "www.samsung.com" ;;
     esac
 }
 
@@ -3238,7 +3234,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.59${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}VLESS Management Script${PLAIN} ${DIM}v2.0.60${PLAIN}"
         echo -e "  ${DIM}sing-box native VLESS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
