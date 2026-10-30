@@ -147,8 +147,9 @@ CERT_MODE=self_signed
 PASSWORD=Abcdef12; SERVER_NAME=www.example.com
 shadowrocket_uri=$(export_shadowrocket_anytls 192.0.2.1 8443 'AnyTLS Test' 'TestPin+/=')
 [ "$shadowrocket_uri" = "anytls://Abcdef12@192.0.2.1:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
+test_fingerprint=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 certificate_public_key_sha256() { printf 'TestPin+/='; }
-certificate_fingerprint_sha256() { printf 'AA:BB:CC:DD'; }
+certificate_fingerprint_sha256() { printf '%s' "$test_fingerprint"; }
 node_output=$(show_node 192.0.2.1 8443 v4)
 echo "$node_output" | grep -q 'URI 分享链接'
 ! echo "$node_output" | grep -q 'Throne URI'
@@ -156,14 +157,14 @@ echo "$node_output" | grep -q 'URI 分享链接'
 echo "$node_output" | grep -q 'type: anytls, server: 192.0.2.1, port: 8443'
 echo "$node_output" | grep -q "password: 'Abcdef12'"
 echo "$node_output" | grep -q "sni: 'www.example.com'"
-echo "$node_output" | grep -q "skip-cert-verify: false, fingerprint: 'AA:BB:CC:DD'"
+echo "$node_output" | grep -q "skip-cert-verify: false, fingerprint: '${test_fingerprint}'"
 ! echo "$node_output" | grep -q 'password: "Abcdef12"'
 [ "$(yaml_single_quote_escape "a'b")" = "a''b" ]
 echo "$node_output" | grep -q '证书校验'
 echo "$node_output" | grep -q '公钥 SHA256 Pin: TestPin+/='
-echo "$node_output" | grep -q '证书 SHA256 指纹: AA:BB:CC:DD'
-echo "$node_output" | grep -q '严格模式: Mihomo / Surfboard 可使用证书指纹'
-echo "$node_output" | grep -q '兼容模式: URI / Shadowrocket / Loon 使用 skip-cert-verify=true'
+echo "$node_output" | grep -q "证书 SHA256 指纹: ${test_fingerprint}"
+echo "$node_output" | grep -q '严格模式: Mihomo / Surfboard / Loon 使用证书指纹'
+echo "$node_output" | grep -q '兼容模式: URI / Shadowrocket 使用 skip-cert-verify=true'
 ! echo "$node_output" | grep -q '当前模式: skip-cert-verify=true'
 ! echo "$node_output" | grep -q 'Sing-box'
 ! echo "$node_output" | grep -q '"outbounds"'
@@ -172,8 +173,36 @@ echo "$node_output" | grep -q 'Shadowrocket 配置'
 ! echo "$node_output" | grep -q 'Shadowrocket 暂不支持 AnyTLS URI 导入格式'
 ! echo "$node_output" | grep -q '"listen_port": 2080'
 
+# Surfboard / Loon 按官方文档输出：可选参数写成 key=value，Loon 密码用双引号；
+# 自签证书读到指纹时钉住证书并严格校验，读不到才退回 skip-cert-verify=true。
+echo "$node_output" | grep -qF "skip-cert-verify=true, sni=www.example.com, server-cert-fingerprint-sha256=${test_fingerprint}"
+echo "$node_output" | grep -qF ",\"Abcdef12\",skip-cert-verify=false,sni=www.example.com,tls-cert-sha256=${test_fingerprint}"
+[ "$(export_surfboard_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = "AnyTLS Test = anytls, 192.0.2.1, 8443, Abcdef12, skip-cert-verify=true, sni=www.example.com, server-cert-fingerprint-sha256=${test_fingerprint}" ]
+[ "$(export_surfboard_anytls 192.0.2.1 8443 'AnyTLS Test')" = 'AnyTLS Test = anytls, 192.0.2.1, 8443, Abcdef12, skip-cert-verify=true, sni=www.example.com' ]
+[ "$(export_loon_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = "AnyTLS Test = AnyTLS,192.0.2.1,8443,\"Abcdef12\",skip-cert-verify=false,sni=www.example.com,tls-cert-sha256=${test_fingerprint}" ]
+[ "$(export_loon_anytls 192.0.2.1 8443 'AnyTLS Test')" = 'AnyTLS Test = AnyTLS,192.0.2.1,8443,"Abcdef12",skip-cert-verify=true,sni=www.example.com' ]
+# 域名证书走系统信任链，不得钉住续期后就会变化的证书指纹。
+CERT_MODE=existing
+[ "$(export_surfboard_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = 'AnyTLS Test = anytls, 192.0.2.1, 8443, Abcdef12, skip-cert-verify=false, sni=www.example.com' ]
+[ "$(export_loon_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = 'AnyTLS Test = AnyTLS,192.0.2.1,8443,"Abcdef12",skip-cert-verify=false,sni=www.example.com' ]
+CERT_MODE=self_signed
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
+
+# 证书指纹统一为 64 位小写十六进制、不带冒号；openssl 输出异常时不得导出半截指纹。
+(
+fingerprint_cert="$tmp/fingerprint-cert.pem"
+ANYTLS_LIB_ONLY=1 . ./anytls.sh
+printf '%s\n' 'mock certificate' > "$fingerprint_cert"
+CERT_PATH="$fingerprint_cert"
+openssl() { printf '%s\n' 'sha256 Fingerprint=FA:C2:6F:65:C0:34:82:9D:A4:2D:74:0D:23:C4:A7:20:24:75:A3:83:4F:0E:BA:EC:AE:5F:93:4A:DB:BF:D6:40'; }
+[ "$(certificate_fingerprint_sha256)" = 'fac26f65c034829da42d740d23c4a7202475a3834f0ebaecae5f934adbbfd640' ]
+openssl() { printf '%s\n' 'SHA256 Fingerprint=FA:C2:6F'; }
+( ! certificate_fingerprint_sha256 >/dev/null )
+openssl() { return 1; }
+( ! certificate_fingerprint_sha256 >/dev/null )
+)
 
 # 升级锁必须拒绝并发任务，并在释放后允许重试。
 UPGRADE_LOCK_FILE="$tmp/anytls-upgrade.lock"; lock_busy=0
@@ -285,6 +314,10 @@ case "$(uname -s)" in
         }
         certificate_matches_server_name "$ANYTLS_CERT"
         unset -f openssl stat
+        # 真实 openssl 下导出的指纹必须等于证书 DER 的 SHA-256。
+        cert_file="$ANYTLS_CERT"
+        real_fingerprint=$(ANYTLS_LIB_ONLY=1 . ./anytls.sh; CERT_PATH="$cert_file"; certificate_fingerprint_sha256)
+        [ "$real_fingerprint" = "$(openssl x509 -in "$cert_file" -outform DER | openssl dgst -sha256 | awk '{ print $NF }')" ]
         ;;
 esac
 write_config

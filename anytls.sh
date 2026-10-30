@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.0.61
+# 版本：v2.0.62
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1251,9 +1251,14 @@ certificate_public_key_sha256() {
 }
 
 certificate_fingerprint_sha256() {
+    local _fp
     [ -n "$CERT_PATH" ] && [ -s "$CERT_PATH" ] || return 1
-    openssl x509 -in "$CERT_PATH" -noout -fingerprint -sha256 2>/dev/null \
-        | awk -F= 'NF == 2 { print $2 }'
+    # 输出 64 位小写十六进制、不带冒号：Surfboard / Loon 官方格式，Mihomo 同样接受
+    _fp=$(openssl x509 -in "$CERT_PATH" -noout -fingerprint -sha256 2>/dev/null \
+        | awk -F= 'NF == 2 { gsub(":", "", $2); print tolower($2) }')
+    case "$_fp" in ''|*[!0-9a-f]*) return 1 ;; esac
+    [ "${#_fp}" -eq 64 ] || return 1
+    printf '%s\n' "$_fp"
 }
 
 has_control_chars() {
@@ -2291,17 +2296,28 @@ export_mihomo_anytls() {
     fi
 }
 
+# Loon 官方格式：名称 = AnyTLS,服务器,端口,"密码",可选参数（https://nsloon.app/docs/Node/）
 export_loon_anytls() {
-    local _server="$1" _port="$2" _node="$3"
-    local _skip="false"
-    [ "$CERT_MODE" = "self_signed" ] && _skip="true"
-    printf "%s = AnyTLS, %s, %s, '%s', skip-cert-verify=%s, sni=%s" "$_node" "$_server" "$_port" "$PASSWORD" "$_skip" "$SERVER_NAME"
+    local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _skip="false" _pin=""
+    if [ "$CERT_MODE" = "self_signed" ]; then
+        if [ -n "$_fingerprint" ]; then
+            _pin=",tls-cert-sha256=${_fingerprint}"
+        else
+            _skip="true"
+        fi
+    fi
+    printf '%s = AnyTLS,%s,%s,"%s",skip-cert-verify=%s,sni=%s%s' "$_node" "$_server" "$_port" "$PASSWORD" "$_skip" "$SERVER_NAME" "$_pin"
 }
 
+# Surfboard 官方格式：必填项按位置，可选项为 key=value（https://getsurfboard.com/docs/profile-format/proxy/external-proxy/anytls/）
+# 自签证书与官方示例、landing.sh 一致：skip-cert-verify=true 再用指纹固定证书。
 export_surfboard_anytls() {
-    local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _skip="false"
-    [ "$CERT_MODE" = "self_signed" ] && [ -z "$_fingerprint" ] && _skip="true"
-    printf '%s = anytls, %s, %s, %s, %s, %s, %s, true' "$_node" "$_server" "$_port" "$PASSWORD" "$_skip" "$SERVER_NAME" "$_fingerprint"
+    local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _skip="false" _pin=""
+    if [ "$CERT_MODE" = "self_signed" ]; then
+        _skip="true"
+        [ -n "$_fingerprint" ] && _pin=", server-cert-fingerprint-sha256=${_fingerprint}"
+    fi
+    printf '%s = anytls, %s, %s, %s, skip-cert-verify=%s, sni=%s%s' "$_node" "$_server" "$_port" "$PASSWORD" "$_skip" "$SERVER_NAME" "$_pin"
 }
 
 export_shadowrocket_anytls() {
@@ -2325,8 +2341,8 @@ print_certificate_verification_status() {
         echo -e "${GREEN}[OK] 已读取证书信息。${PLAIN}"
         [ -n "$_pin" ] && echo "公钥 SHA256 Pin: ${_pin}"
         [ -n "$_fingerprint" ] && echo "证书 SHA256 指纹: ${_fingerprint}"
-        echo "严格模式: Mihomo / Surfboard 可使用证书指纹"
-        echo "兼容模式: URI / Shadowrocket / Loon 使用 skip-cert-verify=true"
+        echo "严格模式: Mihomo / Surfboard / Loon 使用证书指纹"
+        echo "兼容模式: URI / Shadowrocket 使用 skip-cert-verify=true"
     else
         echo -e "${YELLOW}[WARN] 未读取到证书 pin/指纹，客户端输出将使用 skip-cert-verify=true 兼容模式。${PLAIN}"
     fi
@@ -2389,7 +2405,7 @@ show_node() {
 
     if should_show_output "$_mode" "loon"; then
         echo -e "${GREEN}Loon 配置:${PLAIN}"
-        print_copy_block "$(export_loon_anytls "$_server" "$_port" "$_node")"
+        print_copy_block "$(export_loon_anytls "$_server" "$_port" "$_node" "$_cert_fingerprint")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -2837,7 +2853,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.61${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.0.62${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.61"
+EXPECTED_VERSION="v2.0.62"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -231,7 +231,7 @@ grep -q "password: '\${_pass}'" ss.sh
 grep -q "Shadowsocks, %s, %s, %s, '%s'" ss.sh
 grep -q "name: '\${_safe_node}'" anytls.sh
 grep -q "fingerprint: '\${_fingerprint}'" anytls.sh
-grep -q "AnyTLS, %s, %s, '%s'" anytls.sh
+grep -q 'AnyTLS,%s,%s,"%s"' anytls.sh
 grep -q "name: '\${safe_node}'" euservhy2.sh
 grep -q "password: '\${safe_password}'" euservhy2.sh
 grep -q "Hysteria2, \${ipv6_raw}, \${port}, '\${password}'" euservhy2.sh

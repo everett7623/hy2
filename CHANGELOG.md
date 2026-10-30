@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.62 (2026-10-30)
+
+- 修复 AnyTLS 的 Surfboard 导出。按 [Surfboard 官方文档](https://getsurfboard.com/docs/profile-format/proxy/external-proxy/anytls/)，只有名称、服务器、端口、密码按位置填写，其余参数写成 `key=value`；此前 `skip-cert-verify`、SNI、证书指纹和 `reuse` 全部按位置输出，Surfboard 无法正确识别。现在输出 `skip-cert-verify=…, sni=…`，自签证书再加 `server-cert-fingerprint-sha256=…`。
+- 修复 AnyTLS 的 Loon 导出。按 [Loon 官方文档](https://nsloon.app/docs/Node/) 的 `名称 = AnyTLS,服务器,端口,"密码",可选参数` 格式，密码改用双引号（此前为单引号）。自签证书读到指纹时，Loon 也改为 `skip-cert-verify=false` 加 `tls-cert-sha256=…` 钉住证书，不再跳过证书校验。家宽中转的 AnyTLS 节点同步改用同一格式。
+- 证书 SHA256 指纹改为 64 位小写十六进制、不带冒号。此前是 openssl 默认的冒号分隔大写格式，而 Surfboard 要求 64 个字符；Mihomo 的 `fingerprint` 两种写法都接受，节点信息里显示的指纹同步改为新格式。openssl 输出异常时不再导出半截指纹。
+- 已有证书与 ACME 模式仍走系统信任链校验，Surfboard 不再附带会随证书续期变化的指纹。
+- 「证书校验」提示更新为：严格模式 Mihomo / Surfboard / Loon 使用证书指纹，兼容模式（`skip-cert-verify=true`）只剩 URI / Shadowrocket。已部署节点无需重装，重新查看节点信息后导入即可。
+- 回归测试：Surfboard / Loon 在自签有指纹、自签无指纹、已有证书三种情况下逐字比对输出；指纹规范化（冒号大写转小写、长度异常拒绝）；Linux 下用真实 openssl 校验导出的指纹等于证书 DER 的 SHA-256；家宽中转 Loon 导出与读不到证书时的回退。
+
 ## v2.0.61 (2026-10-30)
 
 - 家宽 / 落地中转新增节点协议选择。一键部署在「落地机信息」之前多一步「节点协议（客户端 → 本机）」：`[1] AnyTLS（推荐）`，直接回车即选；`[2] VLESS + REALITY`，即原有方案。协议只决定客户端怎么连线路机，与「连接方式」（线路机和落地机之间由谁发起 WireGuard 连接）互不影响，可任意搭配，所以两者分成两个菜单，格式一致。

@@ -660,12 +660,13 @@ export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "type: anytls, server: 192
 export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "sni: 'www.amd.com', skip-cert-verify: false, fingerprint: '${_fp}'}"
 export_mihomo_anytls 2001:db8::10 34567 node | grep -qF "server: '2001:db8::10', port: 34567"
 [ "$(export_surfboard_anytls 192.0.2.10 34567 node)" = "node = anytls, 192.0.2.10, 34567, ${TEST_ANYTLS_PASS}, skip-cert-verify=true, sni=www.amd.com, server-cert-fingerprint-sha256=${_fp}" ]
-export_loon_anytls | grep -q '请使用 URI 或 Mihomo 配置'
+[ "$(export_loon_anytls 192.0.2.10 34567 node)" = "node = AnyTLS,192.0.2.10,34567,\"${TEST_ANYTLS_PASS}\",skip-cert-verify=false,sni=www.amd.com,tls-cert-sha256=${_fp}" ]
 export_quantumultx_anytls | grep -q '暂不支持 AnyTLS'
 # 读不到证书时退回跳过校验，不输出空指纹。
 LANDING_CERT="$tmp/missing.pem"
 export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "sni: 'www.amd.com', skip-cert-verify: true}"
 [ "$(export_surfboard_anytls 192.0.2.10 34567 node)" = "node = anytls, 192.0.2.10, 34567, ${TEST_ANYTLS_PASS}, skip-cert-verify=true, sni=www.amd.com" ]
+[ "$(export_loon_anytls 192.0.2.10 34567 node)" = "node = AnyTLS,192.0.2.10,34567,\"${TEST_ANYTLS_PASS}\",skip-cert-verify=true,sni=www.amd.com" ]
 LANDING_CERT="$LANDING_CERT_DIR/cert.pem"
 [ "$(generate_node_name US relay AnyTLS-Landing IPv4)" = '🇺🇸 US | relay | AnyTLS-Landing | IPv4' ]
 _out=$(show_node 192.0.2.10 34567 v4 uri US)

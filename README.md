@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.61（2026-10-30） · 本次更新：家宽 / 落地中转部署时可选节点协议，新增 AnyTLS（默认，自签证书，无需域名），原来的 VLESS + REALITY 作为第二项保留；已部署的节点不受影响。
+> 当前版本：v2.0.62（2026-10-30） · 本次更新：AnyTLS 的 Surfboard / Loon 导出按官方文档修正格式，自签证书在两者中改用 64 位小写十六进制证书指纹严格校验；已部署节点重新查看节点信息后导入即可。
 
 ## 目录
 
@@ -143,7 +143,7 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 
 | 选项 | 说明 |
 | --- | --- |
-| 1 AnyTLS（**推荐，默认**） | 自签证书，无需域名，自带流量填充。URI 带 `insecure=1`，Exclave、Shadowrocket 可直接导入；Mihomo / Surfboard 配置自带证书指纹，严格校验 |
+| 1 AnyTLS（**推荐，默认**） | 自签证书，无需域名，自带流量填充。URI 带 `insecure=1`，Exclave、Shadowrocket 可直接导入；Mihomo / Surfboard / Loon 配置自带证书指纹，严格校验 |
 | 2 VLESS + REALITY | 原有方案：借用大厂网站（Apple、Amazon 等）完成 TLS 握手，客户端无需信任证书 |
 
 两种连接方式（同一套一键部署，按提示选择）：
@@ -208,7 +208,7 @@ IPv6 问题的来龙去脉：客户端开着 IPv6 时，浏览器、YouTube 会�
 
 HTTP/SOCKS 仅导出 HTTP URI、SOCKS5 URI 与 SOCKS5 终端二维码，不提供 Mihomo 单行配置。
 
-家宽 / 落地中转按所选节点协议导出：VLESS 同上表 VLESS REALITY 列；AnyTLS 提供 URI、Mihomo、Surfboard、Shadowrocket 与二维码，Loon 暂无经官方文档确认的 AnyTLS 格式，请用 URI 或 Mihomo 配置。
+家宽 / 落地中转按所选节点协议导出：VLESS 同上表 VLESS REALITY 列；AnyTLS 提供 URI、Mihomo、Surfboard、Shadowrocket、Loon 与二维码。
 
 当前保留的导出入口包括 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 和二维码；具体可用格式取决于协议。Throne 与 Sing-box/SFA 客户端 JSON 导出暂未提供。
 

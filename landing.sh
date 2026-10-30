@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.61
+# 版本：v2.0.62
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -3479,8 +3479,15 @@ export_surfboard_anytls() {
     fi
 }
 
+# Loon 官方格式：名称 = AnyTLS,服务器,端口,"密码",可选参数（https://nsloon.app/docs/Node/）
 export_loon_anytls() {
-    printf 'Loon 暂无经官方文档确认的 AnyTLS 配置格式，请使用 URI 或 Mihomo 配置。'
+    local _server="$1" _port="$2" _node="$3" _fp _skip="false" _pin=""
+    if _fp=$(landing_certificate_sha256); then
+        _pin=",tls-cert-sha256=${_fp}"
+    else
+        _skip="true"
+    fi
+    printf '%s = AnyTLS,%s,%s,"%s",skip-cert-verify=%s,sni=%s%s' "$_node" "$_server" "$_port" "$ANYTLS_PASSWORD" "$_skip" "$SERVER_NAME" "$_pin"
 }
 
 export_shadowrocket_anytls() {
@@ -4367,7 +4374,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.61${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.62${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
