@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.68
+# 版本：v2.0.69
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -449,8 +449,8 @@ get_status() {
 show_header() {
     clear_screen
     echo -e "  ${SKYBLUE}${BOLD}+--------------------------------------------------------+${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}|${PLAIN}  ${CYAN}${BOLD}SING-BOX PROXY SUITE${PLAIN}        ${GREEN}${BOLD}ONLINE${PLAIN}           ${SKYBLUE}${BOLD}|${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}|${PLAIN}  ${GREEN}${BOLD}v2.0.68${PLAIN}   ${DIM}VLESS  ANYTLS  HY2  SS  MIXED${PLAIN}       ${SKYBLUE}${BOLD}|${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}|${PLAIN}  ${WHITE}${BOLD}SING-BOX PROXY SUITE${PLAIN}        ${GREEN}${BOLD}ONLINE${PLAIN}           ${SKYBLUE}${BOLD}|${PLAIN}"
+    echo -e "  ${SKYBLUE}${BOLD}|${PLAIN}  ${YELLOW}${BOLD}v2.0.69${PLAIN}   ${CYAN}VLESS  ANYTLS  HY2  SS  MIXED${PLAIN}       ${SKYBLUE}${BOLD}|${PLAIN}"
     echo -e "  ${SKYBLUE}${BOLD}+--------------------------------------------------------+${PLAIN}"
     echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
     echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
@@ -459,13 +459,13 @@ show_header() {
 
 show_status_summary() {
     get_status
-    echo -e "  ${WHITE}${BOLD}环境概览${PLAIN}"
+    echo -e "  ${YELLOW}${BOLD}环境概览${PLAIN}"
     echo -e "  ${DIM}IPv4${PLAIN} ${WHITE}${NET_IPV4}${PLAIN}  ${DIM}IPv6${PLAIN} ${WHITE}${NET_IPV6}${PLAIN}"
     echo -e "  ${DIM}系统${PLAIN} ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
     echo -e "  ${DIM}内核${PLAIN} ${WHITE}${KERNEL_INFO}${PLAIN}  ${DIM}BBR${PLAIN} ${WHITE}${BBR_STATUS}${PLAIN}"
     echo -e "  ${DIM}地区${PLAIN} ${WHITE}${COUNTRY_INFO}${PLAIN}"
     echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
-    echo -e "  ${WHITE}${BOLD}协议状态${PLAIN}"
+    echo -e "  ${YELLOW}${BOLD}协议状态${PLAIN}"
     echo -e "  VLESS         $(echo -e "$VLESS_STATUS")"
     echo -e "  AnyTLS        $(echo -e "$ANYTLS_STATUS")"
     echo -e "  Hysteria2     $(echo -e "$HY2_STATUS")"
@@ -851,7 +851,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.0.68" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.0.69" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -1212,16 +1212,16 @@ main_menu() {
     while true; do
         show_header
         show_status_summary
-        echo -e "  ${WHITE}${BOLD}主菜单${PLAIN}"
+        echo -e "  ${YELLOW}${BOLD}主菜单${PLAIN}"
         echo -e "  ${DIM}快捷命令: ${GREEN}sb${PLAIN}${DIM} 可直接打开本菜单${PLAIN}"
         echo ""
-        echo -e "  ${DIM}部署与分享${PLAIN}"
+        echo -e "  ${YELLOW}${BOLD}部署与分享${PLAIN}"
         echo -e "  [1] 安装 / 重装协议"
         echo -e "  [2] 查看节点信息"
         echo -e "  [3] 导出客户端配置"
         echo -e "  [4] 生成二维码"
         echo ""
-        echo -e "  ${DIM}运维与安全${PLAIN}"
+        echo -e "  ${YELLOW}${BOLD}运维与安全${PLAIN}"
         echo -e "  [5] 服务管理"
         echo -e "  [6] 系统检测 / BBR 优化"
         echo -e "  [7] 备份 / 恢复"
