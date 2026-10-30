@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.67（2026-10-30） · 本次更新：AnyTLS 的 Surfboard / Loon 导出按官方文档修正格式，自签证书在两者中改用 64 位小写十六进制证书指纹严格校验；已部署节点重新查看节点信息后导入即可。
+> 当前版本：v2.0.68（2026-10-30） · 本次更新：AnyTLS 的 Surfboard / Loon 导出按官方文档修正格式，自签证书在两者中改用 64 位小写十六进制证书指纹严格校验；已部署节点重新查看节点信息后导入即可。
 
 ## 目录
 
