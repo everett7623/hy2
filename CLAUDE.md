@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.0.62 (2026-10-30)
+v2.0.63 (2026-10-30)
 
 ## Project overview
 
@@ -96,6 +96,16 @@ The script also provides a diagnostic entry point. When the current REALITY targ
 bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh) diagnose
 ```
 
+
+### Version increment policy
+
+Choose the next version from the user-visible scope of the change:
+
+- `PATCH` (`v2.0.x+1`): bug fixes, compatibility fixes, formatting corrections, tests, and documentation updates that do not add behavior.
+- `MINOR` (`v2.x+1.0`): backward-compatible user-facing features, new protocol/export modes, or new operational flows.
+- `MAJOR` (`v3.0.0`): breaking changes to commands, configuration, exports, compatibility, or removal of supported behavior.
+
+If one change spans categories, use the highest applicable level. Every release commit must update the current version and date in all synchronized locations, add a top `CHANGELOG.md` entry, and update the README summary. Run the repository version grep and `bash tests/validate_scripts.sh` before pushing.
 ## Version synchronization requirement
 
 Every commit that changes code, tests, or documentation MUST increment the unified project version and synchronize ALL of the following locations before pushing — do NOT defer version updates until a GitHub Release is created:
@@ -115,7 +125,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.0.62" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.0.63" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation

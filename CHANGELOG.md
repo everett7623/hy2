@@ -4,6 +4,10 @@
 
 ---
 
+## v2.0.63 (2026-10-30)
+
+- 按版本递增策略同步当前版本号；本次为兼容性与排版修复，使用 PATCH 版本递增。
+
 ## v2.0.62 (2026-10-30)
 
 - 修复 AnyTLS 的 Surfboard 导出。按 [Surfboard 官方文档](https://getsurfboard.com/docs/profile-format/proxy/external-proxy/anytls/)，只有名称、服务器、端口、密码按位置填写，其余参数写成 `key=value`；此前 `skip-cert-verify`、SNI、证书指纹和 `reuse` 全部按位置输出，Surfboard 无法正确识别。现在输出 `skip-cert-verify=…, sni=…`，自签证书再加 `server-cert-fingerprint-sha256=…`。
