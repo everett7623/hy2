@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.60（2026-10-15） · 本次更新：随机大厂 SNI 候选去掉 Microsoft 与 Cloudflare，只保留 Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung；已部署节点保留原有 SNI。
+> 当前版本：v2.0.61（2026-10-30） · 本次更新：家宽 / 落地中转部署时可选节点协议，新增 AnyTLS（默认，自签证书，无需域名），原来的 VLESS + REALITY 作为第二项保留；已部署的节点不受影响。
 
 ## 目录
 
@@ -33,7 +33,7 @@
 | 节点导出 | 按协议输出 URI、Mihomo、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码 |
 | 服务管理 | 安装、重装、查看状态、启停、重启、日志、修改配置、升级和卸载 |
 | 共享核心 | AnyTLS、VLESS、HTTP/SOCKS 与家宽中转安全共用 sing-box，升级前检查全部现存配置 |
-| 家宽中转 | 线路机一键 SSH 部署落地机，用户态 WireGuard 隧道，自动验证出口 IP，失败两端回滚 |
+| 家宽中转 | 节点协议可选 AnyTLS（默认）或 VLESS REALITY；线路机一键 SSH 部署落地机，用户态 WireGuard 隧道，自动验证出口 IP，失败两端回滚 |
 | 系统工具 | 网络诊断、手动备份/恢复（恢复前校验归档、失败自动回滚），以及按需启用标准 `bbr + fq` |
 
 ## 快速开始
@@ -129,15 +129,22 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 适合「线路好的 VPS 做入口，家宽 / 住宅 IP 机器做出口」的场景，例如流媒体解锁或需要住宅 IP 的网站。
 
 ```text
-客户端 ──VLESS REALITY──▶ 线路机 ══WireGuard（UDP）══▶ 落地机 / 家宽机 ──▶ 互联网
+客户端 ──AnyTLS / VLESS REALITY──▶ 线路机 ══WireGuard（UDP）══▶ 落地机 / 家宽机 ──▶ 互联网
 ```
 
-使用方法：在**线路机**上运行 `sb` → `[1] 安装 / 重装协议` → `[6] 家宽 / 落地中转` → `1. 一键部署`，按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
+使用方法：在**线路机**上运行 `sb` → `[1] 安装 / 重装协议` → `[6] 家宽 / 落地中转` → `1. 一键部署`，选择节点协议（直接回车为 AnyTLS），按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
 
-1. 在线路机生成 VLESS REALITY 节点参数与 WireGuard 密钥；
+1. 在线路机生成节点参数（AnyTLS：连接密码与自签证书；VLESS：UUID 与 REALITY 密钥）与 WireGuard 密钥；
 2. 经 SSH 在落地机安装 sing-box 并启动 WireGuard 落地端（默认由落地机主动连接线路机，见下表）；
 3. 启动线路机并经隧道实测出口 IP，确认是落地机 IP、且大请求也能通过后才完成部署，否则两端自动恢复原状；再由落地机（境外）实际连一次线路机的节点端口，商家面板 / 安全组没放行时直接提示；
 4. 输出指向线路机的节点链接，节点名称按落地机出口 IP 的国家命名。双栈线路机只给 IPv4 节点出二维码，IPv6 节点仅作备用链接。
+
+两种节点协议（客户端连线路机用哪种，与下面的连接方式互不影响，可任意搭配）：
+
+| 选项 | 说明 |
+| --- | --- |
+| 1 AnyTLS（**推荐，默认**） | 自签证书，无需域名，自带流量填充。URI 带 `insecure=1`，Exclave、Shadowrocket 可直接导入；Mihomo / Surfboard 配置自带证书指纹，严格校验 |
+| 2 VLESS + REALITY | 原有方案：借用大厂网站（Apple、Amazon 等）完成 TLS 握手，客户端无需信任证书 |
 
 两种连接方式（同一套一键部署，按提示选择）：
 
@@ -150,10 +157,10 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 
 ### 实测可用的完整流程
 
-实测环境：线路机为美国双栈 VPS（Debian 13），落地机为美国家宽 VM（只有 IPv4），客户端为 Android Exclave。
+实测环境：线路机为美国双栈 VPS（Debian 13），落地机为美国家宽 VM（只有 IPv4），客户端为 Android Exclave，节点协议为 VLESS + REALITY（v2.0.59）。AnyTLS 只换了客户端到线路机这一段，部署流程相同。
 
 1. 在线路机运行 `sb` → `[1] 安装 / 重装协议` → `[6] 家宽 / 落地中转` → `1. 一键部署`。
-2. 连接方式直接回车选 `[1]`，依次填写落地机 IP、SSH 端口和用户（默认值直接回车），再输入一次落地机 SSH 密码。WireGuard 密钥由两端自动生成和交换，不需要手动处理任何密钥。
+2. 节点协议和连接方式都可以直接回车（`[1] AnyTLS`、`[1] 落地机主动连接本机`），依次填写落地机 IP、SSH 端口和用户（默认值直接回车），再输入一次落地机 SSH 密码。WireGuard 密钥由两端自动生成和交换，不需要手动处理任何密钥。
 3. 部署结束前依次出现以下三行，就说明线路机到落地机这一段已经全部打通：
    - `✓ 隧道出口验证通过`：出口 IP 是落地机，域名解析与大包都正常；
    - `✓ 从落地机（境外）可以连通线路机节点端口 TCP xxxx`：商家面板 / 安全组已放行节点端口；
@@ -162,7 +169,7 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 5. **落地机没有 IPv6 时，客户端一般不用改设置**：v2.0.59 起，线路机会接管客户端经节点发出的明文 DNS 查询（TCP / UDP 53 端口，Exclave 默认的远程 DNS `tcp://1.1.1.1` 就属于这种），并去掉其中的 IPv6 地址，客户端自然只走 IPv4。只有客户端的远程 DNS 是加密 DNS（`https://`、`tls://` 开头），或者在本机直连解析时，线路机看不到这些查询，才需要在客户端关闭 IPv6：Exclave 把「IPv6 路由」设为「禁用」（已实测）；Mihomo / Clash 系配置 `ipv6: false`。
 
 <details>
-<summary>一键部署全过程截图（IP 已打码）</summary>
+<summary>一键部署全过程截图（v2.0.58，VLESS；IP 已打码）</summary>
 
 ![家宽 / 落地中转一键部署](docs/assets/screenshots/07-landing-deploy.png)
 
@@ -176,7 +183,9 @@ IPv6 问题的来龙去脉：客户端开着 IPv6 时，浏览器、YouTube 会�
 - 部署失败时会直接显示线路机日志里的 WireGuard 报错；也可在菜单「出口检测与诊断」中经 SSH 查看落地机状态。
 - Telegram 能用、网页 / YouTube 打不开：实测中最常见的原因是客户端拿到了 IPv6 地址，而落地机只有 IPv4。这时线路机日志里会出现 `[240e:…]:443 … connection was refused` 这类 IPv6 地址被拒绝的报错。v2.0.59 起线路机会自动过滤经节点 DNS 查询返回的 IPv6 地址，已部署的节点在线路机执行「出口检测与诊断」或「升级 sing-box」即可生效；客户端用加密 DNS 时，仍需在客户端关闭 IPv6（见上）。其次才是隧道大包被丢（线路机与落地机之间路径 MTU 偏小）：v2.0.55 起隧道 MTU 为 1280，部署与诊断都会用大请求复测；v2.0.56 起两端隧道包不再带 DF，路径更小时分片送达。更早部署的节点在线路机执行「出口检测与诊断」或「升级 sing-box」即可自动修复，无需重新对接。
 - 客户端节点超时、线路机日志里却一条连接都没有：说明连接根本没到线路机。常见原因是导入了 IPv6 节点、节点端口没放行，或者线路机 IP / 端口被墙。
-- 只有本节点流量从落地机出网；REALITY 握手从线路机直连伪装站，SSH 与系统更新也不走隧道。
+- 只有本节点流量从落地机出网；VLESS 的 REALITY 握手从线路机直连伪装站，SSH 与系统更新也不走隧道。
+- 换协议解决不了 IP 被封：线路机 IP 被封（所有端口都连不上）时两种协议都用不了，只能换 IP。AnyTLS 换掉的是 REALITY 的握手与流量特征，不保证不被封。
+- AnyTLS 证书：自签证书放在线路机 `/etc/sing-box/landing-cert/`，有效期 10 年。选「保留现有节点参数」重新部署时沿用原证书，客户端里固定的证书指纹不变。节点信息页会显示证书 SHA256，Exclave 可在节点设置里手动填入以固定证书。
 - 两端都不修改系统路由、不开启 `ip_forward`、不写 iptables NAT；落地机拒绝隧道访问其局域网与本机服务。
 - 选 1（落地机主动连接）时家宽换 IP 无需任何操作；「更新落地机地址」只改 SSH 管理地址。选 2 时推荐给落地机配置 DDNS 域名：线路机每 2 分钟检查一次解析（需要 cron），变化后自动重启服务重连；若填固定 IP，换 IP 后在线路机菜单选择「更新落地机地址」。
 - 客户端 DNS 需经节点解析（如 Mihomo 使用 fake-ip），否则网站可能看到本地 DNS。
@@ -198,6 +207,8 @@ IPv6 问题的来龙去脉：客户端开着 IPv6 时，浏览器、YouTube 会�
 “✅”表示脚本提供对应格式或兼容 URI，不代表所有历史客户端版本均支持。升级客户端后仍无法导入时，优先使用 URI 或 Mihomo 配置，并核对协议、UUID/密码、SNI、公钥、short ID、端口和传输类型。
 
 HTTP/SOCKS 仅导出 HTTP URI、SOCKS5 URI 与 SOCKS5 终端二维码，不提供 Mihomo 单行配置。
+
+家宽 / 落地中转按所选节点协议导出：VLESS 同上表 VLESS REALITY 列；AnyTLS 提供 URI、Mihomo、Surfboard、Shadowrocket 与二维码，Loon 暂无经官方文档确认的 AnyTLS 格式，请用 URI 或 Mihomo 配置。
 
 当前保留的导出入口包括 URI、Mihomo/Clash、Surfboard、Shadowrocket、Loon、Quantumult X 和二维码；具体可用格式取决于协议。Throne 与 Sing-box/SFA 客户端 JSON 导出暂未提供。
 
@@ -333,7 +344,7 @@ VLESS 诊断会检查 REALITY 目标、Cloudflare 下载探针和当前 TCP 拥�
 | `hy2.sh` / `ss.sh` | Hysteria 2 与 Shadowsocks-Rust 管理 |
 | `anytls.sh` / `vless.sh` | sing-box 原生 AnyTLS 与 VLESS 管理 |
 | `proxy.sh` | sing-box 原生 mixed（HTTP + SOCKS5）管理 |
-| `landing.sh` | 家宽 / 落地中转：线路机 VLESS REALITY + 用户态 WireGuard 落地 |
+| `landing.sh` | 家宽 / 落地中转：线路机 AnyTLS 或 VLESS REALITY + 用户态 WireGuard 落地 |
 | `euservhy2.sh` | EUserv IPv6-only 独立脚本 |
 | `tests/validate_scripts.sh` | Bash 语法、版本、换行和行为验证总入口 |
 | `docs/` | 架构、测试、发布和维护边界 |

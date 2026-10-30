@@ -126,10 +126,11 @@ bash tests/validate_scripts.sh
 - 部署结束前必须依次看到「✓ 隧道出口验证通过」与「✓ 从落地机（境外）可以连通线路机节点端口」；在线路机商家面板拦截节点 TCP 端口时，后者必须改为 ✗ 并提示放行该端口。
 - 双栈线路机：客户端只导入带二维码的 IPv4 节点；落地机只有 IPv4 时，客户端关闭 IPv6（Exclave「IPv6 路由」设为禁用）后网页与 YouTube 必须正常（2026-10-13 已在 Android Exclave 实测）。不关闭 IPv6 时，v2.0.58 及以前的线路机日志会出现 IPv6 地址的 `connection was refused`。
 - v2.0.59 起落地机只有 IPv4 时：客户端**保持 IPv6 开启**、远程 DNS 用明文（Exclave 默认 `tcp://1.1.1.1`），网页与 YouTube 也必须正常；线路机日志（debug 级别）应出现 `port=53 => hijack-dns` 与 `query_type=AAAA => predefined`。客户端改用 DoH / DoT 时仍需关闭 IPv6。
+- v2.0.61 起节点协议默认 AnyTLS：部署时直接回车生成 AnyTLS 节点，Exclave 导入 `anytls://…&insecure=1` 链接后网页、YouTube 与 Telegram 正常（DNS 接管、AAAA 过滤与 VLESS 相同）；Mihomo 导入带 `fingerprint` 的单行配置可连通。选「保留现有节点参数」重新部署后证书 SHA256 不变，已导入的客户端无需更新；不保留参数、改选 `[2]` 重新部署为 VLESS 成功后，旧节点端口关闭、`/etc/sing-box/landing-cert/` 删除。
 - 真实客户端经线路机访问 IP、域名与 DNS 均从落地机出口；停止落地机服务后流量应失败，证明不存在绕过隧道的直连。
 - 内网目标（RFC1918、回环）被拒绝。
 - 重新部署失败（例如指定的 UDP 端口被占用）时两端配置、服务和防火墙恢复到部署前状态；重新部署成功时保留客户端 UUID。
-- 修改落地机地址、诊断和卸载（含远端清理）后两端无残留；与 VLESS/AnyTLS/HTTP/SOCKS 共存时不误删共享核心。
+- 修改落地机地址、诊断和卸载（含远端清理）后两端无残留（含线路机 `/etc/sing-box/landing-cert/`）；与 VLESS/AnyTLS/HTTP/SOCKS 共存时不误删共享核心。
 - 家宽落地机位于路由器后且选择 `[2]` 时，需验证路由器 UDP 端口转发到落地机后可握手。
 
 ### `euservhy2.sh`

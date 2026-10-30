@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.60"
+EXPECTED_VERSION="v2.0.61"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -82,6 +82,7 @@ for script in $SCRIPTS; do
             grep -q 'github.com/SagerNet/sing-box/releases/download' "$script"
             grep -q '"type": "wireguard"' "$script"
             grep -q '"type": "vless"' "$script"
+            grep -q '"type": "anytls"' "$script"
             grep -q '"system": false' "$script"
             grep -q 'LANDING_LIB_ONLY' "$script"
             ;;
@@ -307,10 +308,27 @@ grep -qF "grep -q '\"udp_fragment\": true' \"\$LANDING_CONFIG\" || _need=1" land
 ( ! grep -q '"udp_fragment": false' landing.sh )
 # 客户端开着 IPv6、落地机只有 IPv4 时，IPv6 目标会被落地机拒绝（Telegram 能用、网页打不开）。
 # 线路机接管客户端明文 DNS 并对 AAAA 回空，客户端无需关 IPv6；DNS 规则不得用已弃用的 strategy（1.16 删除）。
-grep -qF '{ "inbound": ["vless-in"], "port": 53, "action": "hijack-dns" },' landing.sh
-grep -qF '{ "inbound": ["vless-in"], "query_type": ["AAAA"], "action": "predefined" },' landing.sh
+grep -qF '{ "inbound": ["${_node_tag}"], "port": 53, "action": "hijack-dns" },' landing.sh
+grep -qF '{ "inbound": ["%s"], "query_type": ["AAAA"], "action": "predefined" },' landing.sh
 grep -qF "grep -q '\"port\": 53, \"action\": \"hijack-dns\"' \"\$LANDING_CONFIG\" || _need=1" landing.sh
 ( ! grep -qE '"action": "route", "server": "[a-z-]+", "strategy"' landing.sh )
+# 家宽中转可选 AnyTLS（默认）或 VLESS REALITY：协议是客户端 → 线路机这一段，与连接方式（WireGuard 方向）
+# 互不影响，单独一个菜单，格式与连接方式菜单一致。DNS 接管、隧道与路由规则按入站 tag 引用，两种协议共用。
+grep -qF -- '--- 节点协议（客户端 → 本机）---' landing.sh
+grep -q '\[1\] AnyTLS（推荐）：' landing.sh
+grep -q '\[2\] VLESS + REALITY：' landing.sh
+grep -qF '节点协议 [默认 1]' landing.sh
+grep -q '"tag": "anytls-in"' landing.sh
+grep -qF '{ "inbound": ["${_node_tag}", "probe-in"], "action": "route", "outbound": "wg-out" }' landing.sh
+( ! grep -qF '"inbound": ["vless-in"' landing.sh )
+# 自愈不能只认 REALITY 的 "handshake" 字段，否则 AnyTLS 线路机在诊断 / 自动更新时永远不会被修复。
+( ! grep -qF "grep -q '\"handshake\"' \"\$LANDING_CONFIG\" || return 0" landing.sh )
+grep -qF "grep -q '\"tag\": \"wg-out\"' \"\$LANDING_CONFIG\" || return 0" landing.sh
+# AnyTLS 自签证书目录随部署失败回滚恢复、随卸载删除（卸载时留下它，共享 sing-box 核心也删不掉），
+# 改为 VLESS 重新部署成功后也删除。
+grep -qF 'cp -a "$LANDING_CERT_DIR" "$INSTALL_BACKUP_DIR/cert"' landing.sh
+grep -qF 'rm -rf "$LANDING_META" "$LANDING_PENDING_DIR" "$LANDING_CERT_DIR"' landing.sh
+grep -qF '[ "$NODE_PROTO" = "anytls" ] || rm -rf "$LANDING_CERT_DIR"' landing.sh
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh

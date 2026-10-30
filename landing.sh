@@ -2,16 +2,16 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.0.60
+# 版本：v2.0.61
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-10-15
+# 更新日期: 2026-10-30
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: KVM / 独立服务器 / OpenVZ / LXC（用户态 WireGuard，不依赖内核模块）
-# 实现方式: 线路机 = sing-box VLESS REALITY 入站 + WireGuard endpoint 出站
+# 实现方式: 线路机 = sing-box AnyTLS 或 VLESS REALITY 入站 + WireGuard endpoint 出站
 #           落地机 = sing-box WireGuard endpoint 入站 + direct 出站
 #           落地机无需 ip_forward / iptables NAT，也不修改任何一端的系统路由
 #====================================================================================
@@ -89,6 +89,10 @@ LANDING_DIR="${LANDING_DIR:-/etc/sing-box}"
 LANDING_CONFIG="${LANDING_CONFIG:-${LANDING_DIR}/landing.json}"
 LANDING_META="${LANDING_META:-${LANDING_DIR}/landing-meta}"
 LANDING_PENDING_DIR="${LANDING_PENDING_DIR:-${LANDING_DIR}/landing-pending}"
+# AnyTLS 节点的自签证书；与 anytls.sh 的 anytls-cert/ 分开，同机两者都装也互不影响。
+LANDING_CERT_DIR="${LANDING_CERT_DIR:-${LANDING_DIR}/landing-cert}"
+LANDING_CERT="${LANDING_CERT:-${LANDING_CERT_DIR}/cert.pem}"
+LANDING_KEY="${LANDING_KEY:-${LANDING_CERT_DIR}/private.key}"
 SING_BOX_MANAGED_MARKER="${SING_BOX_MANAGED_MARKER:-${LANDING_DIR}/.singbox-tools-managed}"
 SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/landing-server.service}"
 OPENRC_SERVICE="${OPENRC_SERVICE:-/etc/init.d/landing-server}"
@@ -133,6 +137,9 @@ BIND_FAMILY="v4"
 LISTEN_HOST="::"
 LISTEN_PORT=""
 EXT_PORT=""
+# 客户端 → 线路机的节点协议：anytls（新部署默认）或 vless；旧元数据没有这一项，按 vless 读取。
+NODE_PROTO=""
+ANYTLS_PASSWORD=""
 UUID=""
 REALITY_PRIVATE_KEY=""
 REALITY_PUBLIC_KEY=""
@@ -405,6 +412,12 @@ validate_probe_secret() {
     printf '%s\n' "$1" | grep -qE '^[0-9a-f]{16,64}$'
 }
 
+# 只用字母和数字：直接写进 JSON、URI、YAML 与各客户端单行配置，无需任何转义。
+validate_anytls_password() {
+    case "$1" in ""|*[!A-Za-z0-9]*) return 1 ;; esac
+    [ "${#1}" -ge 16 ] && [ "${#1}" -le 64 ]
+}
+
 validate_ssh_user() {
     printf '%s\n' "$1" | grep -qE '^[a-z_][a-z0-9_.-]{0,31}$'
 }
@@ -658,6 +671,66 @@ generate_probe_secret() {
     validate_probe_secret "$_secret" || _secret=$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
     validate_probe_secret "$_secret" || return 1
     printf '%s' "$_secret"
+}
+
+generate_anytls_password() {
+    local _password
+    _password=$(openssl rand -base64 32 2>/dev/null | tr -dc 'A-Za-z0-9' | cut -c1-24)
+    validate_anytls_password "$_password" || _password=$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+    validate_anytls_password "$_password" || return 1
+    printf '%s' "$_password"
+}
+
+# 证书与私钥都在、互相匹配，且一天内不会过期。
+landing_certificate_ok() {
+    local _cert_pub _key_pub
+    [ -s "$LANDING_CERT" ] && [ -s "$LANDING_KEY" ] || return 1
+    openssl x509 -in "$LANDING_CERT" -noout -checkend 86400 >/dev/null 2>&1 || return 1
+    _cert_pub=$(openssl x509 -in "$LANDING_CERT" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null) || return 1
+    _key_pub=$(openssl pkey -in "$LANDING_KEY" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null) || return 1
+    [ -n "$_cert_pub" ] && [ "$_cert_pub" = "$_key_pub" ]
+}
+
+# AnyTLS 节点的自签证书（10 年）。不带 force 时沿用现有的有效证书，
+# 保留参数重新部署后，客户端里固定的证书指纹仍然有效。
+# 先在证书目录内生成，再同目录 mv 替换，不会出现新私钥配旧证书。
+generate_landing_certificate() {
+    local _force="${1:-}" _tmp_dir _status=0
+    if [ "$_force" != "force" ] && landing_certificate_ok; then
+        return 0
+    fi
+    mkdir -p "$LANDING_CERT_DIR" && chmod 700 "$LANDING_CERT_DIR" || return 1
+    _tmp_dir=$(mktemp -d "${LANDING_CERT_DIR}/new.XXXXXX" 2>/dev/null) || return 1
+    if ! openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=${SERVER_NAME}" -addext "subjectAltName=DNS:${SERVER_NAME}" \
+        -keyout "$_tmp_dir/private.key" -out "$_tmp_dir/cert.pem" >/dev/null 2>&1; then
+        # openssl 1.1.1 以前不支持 -addext
+        rm -f "$_tmp_dir/private.key" "$_tmp_dir/cert.pem"
+        openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+            -subj "/CN=${SERVER_NAME}" \
+            -keyout "$_tmp_dir/private.key" -out "$_tmp_dir/cert.pem" >/dev/null 2>&1 || _status=1
+    fi
+    if [ "$_status" = "0" ] && [ -s "$_tmp_dir/cert.pem" ] && [ -s "$_tmp_dir/private.key" ]; then
+        chmod 600 "$_tmp_dir/private.key" "$_tmp_dir/cert.pem" && \
+            mv -f "$_tmp_dir/private.key" "$LANDING_KEY" && \
+            mv -f "$_tmp_dir/cert.pem" "$LANDING_CERT" || _status=1
+    else
+        _status=1
+    fi
+    rm -rf "$_tmp_dir"
+    return "$_status"
+}
+
+# 证书 SHA256 指纹（64 位小写十六进制，无冒号）：Mihomo 的 fingerprint、
+# Surfboard 的 server-cert-fingerprint-sha256、Exclave 的证书固定都接受这种写法。
+landing_certificate_sha256() {
+    local _fp
+    [ -s "$LANDING_CERT" ] || return 1
+    _fp=$(openssl x509 -in "$LANDING_CERT" -noout -fingerprint -sha256 2>/dev/null \
+        | awk -F= 'NF == 2 { gsub(/:/, "", $2); print tolower($2) }')
+    case "$_fp" in ""|*[!0-9a-f]*) return 1 ;; esac
+    [ "${#_fp}" = 64 ] || return 1
+    printf '%s' "$_fp"
 }
 
 # ============================================================
@@ -1552,6 +1625,18 @@ render_uri() {
         "$_uuid" "$_host" "$_port" "$_enc_sni" "$_public_key" "$_short_id" "$_enc_name"
 }
 
+# AnyTLS 自签证书节点带 insecure=1。Exclave 只读取 sni 与 insecure，并拒绝 security=reality。
+render_anytls_uri() {
+    local _server="$1" _port="$2" _password="$3" _name="$4" _sni="${5:-$SERVER_NAME}"
+    local _host _enc_name _enc_password _enc_sni
+    _host=$(format_ipv6_for_uri "$_server")
+    _enc_name=$(uri_encode "$_name")
+    _enc_password=$(uri_encode "$_password")
+    _enc_sni=$(uri_encode "$_sni")
+    printf 'anytls://%s@%s:%s?security=tls&sni=%s&fp=chrome&insecure=1#%s\n' \
+        "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
+}
+
 # ============================================================
 # 配置写入 / 读取
 # ============================================================
@@ -1572,9 +1657,9 @@ install_config_file() {
     }
 }
 
-# 线路机：VLESS REALITY 入站 + 本机探测入口，业务出站经 WireGuard 进入落地机。
+# 线路机：AnyTLS 或 VLESS REALITY 入站（NODE_PROTO）+ 本机探测入口，业务出站经 WireGuard 进入落地机。
 # 域名先经隧道交给落地机解析，再以 IP 进入隧道，CDN 就近解析与家宽出口保持一致。
-# route.final 为 direct，只有 vless-in / probe-in 显式走 wg-out。
+# route.final 为 direct，只有节点入站（anytls-in / vless-in）与 probe-in 显式走 wg-out。
 # REALITY 握手与 WireGuard 端点自身拨号属于 dial 字段，不经过路由，未设 detour 时本就直连。
 # 严禁写 "detour": "direct"：direct 出站没有任何拨号选项时，sing-box 会在拨号时报
 # “detour to an empty direct outbound makes no sense”，WireGuard 握手发不出去、REALITY 握手失败，
@@ -1585,48 +1670,38 @@ install_config_file() {
 # 它在 sing-box 1.14 已弃用、1.16 删除，自动升级后配置会校验失败；predefined 空应答效果相同。
 # 指定了 server 的查询（REALITY 握手的 local、resolve 的 exit-dns）不经过 DNS 规则，不受影响。
 write_relay_config() {
-    local _tmp _reality_strategy _local_strategy _exit_strategy _dns_aaaa_rule=""
+    local _tmp _reality_strategy _local_strategy _exit_strategy _dns_aaaa_rule="" _node_tag _node_inbound
     _reality_strategy=$(reality_domain_strategy)
     case "${BIND_FAMILY:-v4}" in
         v6) _local_strategy="prefer_ipv6" ;;
         *)  _local_strategy="prefer_ipv4" ;;
     esac
-    if [ "${EXIT_HAS_IPV6:-0}" = "1" ]; then
-        _exit_strategy="prefer_ipv4"
-    else
-        _exit_strategy="ipv4_only"
-        _dns_aaaa_rule='
-      { "inbound": ["vless-in"], "query_type": ["AAAA"], "action": "predefined" },'
-    fi
-    # reverse：线路机固定监听 UDP，peer 不写地址，由落地机握手后自动学习（WireGuard roaming）。
-    # 心跳由落地机发送即可（还能维持家宽 NAT 映射）；线路机此时不知道对端地址，发心跳只会刷错误日志。
-    local _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
-    if [ "${WG_MODE:-forward}" = "reverse" ]; then
-        _wg_listen="
-      \"listen_port\": ${WG_PORT},"
-    else
-        _wg_peer_dest="
-          \"address\": \"${EXIT_HOST}\",
-          \"port\": ${WG_PORT},"
-        _wg_keepalive=",
-          \"persistent_keepalive_interval\": ${WG_KEEPALIVE}"
-    fi
-    mkdir -p "$LANDING_DIR" || return 1
-    _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
-    if ! cat > "$_tmp" <<CFG
-{
-  "log": { "level": "warn", "timestamp": true },
-  "dns": {
-    "servers": [
-      { "type": "local", "tag": "local" },
-      { "type": "udp", "tag": "exit-dns", "server": "${WG_EXIT_DNS}", "detour": "wg-out" }
-    ],
-    "rules": [${_dns_aaaa_rule}
-      { "inbound": ["vless-in"], "action": "route", "server": "exit-dns" }
-    ],
-    "final": "local"
-  },
-  "inbounds": [
+    # 两种协议只有节点入站不同；DNS 接管、隧道与路由规则都按入站 tag 引用，其余完全一致。
+    case "${NODE_PROTO:-vless}" in
+        anytls)
+            _node_tag="anytls-in"
+            _node_inbound=$(cat <<CFG
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "${LISTEN_HOST}",
+      "listen_port": ${LISTEN_PORT},
+      "users": [
+        { "name": "default", "password": "${ANYTLS_PASSWORD}" }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${SERVER_NAME}",
+        "certificate_path": "${LANDING_CERT}",
+        "key_path": "${LANDING_KEY}"
+      }
+    },
+CFG
+)
+            ;;
+        *)
+            _node_tag="vless-in"
+            _node_inbound=$(cat <<CFG
     {
       "type": "vless",
       "tag": "vless-in",
@@ -1657,6 +1732,46 @@ write_relay_config() {
         }
       }
     },
+CFG
+)
+            ;;
+    esac
+    if [ "${EXIT_HAS_IPV6:-0}" = "1" ]; then
+        _exit_strategy="prefer_ipv4"
+    else
+        _exit_strategy="ipv4_only"
+        _dns_aaaa_rule=$(printf '\n      { "inbound": ["%s"], "query_type": ["AAAA"], "action": "predefined" },' "$_node_tag")
+    fi
+    # reverse：线路机固定监听 UDP，peer 不写地址，由落地机握手后自动学习（WireGuard roaming）。
+    # 心跳由落地机发送即可（还能维持家宽 NAT 映射）；线路机此时不知道对端地址，发心跳只会刷错误日志。
+    local _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
+    if [ "${WG_MODE:-forward}" = "reverse" ]; then
+        _wg_listen="
+      \"listen_port\": ${WG_PORT},"
+    else
+        _wg_peer_dest="
+          \"address\": \"${EXIT_HOST}\",
+          \"port\": ${WG_PORT},"
+        _wg_keepalive=",
+          \"persistent_keepalive_interval\": ${WG_KEEPALIVE}"
+    fi
+    mkdir -p "$LANDING_DIR" || return 1
+    _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
+    if ! cat > "$_tmp" <<CFG
+{
+  "log": { "level": "warn", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "type": "local", "tag": "local" },
+      { "type": "udp", "tag": "exit-dns", "server": "${WG_EXIT_DNS}", "detour": "wg-out" }
+    ],
+    "rules": [${_dns_aaaa_rule}
+      { "inbound": ["${_node_tag}"], "action": "route", "server": "exit-dns" }
+    ],
+    "final": "local"
+  },
+  "inbounds": [
+${_node_inbound}
     {
       "type": "mixed",
       "tag": "probe-in",
@@ -1690,10 +1805,10 @@ write_relay_config() {
   ],
   "route": {
     "rules": [
-      { "inbound": ["vless-in"], "port": 53, "action": "hijack-dns" },
-      { "inbound": ["vless-in", "probe-in"], "action": "resolve", "server": "exit-dns", "strategy": "${_exit_strategy}" },
+      { "inbound": ["${_node_tag}"], "port": 53, "action": "hijack-dns" },
+      { "inbound": ["${_node_tag}", "probe-in"], "action": "resolve", "server": "exit-dns", "strategy": "${_exit_strategy}" },
       { "ip_is_private": true, "action": "reject" },
-      { "inbound": ["vless-in", "probe-in"], "action": "route", "outbound": "wg-out" }
+      { "inbound": ["${_node_tag}", "probe-in"], "action": "route", "outbound": "wg-out" }
     ],
     "final": "direct",
     "default_domain_resolver": { "server": "local", "strategy": "${_local_strategy}" }
@@ -1787,6 +1902,8 @@ write_meta() {
 ROLE=${ROLE}
 LISTEN_PORT=${LISTEN_PORT}
 EXT_PORT=${EXT_PORT}
+NODE_PROTO=${NODE_PROTO}
+ANYTLS_PASSWORD=${ANYTLS_PASSWORD}
 UUID=${UUID}
 REALITY_PRIVATE_KEY=${REALITY_PRIVATE_KEY}
 REALITY_PUBLIC_KEY=${REALITY_PUBLIC_KEY}
@@ -1828,7 +1945,8 @@ CFG
 }
 
 reset_config_vars() {
-    ROLE=""; LISTEN_PORT=""; EXT_PORT=""; UUID=""; REALITY_PRIVATE_KEY=""; REALITY_PUBLIC_KEY=""
+    ROLE=""; LISTEN_PORT=""; EXT_PORT=""; NODE_PROTO=""; ANYTLS_PASSWORD=""
+    UUID=""; REALITY_PRIVATE_KEY=""; REALITY_PUBLIC_KEY=""
     SHORT_ID=""; NAT_MODE=0; BIND_FAMILY="v4"; LISTEN_HOST="::"; SERVER_NAME=""; HANDSHAKE_PORT="443"
     WG_PRIVATE_KEY=""; WG_PUBLIC_KEY=""; WG_PEER_PUBLIC_KEY=""; WG_PSK=""; WG_PORT=""
     WG_MODE="forward"; RELAY_HOST=""
@@ -1852,6 +1970,8 @@ load_meta_file() {
             ROLE) ROLE="$_value" ;;
             LISTEN_PORT) LISTEN_PORT="$_value" ;;
             EXT_PORT) EXT_PORT="$_value" ;;
+            NODE_PROTO) NODE_PROTO="$_value" ;;
+            ANYTLS_PASSWORD) ANYTLS_PASSWORD="$_value" ;;
             UUID) UUID="$_value" ;;
             REALITY_PRIVATE_KEY) REALITY_PRIVATE_KEY="$_value" ;;
             REALITY_PUBLIC_KEY) REALITY_PUBLIC_KEY="$_value" ;;
@@ -1908,12 +2028,20 @@ validate_wg_meta() {
 validate_relay_meta() {
     validate_port "$LISTEN_PORT" || return 1
     validate_port "$EXT_PORT" || return 1
-    validate_uuid "$UUID" || return 1
-    validate_reality_key "$REALITY_PRIVATE_KEY" || return 1
-    validate_reality_key "$REALITY_PUBLIC_KEY" || return 1
-    validate_short_id "$SHORT_ID" || return 1
+    # v2.0.60 及以前的元数据没有 NODE_PROTO，都是 VLESS REALITY。
+    case "${NODE_PROTO:-}" in
+        ""|vless)
+            NODE_PROTO="vless"
+            validate_uuid "$UUID" || return 1
+            validate_reality_key "$REALITY_PRIVATE_KEY" || return 1
+            validate_reality_key "$REALITY_PUBLIC_KEY" || return 1
+            validate_short_id "$SHORT_ID" || return 1
+            validate_port "$HANDSHAKE_PORT" || return 1
+            ;;
+        anytls) validate_anytls_password "$ANYTLS_PASSWORD" || return 1 ;;
+        *) return 1 ;;
+    esac
     validate_server_name "$SERVER_NAME" || return 1
-    validate_port "$HANDSHAKE_PORT" || return 1
     case "$NAT_MODE" in 0|1) ;; *) return 1 ;; esac
     case "$BIND_FAMILY" in v4|v6) ;; *) return 1 ;; esac
     case "$LISTEN_HOST" in 0.0.0.0|::) ;; *) return 1 ;; esac
@@ -1966,6 +2094,7 @@ backup_current_install() {
     chmod 700 "$INSTALL_BACKUP_DIR" || { discard_install_backup; return 1; }
     [ ! -f "$LANDING_CONFIG" ] || cp -a "$LANDING_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
     [ ! -d "$LANDING_META" ] || cp -a "$LANDING_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
+    [ ! -d "$LANDING_CERT_DIR" ] || cp -a "$LANDING_CERT_DIR" "$INSTALL_BACKUP_DIR/cert" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_MANAGED_MARKER" ] || cp -a "$SING_BOX_MANAGED_MARKER" "$INSTALL_BACKUP_DIR/managed-marker" || { discard_install_backup; return 1; }
     [ ! -f "$LANDING_BIN" ] || cp -a "$LANDING_BIN" "$INSTALL_BACKUP_DIR/wrapper" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_BIN" ] || cp -a "$SING_BOX_BIN" "$INSTALL_BACKUP_DIR/sing-box" || { discard_install_backup; return 1; }
@@ -2028,10 +2157,11 @@ restore_current_install() {
     close_role_ports
     rm -f "$LANDING_CONFIG" "$LANDING_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
     rm -f "$SING_BOX_MANAGED_MARKER"
-    rm -rf "$LANDING_META"
+    rm -rf "$LANDING_META" "$LANDING_CERT_DIR"
 
     [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$LANDING_CONFIG"
     [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$LANDING_META"
+    [ -d "$INSTALL_BACKUP_DIR/cert" ] && cp -a "$INSTALL_BACKUP_DIR/cert" "$LANDING_CERT_DIR"
     [ -f "$INSTALL_BACKUP_DIR/managed-marker" ] && cp -a "$INSTALL_BACKUP_DIR/managed-marker" "$SING_BOX_MANAGED_MARKER"
     [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$LANDING_BIN"
     # 共享核心可能正被其他协议运行，直接 cp 覆盖会因 Text file busy 失败；
@@ -2825,7 +2955,7 @@ uninstall_landing_files() {
     remove_exit_watchdog
     rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$LANDING_BIN"
     rm -f "$LANDING_CONFIG" "$AUTO_UPDATE_LOG" "$WATCHDOG_LOG"
-    rm -rf "$LANDING_META" "$LANDING_PENDING_DIR"
+    rm -rf "$LANDING_META" "$LANDING_PENDING_DIR" "$LANDING_CERT_DIR"
     if [ -d "$LANDING_DIR" ]; then
         _other_file=$(find "$LANDING_DIR" -mindepth 1 -maxdepth 1 ! -name '.singbox-tools-managed' -print -quit 2>/dev/null)
     fi
@@ -2844,10 +2974,71 @@ uninstall_landing_files() {
 # ============================================================
 # 线路机：一键部署
 # ============================================================
+# 客户端 → 本机的节点协议；与「连接方式」（本机与落地机之间由谁发起连接）互不影响。
+choose_relay_protocol() {
+    local _input
+    echo -e "\n${SKYBLUE}--- 节点协议（客户端 → 本机）---${PLAIN}"
+    echo -e "  [1] AnyTLS（推荐）：自签证书，无需域名，自带流量填充"
+    echo -e "  [2] VLESS + REALITY：借用大厂网站握手（原有方案）"
+    while true; do
+        read -r -p "节点协议 [默认 1]: " _input
+        case "${_input:-1}" in
+            1) NODE_PROTO="anytls"; return 0 ;;
+            2) NODE_PROTO="vless"; return 0 ;;
+            *) echo -e "${RED}请输入 1 或 2${PLAIN}" ;;
+        esac
+    done
+}
+
+relay_protocol_label() {
+    case "${NODE_PROTO:-vless}" in
+        anytls) printf 'AnyTLS' ;;
+        *) printf 'VLESS + REALITY' ;;
+    esac
+}
+
+configure_relay_node() {
+    case "${NODE_PROTO:-vless}" in
+        anytls) configure_relay_anytls ;;
+        *) configure_relay_vless ;;
+    esac
+}
+
+configure_relay_anytls() {
+    local _default_sni
+    echo -e "\n${SKYBLUE}--- 线路机节点参数（AnyTLS）---${PLAIN}"
+    prompt_relay_port || return 1
+    UUID=""; REALITY_PRIVATE_KEY=""; REALITY_PUBLIC_KEY=""; SHORT_ID=""; HANDSHAKE_PORT="443"
+    ANYTLS_PASSWORD=$(generate_anytls_password) || { echo -e "${RED}生成连接密码失败${PLAIN}"; return 1; }
+    _default_sni=$(random_sni)
+    read -r -p "TLS 伪装域名（SNI）[随机默认 ${_default_sni}]: " SERVER_NAME
+    SERVER_NAME=$(trim_string "$SERVER_NAME")
+    [ -z "$SERVER_NAME" ] && SERVER_NAME="$_default_sni"
+    validate_server_name "$SERVER_NAME" || { echo -e "${RED}SNI 域名格式无效${PLAIN}"; return 1; }
+    echo -e "${YELLOW}正在生成自签 TLS 证书...${PLAIN}"
+    generate_landing_certificate force || { echo -e "${RED}生成 TLS 证书失败${PLAIN}"; return 1; }
+    echo -e "${GREEN}✓ 连接密码与自签证书已生成${PLAIN}"
+    return 0
+}
+
 configure_relay_vless() {
+    echo -e "\n${SKYBLUE}--- 线路机节点参数（VLESS + REALITY + Vision）---${PLAIN}"
+    prompt_relay_port || return 1
+    ANYTLS_PASSWORD=""
+    UUID=$(generate_uuid) || { echo -e "${RED}生成 UUID 失败${PLAIN}"; return 1; }
+    HANDSHAKE_PORT="443"
+    choose_reality_target "$HANDSHAKE_PORT" || return 1
+    echo -e "${YELLOW}正在生成 REALITY 密钥对...${PLAIN}"
+    generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return 1; }
+    SHORT_ID=$(generate_short_id) || { echo -e "${RED}生成 REALITY short ID 失败${PLAIN}"; return 1; }
+    echo -e "${GREEN}✓ UUID、REALITY 密钥与 short ID 已生成${PLAIN}"
+    return 0
+}
+
+# 节点端口（两种协议共用）：NAT 机分别询问本机监听端口与对外转发端口。
+prompt_relay_port() {
     local _default_port
     _default_port=$(generate_random_port) || { echo -e "${RED}无法生成可用随机端口${PLAIN}"; return 1; }
-    echo -e "\n${SKYBLUE}--- 线路机节点参数（VLESS + REALITY + Vision）---${PLAIN}"
     if [ "$NAT_MODE" = "1" ]; then
         read -r -p "请输入本机监听端口 [随机默认 ${_default_port}]: " LISTEN_PORT
         [ -z "$LISTEN_PORT" ] && LISTEN_PORT="$_default_port"
@@ -2866,13 +3057,6 @@ configure_relay_vless() {
         echo -e "${RED}端口 ${LISTEN_PORT} 已被占用，请换一个端口${PLAIN}"
         return 1
     fi
-    UUID=$(generate_uuid) || { echo -e "${RED}生成 UUID 失败${PLAIN}"; return 1; }
-    HANDSHAKE_PORT="443"
-    choose_reality_target "$HANDSHAKE_PORT" || return 1
-    echo -e "${YELLOW}正在生成 REALITY 密钥对...${PLAIN}"
-    generate_reality_keypair || { echo -e "${RED}生成 REALITY 密钥对失败${PLAIN}"; return 1; }
-    SHORT_ID=$(generate_short_id) || { echo -e "${RED}生成 REALITY short ID 失败${PLAIN}"; return 1; }
-    echo -e "${GREEN}✓ UUID、REALITY 密钥与 short ID 已生成${PLAIN}"
     return 0
 }
 
@@ -3057,7 +3241,7 @@ print_deploy_intro() {
     echo -e "${SKYBLUE}===============================================${PLAIN}"
     echo -e "${GREEN}  一键部署：线路机 + 落地机（家宽机）${PLAIN}"
     echo -e "${SKYBLUE}===============================================${PLAIN}"
-    echo -e "  客户端 ──VLESS REALITY──▶ ${BOLD}本机（线路机）${PLAIN} ══WireGuard══▶ ${BOLD}落地机${PLAIN} ──▶ 互联网"
+    echo -e "  客户端 ──AnyTLS / VLESS──▶ ${BOLD}本机（线路机）${PLAIN} ══WireGuard══▶ ${BOLD}落地机${PLAIN} ──▶ 互联网"
     echo -e "  ${DIM}只需在本机操作：脚本会 SSH 登录落地机自动部署，并验证出口 IP。${PLAIN}"
     echo -e "  ${DIM}只有本节点的流量从落地机出网；本机 SSH、系统更新和其他协议保持直连。${PLAIN}"
     echo -e "  ${DIM}两端均不修改系统路由、不开启 ip_forward，失败会自动回滚。${PLAIN}"
@@ -3097,6 +3281,11 @@ deploy_landing() {
         return 1
     fi
 
+    if [ "$_reuse" = "1" ]; then
+        echo -e "${DIM}节点协议: $(relay_protocol_label)（沿用现有）${PLAIN}"
+    else
+        choose_relay_protocol
+    fi
     prompt_exit_target || return 1
 
     backup_current_install || {
@@ -3108,7 +3297,10 @@ deploy_landing() {
     ensure_singbox_bin || { deploy_fail "sing-box 安装失败"; return 1; }
     ROLE="relay"
     if [ "$_reuse" = "0" ]; then
-        configure_relay_vless || { deploy_fail "节点参数配置失败"; return 1; }
+        configure_relay_node || { deploy_fail "节点参数配置失败"; return 1; }
+    elif [ "$NODE_PROTO" = "anytls" ]; then
+        # 沿用现有证书，客户端里固定的证书指纹保持有效；证书缺失或损坏时才重新生成。
+        generate_landing_certificate || { deploy_fail "生成 TLS 证书失败"; return 1; }
     fi
     prepare_probe_inbound || { deploy_fail "无法生成本机探测入口参数"; return 1; }
     generate_wg_keypair || { deploy_fail "生成 WireGuard 密钥失败"; return 1; }
@@ -3180,6 +3372,8 @@ deploy_landing() {
     cleanup_script_source
     close_replaced_install_port
     discard_install_backup
+    # 由 AnyTLS 改为 VLESS 重新部署成功后，旧证书已不再使用。
+    [ "$NODE_PROTO" = "anytls" ] || rm -rf "$LANDING_CERT_DIR"
     ensure_exit_watchdog || true
     echo -e "${GREEN}✓ 部署完成：客户端流量将从落地机 ${LAST_EGRESS_IP} 出网${PLAIN}"
     [ "$_port_warn" = "0" ] || echo -e "${RED}! 客户端暂时连不上：请先在线路机商家面板 / 安全组放行 TCP ${EXT_PORT}${PLAIN}"
@@ -3262,6 +3456,41 @@ export_quantumultx_vless() {
         "$_host" "$_port" "$UUID" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID" "$_node"
 }
 
+# AnyTLS 节点是自签证书：能读到证书时用指纹固定（严格校验），读不到才退回跳过校验。
+export_mihomo_anytls() {
+    local _server="$1" _port="$2" _node="$3" _yaml_server _safe_node _sni _fp _verify
+    _yaml_server=$(format_server_for_yaml "$_server")
+    _safe_node=$(yaml_single_quote_escape "$_node")
+    _sni=$(yaml_single_quote_escape "$SERVER_NAME")
+    if _fp=$(landing_certificate_sha256); then
+        _verify="skip-cert-verify: false, fingerprint: '${_fp}'"
+    else
+        _verify="skip-cert-verify: true"
+    fi
+    printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${ANYTLS_PASSWORD}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', ${_verify}}"
+}
+
+# Surfboard 文档（profile-format/proxy/external-proxy/anytls）：前四项按位置写，可选项写成 key=value。
+export_surfboard_anytls() {
+    local _server="$1" _port="$2" _node="$3" _fp
+    printf '%s = anytls, %s, %s, %s, skip-cert-verify=true, sni=%s' "$_node" "$_server" "$_port" "$ANYTLS_PASSWORD" "$SERVER_NAME"
+    if _fp=$(landing_certificate_sha256); then
+        printf ', server-cert-fingerprint-sha256=%s' "$_fp"
+    fi
+}
+
+export_loon_anytls() {
+    printf 'Loon 暂无经官方文档确认的 AnyTLS 配置格式，请使用 URI 或 Mihomo 配置。'
+}
+
+export_shadowrocket_anytls() {
+    render_anytls_uri "$1" "$2" "$ANYTLS_PASSWORD" "$3" "$SERVER_NAME"
+}
+
+export_quantumultx_anytls() {
+    printf 'Quantumult X 暂不支持 AnyTLS 配置格式。'
+}
+
 should_show_output() {
     local _mode="${1:-all}" _section="$2"
     [ "$_mode" = "all" ] || [ "$_mode" = "$_section" ]
@@ -3275,15 +3504,20 @@ show_node() {
         return 1
     }
 
-    local _ip_type _server_name _node _uri _qr_url _png
+    local _ip_type _server_name _node _uri _qr_url _png _proto="${NODE_PROTO:-vless}"
     case "$_tag" in
         v6|IPv6|ipv6) _ip_type="IPv6" ;;
         *)            _ip_type="IPv4" ;;
     esac
     _server_name=$(generate_server_name)
-    _node=$(generate_node_name "$_country" "$_server_name" "VLESS-Landing" "$_ip_type")
-
-    _uri=$(render_uri "$_server" "$_port" "$UUID" "$_node" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID")
+    if [ "$_proto" = "anytls" ]; then
+        _node=$(generate_node_name "$_country" "$_server_name" "AnyTLS-Landing" "$_ip_type")
+        _uri=$(render_anytls_uri "$_server" "$_port" "$ANYTLS_PASSWORD" "$_node" "$SERVER_NAME")
+    else
+        _proto="vless"
+        _node=$(generate_node_name "$_country" "$_server_name" "VLESS-Landing" "$_ip_type")
+        _uri=$(render_uri "$_server" "$_port" "$UUID" "$_node" "$SERVER_NAME" "$REALITY_PUBLIC_KEY" "$SHORT_ID")
+    fi
     _qr_url=$(generate_online_qrcode_url "$_uri")
 
     echo -e "${YELLOW}节点名称:${PLAIN}"
@@ -3297,34 +3531,34 @@ show_node() {
     fi
     if should_show_output "$_mode" "mihomo"; then
         echo -e "${GREEN}Mihomo / Clash Meta / Clash Verge 单行配置:${PLAIN}"
-        print_copy_block "$(export_mihomo_vless "$_server" "$_port" "$_node")"
+        print_copy_block "$("export_mihomo_${_proto}" "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
     if should_show_output "$_mode" "surfboard"; then
         echo -e "${GREEN}Surfboard 配置:${PLAIN}"
-        print_copy_block "$(export_surfboard_vless)"
+        print_copy_block "$("export_surfboard_${_proto}" "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
     if should_show_output "$_mode" "shadowrocket"; then
         echo -e "${GREEN}Shadowrocket 配置:${PLAIN}"
-        print_copy_block "$(export_shadowrocket_vless "$_server" "$_port" "$_node")"
+        print_copy_block "$("export_shadowrocket_${_proto}" "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
     if should_show_output "$_mode" "loon"; then
         echo -e "${GREEN}Loon 配置:${PLAIN}"
-        print_copy_block "$(export_loon_vless "$_server" "$_port" "$_node")"
+        print_copy_block "$("export_loon_${_proto}" "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
     if should_show_output "$_mode" "quantumult"; then
         echo -e "${GREEN}Quantumult X 配置:${PLAIN}"
-        print_copy_block "$(export_quantumultx_vless "$_server" "$_port" "$_node")"
+        print_copy_block "$("export_quantumultx_${_proto}" "$_server" "$_port" "$_node")"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
     if should_show_output "$_mode" "qrcode"; then
         echo -e "${GREEN}二维码:${PLAIN}"
         if generate_terminal_qrcode "$_uri"; then
             echo -e "${GREEN}[OK] 终端二维码已生成${PLAIN}"
-            _png=$(generate_local_qrcode_png "$_uri" "vless-landing" "$_ip_type" 2>/dev/null || true)
+            _png=$(generate_local_qrcode_png "$_uri" "${_proto}-landing" "$_ip_type" 2>/dev/null || true)
             [ -n "$_png" ] && echo -e "本地二维码图片: ${YELLOW}${_png}${PLAIN}"
         else
             echo -e "${YELLOW}[WARN] 未安装 qrencode，跳过终端和本地 PNG 二维码。${PLAIN}"
@@ -3350,7 +3584,7 @@ show_exit_role_info() {
 }
 
 show_config() {
-    local _mode="${1:-all}" _country _manual_addr _v6_mode
+    local _mode="${1:-all}" _country _manual_addr _v6_mode _fp
     if ! read_config >/dev/null 2>&1; then
         echo -e "${RED}未找到家宽中转配置，请先在线路机执行一键部署${PLAIN}"
         sleep 2
@@ -3367,7 +3601,7 @@ show_config() {
     fi
     _country=$(get_country_code "$EXIT_IPV4" "")
 
-    echo -e "\n${GREEN}家宽中转节点（VLESS REALITY → WireGuard → 落地机）${PLAIN}"
+    echo -e "\n${GREEN}家宽中转节点（$(relay_protocol_label) → WireGuard → 落地机）${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     [ -n "$PUBLIC_IP"   ] && echo -e "线路机 IPv4: ${YELLOW}${PUBLIC_IP}${PLAIN}"
     [ -n "$PUBLIC_IPV6" ] && echo -e "线路机 IPv6: ${YELLOW}${PUBLIC_IPV6}${PLAIN}"
@@ -3377,7 +3611,13 @@ show_config() {
     else
         echo -e "节点端口  : ${YELLOW}${EXT_PORT}${PLAIN}"
     fi
-    echo -e "伪装 SNI  : ${YELLOW}${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
+    if [ "$NODE_PROTO" = "anytls" ]; then
+        echo -e "TLS SNI   : ${YELLOW}${SERVER_NAME}${PLAIN}（自签证书，链接带 insecure=1）"
+        _fp=$(landing_certificate_sha256 2>/dev/null || true)
+        [ -z "$_fp" ] || echo -e "证书 SHA256: ${YELLOW}${_fp}${PLAIN}"
+    else
+        echo -e "伪装 SNI  : ${YELLOW}${SERVER_NAME}:${HANDSHAKE_PORT}${PLAIN}"
+    fi
     if [ "$WG_MODE" = "reverse" ]; then
         echo -e "落地机    : ${YELLOW}${EXIT_HOST}${PLAIN}（主动连接本机 UDP ${WG_PORT}，落地机无需放行端口）"
     else
@@ -3395,6 +3635,8 @@ show_config() {
     echo -e "${DIM}请导入「线路机」IPv4 节点，不要填落地出口 IP；若同时给出 IPv6 节点，客户端网络需能访问 IPv6。${PLAIN}"
     [ "${EXIT_HAS_IPV6:-0}" = "1" ] || \
         echo -e "${DIM}落地机没有 IPv6：经本节点查询的 DNS 已自动去掉 IPv6 地址，客户端一般无需改设置；若客户端用加密 DNS（https:// / tls://）或本地解析，请关闭客户端 IPv6（如 Exclave「IPv6 路由」设为禁用）。${PLAIN}"
+    [ "$NODE_PROTO" != "anytls" ] || \
+        echo -e "${DIM}证书校验：URI 链接不校验证书（insecure=1）；Mihomo / Surfboard 配置已固定证书指纹；Exclave 可在节点设置里填入上面的证书 SHA256 固定证书。${PLAIN}"
     echo -e "${DIM}提示: 客户端 DNS 须经本节点（Mihomo 开启 fake-ip 或 nameserver 走节点），否则可能泄露本地 DNS。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -3434,11 +3676,12 @@ show_config() {
 # 缺少 "udp_fragment": true（v2.0.55 及以前）时同样重写：线路机发出的隧道包不再带 DF。
 # 没有接管客户端 DNS（v2.0.58 及以前）时同样重写：落地机无 IPv6 时客户端不必再关 IPv6。
 # 每周自动更新与诊断都会调用这里，已部署节点无需重新对接即可自愈。
+# 函数名沿用 VLESS 时代的叫法；AnyTLS 线路机没有 REALITY 握手，按 wg-out 识别线路机配置。
 ensure_reality_handshake_direct() {
     local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0
     [ -f "$LANDING_CONFIG" ] || return 0
     [ "${ROLE:-}" = "relay" ] || [ "$(installed_role 2>/dev/null)" = "relay" ] || return 0
-    grep -q '"handshake"' "$LANDING_CONFIG" || return 0
+    grep -q '"tag": "wg-out"' "$LANDING_CONFIG" || return 0
     grep -q '"final": "wg-out"' "$LANDING_CONFIG" && _need=1
     grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG" || _need=1
     grep -q '"detour": "direct"' "$LANDING_CONFIG" && _need=1
@@ -3517,9 +3760,9 @@ diagnose_landing() {
     fi
 
     if [ "$WG_MODE" = "reverse" ]; then
-        echo -e "  ${DIM}本机角色: 线路机 | 落地机 ${EXIT_HOST} 主动连接本机 UDP ${WG_PORT}${PLAIN}"
+        echo -e "  ${DIM}本机角色: 线路机（$(relay_protocol_label)）| 落地机 ${EXIT_HOST} 主动连接本机 UDP ${WG_PORT}${PLAIN}"
     else
-        echo -e "  ${DIM}本机角色: 线路机 | 落地机: ${EXIT_HOST} UDP ${WG_PORT}${PLAIN}"
+        echo -e "  ${DIM}本机角色: 线路机（$(relay_protocol_label)）| 落地机: ${EXIT_HOST} UDP ${WG_PORT}${PLAIN}"
     fi
     ensure_reality_handshake_direct || true
     ensure_exit_watchdog quiet || true
@@ -3531,7 +3774,13 @@ diagnose_landing() {
             echo -e "  ${YELLOW}! 本机公网 IP 已变为 ${_cur_ip}，落地机仍在连接 ${RELAY_HOST}；请重新部署${PLAIN}"
         fi
     fi
-    if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+    if [ "$NODE_PROTO" = "anytls" ]; then
+        if landing_certificate_ok; then
+            echo -e "  ${GREEN}✓ AnyTLS 自签证书有效（SNI ${SERVER_NAME}）${PLAIN}"
+        else
+            echo -e "  ${RED}✗ AnyTLS 证书缺失、与私钥不匹配或即将过期：请重新部署（可保留现有节点参数）${PLAIN}"
+        fi
+    elif reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         echo -e "  ${GREEN}✓ REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 可达${PLAIN}"
     else
         echo -e "  ${YELLOW}! REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 不可达，可重新部署并选择其他 SNI${PLAIN}"
@@ -4118,7 +4367,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.60${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.0.61${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

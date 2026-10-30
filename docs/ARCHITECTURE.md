@@ -108,7 +108,7 @@ LISTEN_PORT=""
 - `vless.sh` 使用 sing-box >= 1.12.0 原生 VLESS 入站，默认组合为 TCP + REALITY + `xtls-rprx-vision`；Shell 生成 UUID、REALITY 密钥、short ID、JSON 及 `vless-server` wrapper。
 - `proxy.sh` 使用 sing-box >= 1.12.0 原生 `mixed` 入站（同端口 HTTP + SOCKS5），生成用户名/密码、JSON、`proxy-server` wrapper；出站为 `direct`，检测到原生网卡时写入 `bind_interface`。
 - VLESS 安装提供随机大厂与自定义 SNI 两种来源。自定义流程可通过 WHOIS TCP 43 查询 BGP Prefix 并输出 DNS 页面，也可直接输入任意候选域名；不抓取 `bgp.tools` HTML，输入域名必须通过当前地址族下的 TLS 1.3 可达性验证。诊断中的 Cloudflare 小文件下载仅作为 VPS 当次网络状态参考，不等价于客户端经 VLESS 的端到端测速。
-- `landing.sh` 在线路机与落地机两端都使用 sing-box 用户态 WireGuard endpoint（`system: false`），不依赖内核模块、`ip_forward`、iptables NAT 或路由表修改。线路机入站为 VLESS + REALITY + Vision，仅 `vless-in` / 探测入站显式路由到 `wg-out`，`route.final` 为 `direct`；REALITY 握手与 WireGuard 拨号不得设置 `detour: direct`（空 direct 出站会在拨号时报错）。隧道方向由 `WG_MODE` 决定：`reverse`（新部署默认）由落地机主动拨号线路机的固定 UDP 端口，线路机 peer 不写地址、靠 WireGuard roaming 跟随落地机 IP，落地机无需入站端口；`forward` 为线路机拨号落地机（旧部署缺省值）。DNS 经隧道由落地机解析；forward 模式下落地机地址为域名时，线路机 cron 看门狗在解析变化后重启服务（sing-box 只在启动时解析 WireGuard peer 域名）。落地机只监听一个 UDP 端口。线路机通过 OpenSSH ControlMaster（`StrictHostKeyChecking=accept-new`、`BatchMode=yes`）在落地机上运行同一脚本的 `--remote-exit-*` 动作，私钥只在各自机器生成，脚本不读取也不保存 SSH 密码。落地机配置以 `landing-pending` 两阶段提交：线路机验证出口 IP 成功后才 commit，否则 abort 恢复两端旧状态。
+- `landing.sh` 在线路机与落地机两端都使用 sing-box 用户态 WireGuard endpoint（`system: false`），不依赖内核模块、`ip_forward`、iptables NAT 或路由表修改。线路机节点入站在部署时二选一（`NODE_PROTO`）：AnyTLS（`anytls-in`，v2.0.61 起新部署默认，自签证书在 `/etc/sing-box/landing-cert/`）或 VLESS + REALITY + Vision（`vless-in`，旧元数据缺省值）；协议与隧道方向互不影响。仅节点入站与探测入站显式路由到 `wg-out`，`route.final` 为 `direct`；REALITY 握手与 WireGuard 拨号不得设置 `detour: direct`（空 direct 出站会在拨号时报错）。隧道方向由 `WG_MODE` 决定：`reverse`（新部署默认）由落地机主动拨号线路机的固定 UDP 端口，线路机 peer 不写地址、靠 WireGuard roaming 跟随落地机 IP，落地机无需入站端口；`forward` 为线路机拨号落地机（旧部署缺省值）。DNS 经隧道由落地机解析；forward 模式下落地机地址为域名时，线路机 cron 看门狗在解析变化后重启服务（sing-box 只在启动时解析 WireGuard peer 域名）。落地机只监听一个 UDP 端口。线路机通过 OpenSSH ControlMaster（`StrictHostKeyChecking=accept-new`、`BatchMode=yes`）在落地机上运行同一脚本的 `--remote-exit-*` 动作，私钥只在各自机器生成，脚本不读取也不保存 SSH 密码。落地机配置以 `landing-pending` 两阶段提交：线路机验证出口 IP 成功后才 commit，否则 abort 恢复两端旧状态。
 - VLESS、AnyTLS、HTTP/SOCKS 与家宽中转共用 `/usr/local/bin/sing-box`。替换核心前必须用新二进制校验 `/etc/sing-box/*.json`；替换后须重启升级前处于运行中的全部托管消费者（AnyTLS、VLESS、`proxy-server`、`landing-server`）；`.singbox-tools-managed` 用于在不同卸载顺序下延续项目核心所有权。
 - AnyTLS/VLESS/HTTP/SOCKS 通过 `ensure_outbound_bind` 在安装、升级与工具菜单中刷新/愈合 `bind_interface`，避免网卡改名或 WARP 切换后出站仍绑旧接口。
 
@@ -138,7 +138,7 @@ sing-box-multi-protocol-tools/  # 仓库 slug 仍为 hy2，raw URL 不变
 ├── anytls.sh           # sing-box 原生 AnyTLS 管理
 ├── vless.sh            # sing-box 原生 VLESS + REALITY + Vision 管理
 ├── proxy.sh            # sing-box 原生 mixed（HTTP + SOCKS5）管理
-├── landing.sh          # 家宽/落地中转：线路机 VLESS 入站 + 用户态 WireGuard 到落地机
+├── landing.sh          # 家宽/落地中转：线路机 AnyTLS / VLESS 入站 + 用户态 WireGuard 到落地机
 ├── euservhy2.sh        # EUserv IPv6 Hysteria 2
 ├── CHANGELOG.md        # 更新日志
 ├── CONTRIBUTING.md     # 贡献与开发流程

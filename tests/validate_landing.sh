@@ -525,6 +525,165 @@ printf '%s\n' "$_uri" | grep -q "pbk=${TEST_REALITY_PUB}&sid=${TEST_SHORT_ID}"
 export_mihomo_vless 192.0.2.10 34567 'node' | grep -q "reality-opts: {public-key: '${TEST_REALITY_PUB}'"
 [ "$(generate_node_name US relay VLESS-Landing IPv4)" = '🇺🇸 US | relay | VLESS-Landing | IPv4' ]
 
+# --- AnyTLS 线路机（v2.0.61 起新部署默认） ---
+# Git Bash 调用 Windows 版 openssl 时会把 -subj /CN=… 当成路径改写；只排除这一个参数，
+# 证书文件路径仍正常转换。Linux 上该变量不起作用。
+export MSYS2_ARG_CONV_EXCL='/CN='
+service_is_active() { return 1; }
+LANDING_CERT_DIR="$LANDING_DIR/landing-cert"
+LANDING_CERT="$LANDING_CERT_DIR/cert.pem"
+LANDING_KEY="$LANDING_CERT_DIR/private.key"
+TEST_ANYTLS_PASS=Ab12Cd34Ef56Gh78Ij90Kl12
+
+# v2.0.60 及以前的元数据没有 NODE_PROTO / ANYTLS_PASSWORD：按 VLESS 读取，生成的配置与原来逐字一致。
+cp "$LANDING_CONFIG" "$tmp/vless-relay.json"
+grep -v '^NODE_PROTO=\|^ANYTLS_PASSWORD=' "$LANDING_META/config.env" > "$tmp/vless-relay.env"
+cp "$tmp/vless-relay.env" "$LANDING_META/config.env"
+reset_config_vars; read_config
+[ "$NODE_PROTO" = vless ]
+[ "$(relay_protocol_label)" = 'VLESS + REALITY' ]
+write_config
+cmp -s "$LANDING_CONFIG" "$tmp/vless-relay.json"
+
+# 部署菜单：直接回车为 AnyTLS，2 为 VLESS，其他输入提示后重问；与连接方式菜单同为 [1] / [2]。
+NODE_PROTO=""
+choose_relay_protocol <<< '' > "$tmp/proto.out"
+[ "$NODE_PROTO" = anytls ]
+grep -q '\[1\] AnyTLS（推荐）' "$tmp/proto.out"
+choose_relay_protocol <<< '2' > /dev/null
+[ "$NODE_PROTO" = vless ]
+choose_relay_protocol <<< $'3\n1' > "$tmp/proto.out"
+[ "$NODE_PROTO" = anytls ]
+grep -q '请输入 1 或 2' "$tmp/proto.out"
+
+validate_anytls_password "$TEST_ANYTLS_PASS"
+validate_anytls_password "$(generate_anytls_password)"
+( ! validate_anytls_password 'Ab12Cd34Ef56' )
+( ! validate_anytls_password 'Ab12Cd34Ef56Gh78"j90Kl12' )
+( ! validate_anytls_password 'Ab12Cd34Ef56Gh78 j90Kl12' )
+( ! validate_anytls_password "$(printf 'Ab12Cd34Ef56Gh78\nj90Kl12')" )
+
+# 部署参数：一路回车即可——随机端口、自动密码、大厂 SNI、自签证书；VLESS 的字段清空。
+NAT_MODE=0
+configure_relay_anytls <<< $'\n\n' > "$tmp/anytls-configure.out"
+validate_port "$LISTEN_PORT" && [ "$EXT_PORT" = "$LISTEN_PORT" ]
+validate_anytls_password "$ANYTLS_PASSWORD"
+reality_target_candidates | grep -qxF "$SERVER_NAME"
+[ -z "$UUID" ] && [ -z "$REALITY_PRIVATE_KEY" ] && [ -z "$REALITY_PUBLIC_KEY" ] && [ -z "$SHORT_ID" ]
+landing_certificate_ok
+
+# 固定参数生成配置，便于逐项断言。
+LISTEN_PORT=34567; EXT_PORT=34567; ANYTLS_PASSWORD="$TEST_ANYTLS_PASS"; SERVER_NAME=www.amd.com
+generate_landing_certificate force
+landing_certificate_ok
+_fp=$(landing_certificate_sha256)
+printf '%s\n' "$_fp" | grep -qxE '[0-9a-f]{64}'
+[ "$(stat -c %a "$LANDING_KEY" 2>/dev/null || echo 600)" = 600 ]
+# 不带 force 时沿用现有证书：保留参数重新部署后，客户端里固定的指纹不变。
+generate_landing_certificate
+[ "$(landing_certificate_sha256)" = "$_fp" ]
+# 私钥与证书不匹配（或缺失）时自动重新生成。
+cp "$LANDING_KEY" "$tmp/landing-key.bak"
+openssl genrsa -out "$LANDING_KEY" 2048 >/dev/null 2>&1
+( ! landing_certificate_ok )
+generate_landing_certificate
+landing_certificate_ok
+[ "$(landing_certificate_sha256)" != "$_fp" ]
+rm -f "$LANDING_KEY"
+( ! landing_certificate_ok )
+generate_landing_certificate
+landing_certificate_ok
+_fp=$(landing_certificate_sha256)
+[ -z "$(find "$LANDING_CERT_DIR" -mindepth 1 -maxdepth 1 -name 'new.*' 2>/dev/null)" ]
+
+write_config
+write_meta
+grep -q '"type": "anytls"' "$LANDING_CONFIG"
+grep -q '"tag": "anytls-in"' "$LANDING_CONFIG"
+grep -qF "{ \"name\": \"default\", \"password\": \"${TEST_ANYTLS_PASS}\" }" "$LANDING_CONFIG"
+grep -qF '"server_name": "www.amd.com",' "$LANDING_CONFIG"
+grep -qF "\"certificate_path\": \"${LANDING_CERT}\"," "$LANDING_CONFIG"
+grep -qF "\"key_path\": \"${LANDING_KEY}\"" "$LANDING_CONFIG"
+( ! grep -qE '"vless-in"|"reality"|"handshake"|"uuid"' "$LANDING_CONFIG" )
+# 隧道、DNS 接管与路由规则与 VLESS 完全一致，只是入站换成 anytls-in。
+grep -q '{ "inbound": \["anytls-in"\], "port": 53, "action": "hijack-dns" },' "$LANDING_CONFIG"
+[ "$(grep -n '"action": "hijack-dns"' "$LANDING_CONFIG" | cut -d: -f1)" -lt "$(grep -n '"action": "resolve"' "$LANDING_CONFIG" | cut -d: -f1)" ]
+grep -q '{ "inbound": \["anytls-in"\], "query_type": \["AAAA"\], "action": "predefined" },' "$LANDING_CONFIG"
+grep -q '{ "inbound": \["anytls-in"\], "action": "route", "server": "exit-dns" }' "$LANDING_CONFIG"
+grep -q '{ "inbound": \["anytls-in", "probe-in"\], "action": "resolve", "server": "exit-dns", "strategy": "ipv4_only" },' "$LANDING_CONFIG"
+grep -q '{ "inbound": \["anytls-in", "probe-in"\], "action": "route", "outbound": "wg-out" }' "$LANDING_CONFIG"
+grep -q '"final": "direct"' "$LANDING_CONFIG"
+grep -q '"mtu": 1280,' "$LANDING_CONFIG"
+grep -q '"udp_fragment": true,' "$LANDING_CONFIG"
+( ! grep -q '"detour": "direct"' "$LANDING_CONFIG" )
+if [ -n "${REAL_SING_BOX_BIN:-}" ]; then "$REAL_SING_BOX_BIN" check -c "$LANDING_CONFIG"; fi
+
+reset_config_vars; read_config
+[ "$NODE_PROTO" = anytls ] && [ "$ANYTLS_PASSWORD" = "$TEST_ANYTLS_PASS" ] && [ "$SERVER_NAME" = www.amd.com ]
+[ "$(relay_protocol_label)" = AnyTLS ]
+# 密码或协议被篡改为非法值时拒绝加载。
+cp "$LANDING_META/config.env" "$tmp/anytls-relay.env"
+awk '{ sub(/^ANYTLS_PASSWORD=.*/, "ANYTLS_PASSWORD=bad\"pass") } 1' "$tmp/anytls-relay.env" > "$LANDING_META/config.env"
+( ! read_config )
+awk '{ sub(/^NODE_PROTO=.*/, "NODE_PROTO=trojan") } 1' "$tmp/anytls-relay.env" > "$LANDING_META/config.env"
+( ! read_config )
+cp "$tmp/anytls-relay.env" "$LANDING_META/config.env"
+read_config
+
+# 自愈同样作用于 AnyTLS 线路机（以前只认 REALITY 的 "handshake" 字段，AnyTLS 会被跳过）。
+cp "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+grep -v '"port": 53, "action": "hijack-dns"' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
+( ! grep -q '"action": "hijack-dns"' "$LANDING_CONFIG" )
+ensure_reality_handshake_direct >/dev/null
+cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+sed 's/"mtu": 1280,/"mtu": 1380,/' "$LANDING_CONFIG.good" > "$LANDING_CONFIG"
+ensure_reality_handshake_direct >/dev/null
+cmp -s "$LANDING_CONFIG" "$LANDING_CONFIG.good"
+[ -z "$(ensure_reality_handshake_direct)" ]
+rm -f "$LANDING_CONFIG.good" "${LANDING_CONFIG}.handshake.bak"
+
+# 部署失败回滚：证书目录随配置一起恢复，客户端固定的指纹仍然有效。
+backup_current_install
+generate_landing_certificate force
+[ "$(landing_certificate_sha256)" != "$_fp" ]
+restore_current_install
+[ "$(landing_certificate_sha256)" = "$_fp" ]
+[ "$NODE_PROTO" = anytls ]
+
+# 客户端导出：Exclave 只认 anytls://密码@地址:端口?sni=…&insecure=1，并拒绝 security=reality。
+_uri=$(render_anytls_uri 192.0.2.10 34567 "$ANYTLS_PASSWORD" 'test node')
+[ "$_uri" = "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?security=tls&sni=www.amd.com&fp=chrome&insecure=1#test%20node" ]
+render_anytls_uri 2001:db8::10 34567 "$ANYTLS_PASSWORD" n | grep -q '@\[2001:db8::10\]:34567?'
+[ "$(export_shadowrocket_anytls 192.0.2.10 34567 'test node')" = "$_uri" ]
+# Mihomo / Surfboard 用证书指纹严格校验；Surfboard 可选项写成 key=value，指纹为 64 位十六进制。
+export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "type: anytls, server: 192.0.2.10, port: 34567, password: '${TEST_ANYTLS_PASS}',"
+export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "sni: 'www.amd.com', skip-cert-verify: false, fingerprint: '${_fp}'}"
+export_mihomo_anytls 2001:db8::10 34567 node | grep -qF "server: '2001:db8::10', port: 34567"
+[ "$(export_surfboard_anytls 192.0.2.10 34567 node)" = "node = anytls, 192.0.2.10, 34567, ${TEST_ANYTLS_PASS}, skip-cert-verify=true, sni=www.amd.com, server-cert-fingerprint-sha256=${_fp}" ]
+export_loon_anytls | grep -q '请使用 URI 或 Mihomo 配置'
+export_quantumultx_anytls | grep -q '暂不支持 AnyTLS'
+# 读不到证书时退回跳过校验，不输出空指纹。
+LANDING_CERT="$tmp/missing.pem"
+export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "sni: 'www.amd.com', skip-cert-verify: true}"
+[ "$(export_surfboard_anytls 192.0.2.10 34567 node)" = "node = anytls, 192.0.2.10, 34567, ${TEST_ANYTLS_PASS}, skip-cert-verify=true, sni=www.amd.com" ]
+LANDING_CERT="$LANDING_CERT_DIR/cert.pem"
+[ "$(generate_node_name US relay AnyTLS-Landing IPv4)" = '🇺🇸 US | relay | AnyTLS-Landing | IPv4' ]
+_out=$(show_node 192.0.2.10 34567 v4 uri US)
+printf '%s\n' "$_out" | grep -qF "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?"
+printf '%s\n' "$_out" | grep -q 'AnyTLS-Landing'
+( ! printf '%s\n' "$_out" | grep -q 'vless://' )
+show_node 192.0.2.10 34567 v4 quantumult US | grep -q 'Quantumult X 暂不支持 AnyTLS'
+# 节点信息页：协议、SNI 与证书指纹（Exclave 可手动固定证书）。
+get_country_code() { printf 'US'; }
+get_country_name() { printf 'United States'; }
+_out=$(show_config uri </dev/null 2>&1 || true)
+printf '%s\n' "$_out" | grep -q '家宽中转节点（AnyTLS → WireGuard → 落地机）'
+printf '%s\n' "$_out" | grep -q 'TLS SNI   : .*www.amd.com'
+printf '%s\n' "$_out" | grep -qF "证书 SHA256: $(printf '\033[0;33m')${_fp}"
+printf '%s\n' "$_out" | grep -qF "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?"
+( ! printf '%s\n' "$_out" | grep -q '伪装 SNI' )
+unset -f service_is_active get_country_code get_country_name
+
 # --- 出口验证 ---
 # Cloudflare trace 取 ip= 行；http://1.1.1.1 返回的 301 跳转页取不到地址（v2.0.52–v2.0.53 的根因）。
 [ "$(printf 'fl=1f1\nh=1.1.1.1\nip=198.51.100.7\nts=1.0\n' | extract_probe_ip)" = 198.51.100.7 ]
@@ -648,6 +807,7 @@ unset -f show_node get_country_code get_country_name
 MANAGED_SING_BOX=1
 uninstall_landing_files
 [ ! -f "$LANDING_CONFIG" ]
+[ ! -d "$LANDING_CERT_DIR" ]
 [ ! -f "$SING_BOX_BIN" ]
 [ ! -d "$LANDING_DIR" ]
 

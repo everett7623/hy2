@@ -4,6 +4,17 @@
 
 ---
 
+## v2.0.61 (2026-10-30)
+
+- 家宽 / 落地中转新增节点协议选择。一键部署在「落地机信息」之前多一步「节点协议（客户端 → 本机）」：`[1] AnyTLS（推荐）`，直接回车即选；`[2] VLESS + REALITY`，即原有方案。协议只决定客户端怎么连线路机，与「连接方式」（线路机和落地机之间由谁发起 WireGuard 连接）互不影响，可任意搭配，所以两者分成两个菜单，格式一致。
+- AnyTLS 节点使用自签证书，无需域名：连接密码自动生成（只含字母和数字）；TLS SNI 从同一份大厂候选中随机，回车即用；证书放在线路机 `/etc/sing-box/landing-cert/`，有效期 10 年，与 `anytls.sh` 的证书目录分开。选「保留现有节点参数」重新部署时沿用原证书，客户端里固定的证书指纹不变；证书缺失或与私钥不匹配时才重新生成。部署失败回滚时恢复证书目录；卸载，以及改为 VLESS 重新部署成功后，删除证书目录。
+- AnyTLS 节点导出：URI 带 `insecure=1`，Exclave、Shadowrocket 可直接导入。Exclave 只读取 `sni` 与 `insecure`，并拒绝 `security=reality`，所以不提供「AnyTLS + REALITY」。Mihomo 带证书指纹（`fingerprint`），严格校验；Surfboard 按其官方文档的 `key=value` 写法输出，并带 `server-cert-fingerprint-sha256`。Loon 暂无经官方文档确认的 AnyTLS 格式，提示改用 URI 或 Mihomo；Quantumult X 不支持 AnyTLS。节点信息页显示证书 SHA256，可在 Exclave 里手动固定证书。
+- 两种协议共用同一套隧道与规则：DNS 接管（落地机无 IPv6 时 AAAA 回空）、隧道 MTU 1280 与 `udp_fragment`、只让节点入站与探测入口走 `wg-out`、出口验证、节点端口检测。只有节点入站不同（`anytls-in` / `vless-in`）。
+- 已部署的 VLESS 节点不受影响：元数据新增 `NODE_PROTO`、`ANYTLS_PASSWORD`，没有这两项的旧部署按 VLESS 读取。VLESS 线路机生成的配置与 v2.0.60 逐字节一致。
+- 配置自愈（诊断、升级 sing-box、每周自动更新时执行）改为按 `wg-out` 识别线路机配置。此前它只认 REALITY 的 `"handshake"` 字段，AnyTLS 线路机会被直接跳过。诊断对 AnyTLS 节点检查证书是否有效，不再检测 REALITY 握手目标。
+- 换协议解决不了 IP 被封：线路机 IP 被封时两种协议都连不上，只能换 IP。
+- 回归测试：协议菜单的默认值、`2` 和非法输入；一路回车生成 AnyTLS 参数；证书沿用、损坏后重建、部署回滚时恢复、卸载时删除；AnyTLS 线路机 JSON 与 DNS / 路由规则；旧元数据按 VLESS 读取且配置逐字一致；篡改后的密码或协议拒绝加载；AnyTLS 线路机自愈；URI / Mihomo / Surfboard 导出与读不到证书时的回退；节点信息页。以上用变异测试逐项确认能拦住回归。本机用真实 sing-box 1.14.3 跑通端到端：AnyTLS 客户端 → 线路机 → WireGuard → 落地机，覆盖网页、10MB 下载、300KB 上传，以及 TCP / UDP 明文 DNS 接管（AAAA 为空）。
+
 ## v2.0.60 (2026-10-15)
 
 - 随机大厂 SNI 候选去掉 `www.microsoft.com` 与 `www.cloudflare.com`，只保留 Apple、Amazon、AMD、Mozilla、NVIDIA、Samsung 六个。VLESS 安装、修改配置时输入 `auto` 重选、诊断重选，家宽中转部署，以及 AnyTLS 安装时的随机默认 SNI 都用这份候选；手动输入的 SNI 不受限制，其他逻辑不变。
