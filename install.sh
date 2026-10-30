@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.0.69
+# 版本：v2.1.0
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-10-30
+# 更新日期: 2026-10-31
 #====================================================================================
 
 # ============================================================
@@ -57,6 +57,19 @@ clear_screen() {
 BOLD='\033[1m'
 DIM='\033[2m'
 
+# ---- 界面主题（由 init_ui 按终端能力设置）----
+# 色块编号与大字标题渐变色；NO_COLOR 或输出被重定向时全部为空，菜单退回原来的 [n] 文字。
+KEY_BLOCK=''
+KEY_BLOCK_EXIT=''
+TITLE_GRADIENT=()
+# 线框 / 圆点字符：中文终端把它们显示成双宽，或设置 SB_ASCII=1 时换成纯 ASCII。
+GLYPH_DOT='●'
+GLYPH_HOLLOW='○'
+GLYPH_RULE='─'
+GLYPH_VBAR='│'
+GLYPH_MID='·'
+UI_ASCII=0
+
 # ---- 脚本地址 / 路径 ----
 BASE_URL="https://raw.githubusercontent.com/everett7623/hy2/main"
 INSTALL_URL="${BASE_URL}/install.sh"
@@ -71,6 +84,10 @@ BACKUP_DIR="/root/singbox-tools/backup"
 LAST_BACKUP_FILE=""
 SCRIPT_CACHE_DIR="/root/singbox-tools/scripts"
 SHORTCUT_BIN="/usr/local/bin/sb"
+# 首页公网 IP / 地区的探测结果缓存：返回主菜单不再每次联网，过期或按 r 后重新探测。
+NET_CACHE_FILE="/root/singbox-tools/cache/netinfo"
+NET_CACHE_TTL=1800
+NET_INFO_LOADED=0
 
 # ============================================================
 # 基础工具
@@ -175,13 +192,13 @@ run_script() {
     local _name="$1" _url="$2" _action="${3:-}"
     local _script_name="${_url##*/}" _cache="${SCRIPT_CACHE_DIR}/${_script_name}"
     echo ""
-    echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
+    print_rule 0
     if [ -n "$_action" ]; then
         echo -e "正在加载 ${BOLD}${_name}${PLAIN} ${DIM}(${_action})${PLAIN} ..."
     else
         echo -e "正在加载 ${BOLD}${_name}${PLAIN} ..."
     fi
-    echo -e "${SKYBLUE}───────────────────────────────────────────────${PLAIN}"
+    print_rule 0
 
     install_curl_if_missing || {
         echo -e "${RED}[ERROR] curl 安装失败，无法下载脚本${PLAIN}"
@@ -365,106 +382,294 @@ probe_public_ip() {
     return 1
 }
 
+save_net_cache() {
+    local _dir="${NET_CACHE_FILE%/*}" _tmp
+    # 两个地址都没探测到（网络暂时不通）时不写缓存，下次打开照常重新探测。
+    [ -n "$2$3" ] || return 0
+    mkdir -p "$_dir" 2>/dev/null && chmod 700 "$_dir" 2>/dev/null || return 0
+    _tmp=$(mktemp "${NET_CACHE_FILE}.XXXXXX" 2>/dev/null) || return 0
+    if printf 'TS=%s\nIPV4=%s\nIPV6=%s\nCOUNTRY=%s\n' "$1" "$2" "$3" "$4" > "$_tmp" && chmod 600 "$_tmp"; then
+        mv -f "$_tmp" "$NET_CACHE_FILE" 2>/dev/null || rm -f "$_tmp"
+    else
+        rm -f "$_tmp"
+    fi
+}
+
+# 首页的公网 IP 与地区要联网探测（常见 1–3 秒）：同一进程只探测一次并写入缓存，
+# NET_CACHE_TTL 秒内重新打开 sb 也直接读缓存；$1=1 时强制重新探测（主菜单 r 键、系统检测）。
+load_net_info() {
+    local _force="${1:-0}" _now _ts=0 _v4="" _v6="" _cc="" _line
+    if [ "$_force" != "1" ] && [ "$NET_INFO_LOADED" = "1" ]; then
+        return 0
+    fi
+    _now=$(date +%s 2>/dev/null)
+    case "$_now" in ''|*[!0-9]*) _now=0 ;; esac
+    if [ "$_force" != "1" ] && [ -f "$NET_CACHE_FILE" ]; then
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            case "$_line" in
+                TS=*) _ts="${_line#TS=}" ;;
+                IPV4=*) _v4="${_line#IPV4=}" ;;
+                IPV6=*) _v6="${_line#IPV6=}" ;;
+                COUNTRY=*) _cc="${_line#COUNTRY=}" ;;
+            esac
+        done < "$NET_CACHE_FILE"
+        case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
+        # 缓存内容会原样显示在终端：只接受 IP 字符与两位国家码，其余按缓存损坏重新探测。
+        case "$_v4$_v6" in *[!0-9A-Fa-f.:]*) _ts=0 ;; esac
+        case "$_cc" in [A-Z][A-Z]) ;; *) _ts=0 ;; esac
+        if [ "$_ts" -gt 0 ] && [ "$_now" -ge "$_ts" ] && [ $((_now - _ts)) -lt "$NET_CACHE_TTL" ]; then
+            NET_IPV4="${_v4:-无}"
+            NET_IPV6="${_v6:-无}"
+            COUNTRY_CODE="$_cc"
+            COUNTRY_INFO="${_cc} / $(get_country_name "$_cc")"
+            NET_INFO_LOADED=1
+            return 0
+        fi
+    fi
+    [ -t 1 ] && echo -e "  ${DIM}正在检测网络环境...${PLAIN}"
+    _v4=$(probe_public_ip 4 2>/dev/null || true)
+    _v6=$(get_real_ipv6 2>/dev/null || true)
+    [ -z "$_v6" ] && _v6=$(probe_public_ip 6 2>/dev/null || true)
+    _cc=""
+    [ -n "$_v4" ] && _cc=$(get_ip_country "$_v4" 2>/dev/null || true)
+    [ -z "$_cc" ] && [ -n "$_v6" ] && _cc=$(get_ip_country "$_v6" 2>/dev/null || true)
+    [ -z "$_cc" ] && _cc="UN"
+    NET_IPV4="${_v4:-无}"
+    NET_IPV6="${_v6:-无}"
+    COUNTRY_CODE="$_cc"
+    COUNTRY_INFO="${_cc} / $(get_country_name "$_cc")"
+    NET_INFO_LOADED=1
+    save_net_cache "$_now" "$_v4" "$_v6" "$_cc"
+    return 0
+}
+
 get_status() {
-    local _ver _ipv6 _country
-    NET_IPV4=$(probe_public_ip 4 2>/dev/null || true)
-    _ipv6=$(get_real_ipv6 2>/dev/null || true)
-    [ -z "$_ipv6" ] && _ipv6=$(probe_public_ip 6 2>/dev/null || true)
-    NET_IPV6="${_ipv6:-无}"
-    NET_IPV4="${NET_IPV4:-无}"
+    local _ver _state
+    load_net_info
     OS_INFO=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)
     ARCH_INFO=$(uname -m)
     KERNEL_INFO=$(uname -r)
     BBR_STATUS=$(get_bbr_status)
-    _country=""
-    [ "$NET_IPV4" != "无" ] && _country=$(get_ip_country "$NET_IPV4" 2>/dev/null || true)
-    [ -z "$_country" ] && [ "$NET_IPV6" != "无" ] && _country=$(get_ip_country "$NET_IPV6" 2>/dev/null || true)
-    [ -z "$_country" ] && _country="UN"
-    COUNTRY_INFO="${_country} / $(get_country_name "$_country")"
 
     if [ -f "/usr/local/bin/hysteria" ]; then
         _ver=$(/usr/local/bin/hysteria version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         service_active hysteria-server /var/run/hysteria.pid \
-            && HY2_STATUS="${GREEN}● 运行中${PLAIN}${DIM} ${_ver}${PLAIN}" \
-            || HY2_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} ${_ver}${PLAIN}"
+            && HY2_STATUS="${GREEN}${GLYPH_DOT} 运行中${PLAIN}${DIM} ${_ver}${PLAIN}" \
+            || HY2_STATUS="${YELLOW}${GLYPH_DOT} 已停止${PLAIN}${DIM} ${_ver}${PLAIN}"
     else
-        HY2_STATUS="${RED}● 未安装${PLAIN}"
+        HY2_STATUS="${RED}${GLYPH_DOT} 未安装${PLAIN}"
     fi
 
     if [ -f "/usr/local/bin/ssserver" ]; then
         _ver=$(/usr/local/bin/ssserver --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         service_active shadowsocks-server /var/run/ssserver.pid \
-            && SS_STATUS="${GREEN}● 运行中${PLAIN}${DIM} v${_ver}${PLAIN}" \
-            || SS_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} v${_ver}${PLAIN}"
+            && SS_STATUS="${GREEN}${GLYPH_DOT} 运行中${PLAIN}${DIM} v${_ver}${PLAIN}" \
+            || SS_STATUS="${YELLOW}${GLYPH_DOT} 已停止${PLAIN}${DIM} v${_ver}${PLAIN}"
     else
-        SS_STATUS="${RED}● 未安装${PLAIN}"
+        SS_STATUS="${RED}${GLYPH_DOT} 未安装${PLAIN}"
     fi
 
     if [ -x "/usr/local/bin/anytls-server" ] && [ -f "/etc/sing-box/anytls.json" ]; then
         service_active anytls-server /var/run/anytls-server.pid \
-            && ANYTLS_STATUS="${GREEN}● 运行中${PLAIN}" \
-            || ANYTLS_STATUS="${YELLOW}● 已停止${PLAIN}"
+            && ANYTLS_STATUS="${GREEN}${GLYPH_DOT} 运行中${PLAIN}" \
+            || ANYTLS_STATUS="${YELLOW}${GLYPH_DOT} 已停止${PLAIN}"
     else
-        ANYTLS_STATUS="${RED}● 未安装${PLAIN}"
+        ANYTLS_STATUS="${RED}${GLYPH_DOT} 未安装${PLAIN}"
     fi
 
     if [ -x "/usr/local/bin/vless-server" ] && [ -f "/etc/sing-box/vless.json" ]; then
         service_active vless-server /var/run/vless-server.pid \
-            && VLESS_STATUS="${GREEN}● 运行中${PLAIN}" \
-            || VLESS_STATUS="${YELLOW}● 已停止${PLAIN}"
+            && VLESS_STATUS="${GREEN}${GLYPH_DOT} 运行中${PLAIN}" \
+            || VLESS_STATUS="${YELLOW}${GLYPH_DOT} 已停止${PLAIN}"
     else
-        VLESS_STATUS="${RED}● 未安装${PLAIN}"
+        VLESS_STATUS="${RED}${GLYPH_DOT} 未安装${PLAIN}"
     fi
 
     if [ -x "/usr/local/bin/proxy-server" ] && [ -f "/etc/sing-box/proxy.json" ]; then
         service_active proxy-server /var/run/proxy-server.pid \
-            && PROXY_STATUS="${GREEN}● 运行中${PLAIN}" \
-            || PROXY_STATUS="${YELLOW}● 已停止${PLAIN}"
+            && PROXY_STATUS="${GREEN}${GLYPH_DOT} 运行中${PLAIN}" \
+            || PROXY_STATUS="${YELLOW}${GLYPH_DOT} 已停止${PLAIN}"
     else
-        PROXY_STATUS="${RED}● 未安装${PLAIN}"
+        PROXY_STATUS="${RED}${GLYPH_DOT} 未安装${PLAIN}"
     fi
 
     if [ -x "/usr/local/bin/landing-server" ] && [ -f "/etc/sing-box/landing.json" ]; then
         local _role_label="线路机"
         [ "$(awk -F= '$1 == "ROLE" { print $2; exit }' /etc/sing-box/landing-meta/config.env 2>/dev/null)" = "exit" ] && _role_label="落地机"
         service_active landing-server /var/run/landing-server.pid \
-            && LANDING_STATUS="${GREEN}● 运行中${PLAIN}${DIM} ${_role_label}${PLAIN}" \
-            || LANDING_STATUS="${YELLOW}● 已停止${PLAIN}${DIM} ${_role_label}${PLAIN}"
+            && LANDING_STATUS="${GREEN}${GLYPH_DOT} 运行中${PLAIN}${DIM} ${_role_label}${PLAIN}" \
+            || LANDING_STATUS="${YELLOW}${GLYPH_DOT} 已停止${PLAIN}${DIM} ${_role_label}${PLAIN}"
     else
-        LANDING_STATUS="${RED}● 未部署${PLAIN}"
+        LANDING_STATUS="${RED}${GLYPH_DOT} 未部署${PLAIN}"
     fi
 
     if [ "$NET_IPV6" != "无" ]; then
         [ "$NET_IPV4" = "无" ] \
-            && EUSERV_STATUS="${CYAN}● 纯 IPv6 可用${PLAIN}" \
-            || EUSERV_STATUS="${SKYBLUE}● IPv6 双栈可用${PLAIN}"
+            && EUSERV_STATUS="${CYAN}${GLYPH_DOT} 纯 IPv6 可用${PLAIN}" \
+            || EUSERV_STATUS="${SKYBLUE}${GLYPH_DOT} IPv6 双栈可用${PLAIN}"
     else
-        EUSERV_STATUS="${RED}● 不适用${PLAIN}"
+        EUSERV_STATUS="${RED}${GLYPH_DOT} 不适用${PLAIN}"
     fi
+
+    # 首页标题行的真实计数（6 个可安装协议；EUserv 只表示网络是否适用，不计入）。
+    UI_RUNNING=0; UI_STOPPED=0; UI_ABSENT=0
+    for _state in "$VLESS_STATUS" "$ANYTLS_STATUS" "$HY2_STATUS" "$SS_STATUS" "$PROXY_STATUS" "$LANDING_STATUS"; do
+        case "$_state" in
+            *运行中*) UI_RUNNING=$((UI_RUNNING + 1)) ;;
+            *已停止*) UI_STOPPED=$((UI_STOPPED + 1)) ;;
+            *) UI_ABSENT=$((UI_ABSENT + 1)) ;;
+        esac
+    done
 }
 
 # ============================================================
 # UI
 # ============================================================
-show_header() {
-    clear_screen
-    echo -e "  ${SKYBLUE}${BOLD}+--------------------------------------------------------+${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}|${PLAIN}  ${WHITE}${BOLD}SING-BOX PROXY SUITE${PLAIN}        ${GREEN}${BOLD}ONLINE${PLAIN}           ${SKYBLUE}${BOLD}|${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}|${PLAIN}  ${YELLOW}${BOLD}v2.0.69${PLAIN}   ${CYAN}VLESS  ANYTLS  HY2  SS  MIXED${PLAIN}       ${SKYBLUE}${BOLD}|${PLAIN}"
-    echo -e "  ${SKYBLUE}${BOLD}+--------------------------------------------------------+${PLAIN}"
-    echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}│ 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
-    echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 │${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 │${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
-    echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
+# 中文环境的终端常把线框 / 方块字符（█ ─ ●）按双宽显示，大字标题和分隔线会折行错乱。
+# 打印一个 █ 后用 DSR（ESC[6n）读回光标列：占 2 列就改用纯 ASCII；终端不回应时 1 秒内放弃。
+terminal_ambiguous_wide() {
+    local _esc="" _row="" _col=""
+    [ -t 0 ] && [ -t 1 ] && [ -t 2 ] || return 1
+    case "${TERM:-dumb}" in dumb|unknown) return 1 ;; esac
+    printf '\r█' >&2
+    IFS='[;' read -rs -d R -t 1 -p $'\033[6n' _esc _row _col
+    printf '\r\033[K' >&2
+    case "$_col" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$_col" -ge 3 ]
 }
 
+# 只在启动时调用一次：NO_COLOR（no-color.org）或输出被重定向时不输出任何颜色码；
+# 支持 256 色的终端用渐变大字与色块编号，其余退回 16 色。
+# SB_ASCII=1 强制纯 ASCII 线框，SB_ASCII=0 强制 Unicode，未设置时自动检测。
+init_ui() {
+    if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
+        RED=''; GREEN=''; YELLOW=''; SKYBLUE=''; CYAN=''; MAGENTA=''; WHITE=''; PLAIN=''; BOLD=''; DIM=''
+        KEY_BLOCK=''; KEY_BLOCK_EXIT=''; TITLE_GRADIENT=()
+    else
+        case "${COLORTERM:-}:${TERM:-}" in
+            *truecolor*|*24bit*|*256color*|*:xterm*|*:screen*|*:tmux*|*:rxvt*|*:alacritty|*:foot*|*:kitty*|*:wezterm)
+                KEY_BLOCK='\033[1;97;48;5;25m'
+                KEY_BLOCK_EXIT='\033[1;97;48;5;242m'
+                TITLE_GRADIENT=('\033[1;38;5;51m' '\033[1;38;5;45m' '\033[1;38;5;39m' '\033[1;38;5;33m' '\033[1;38;5;63m' '\033[1;38;5;99m')
+                ;;
+            *)
+                KEY_BLOCK='\033[1;37;44m'
+                KEY_BLOCK_EXIT='\033[1;37;40m'
+                TITLE_GRADIENT=('\033[1;36m' '\033[1;36m' '\033[1;34m' '\033[1;34m' '\033[1;35m' '\033[1;35m')
+                ;;
+        esac
+    fi
+    case "${SB_ASCII:-auto}" in
+        1|yes|true) UI_ASCII=1 ;;
+        0|no|false) UI_ASCII=0 ;;
+        *) terminal_ambiguous_wide && UI_ASCII=1 ;;
+    esac
+    if [ "$UI_ASCII" = "1" ]; then
+        GLYPH_DOT='*'; GLYPH_HOLLOW='o'; GLYPH_RULE='-'; GLYPH_VBAR='|'; GLYPH_MID='-'
+    fi
+    return 0
+}
+
+term_cols() {
+    local _cols=""
+    _cols=$(stty size 2>/dev/null < /dev/tty | awk '{ print $2 }')
+    case "$_cols" in ''|*[!0-9]*|0) _cols=$(tput cols 2>/dev/null) ;; esac
+    case "$_cols" in ''|*[!0-9]*|0) _cols="${COLUMNS:-80}" ;; esac
+    case "$_cols" in ''|*[!0-9]*|0) _cols=80 ;; esac
+    printf '%s' "$_cols"
+}
+
+# 分隔线：最长 61 列，与大字标题同宽；窄屏按终端宽度收短，避免折行。
+# 按次数拼接而不用 ${#var}：C locale 下 ${#var} 数的是字节，多字节线框字符会只画出三分之一。
+print_rule() {
+    local _indent="${1:-2}" _width _line="" _i=0
+    _width=$(( $(term_cols) - _indent - 1 ))
+    [ "$_width" -gt 61 ] && _width=61
+    [ "$_width" -lt 10 ] && _width=10
+    while [ "$_i" -lt "$_width" ]; do
+        _line="${_line}${GLYPH_RULE}"
+        _i=$((_i + 1))
+    done
+    printf '%*s%b%s%b\n' "$_indent" '' "$SKYBLUE" "$_line" "$PLAIN"
+}
+
+# 菜单项：编号做成色块、文字加粗；没有颜色（NO_COLOR / 输出重定向）时退回原来的 [n] 文字。
+# 有两位数编号的菜单在函数里设 local MENU_KEY_WIDTH=2，各项文字才能对齐。
+menu_item() {
+    local _key="$1" _text="$2" _block="$KEY_BLOCK"
+    [ "$_key" = "0" ] && _block="$KEY_BLOCK_EXIT"
+    if [ -n "$_block" ]; then
+        printf '  %b %*s %b %b%s%b\n' "$_block" "${MENU_KEY_WIDTH:-1}" "$_key" "$PLAIN" "$BOLD" "$_text" "$PLAIN"
+    else
+        printf '  [%s] %s\n' "$_key" "$_text"
+    fi
+}
+
+# 首页大字标题：6 行方块字，自上而下青→蓝→紫渐变；ASCII 模式用 5 行线条字；
+# 不足 64 列（手机 SSH）时只显示单行标题。
+print_big_title() {
+    local _i
+    local -a _lines
+    if [ "$(term_cols)" -lt 64 ]; then
+        printf '  %b%s%b\n' "${TITLE_GRADIENT[0]:-}${BOLD}" "SING-BOX" "$PLAIN"
+        return 0
+    fi
+    if [ "$UI_ASCII" = "1" ]; then
+        _lines=(
+            ' ____    ___   _   _    ____           ____     ___   __  __'
+            '/ ___|  |_ _| | \ | |  / ___|         | __ )   / _ \  \ \/ /'
+            '\___ \   | |  |  \| | | |  _   _____  |  _ \  | | | |  \  / '
+            ' ___) |  | |  | |\  | | |_| | |_____| | |_) | | |_| |  /  \ '
+            '|____/  |___| |_| \_|  \____|         |____/   \___/  /_/\_\'
+        )
+    else
+        _lines=(
+            '███████╗██╗███╗   ██╗ ██████╗       ██████╗  ██████╗ ██╗  ██╗'
+            '██╔════╝██║████╗  ██║██╔════╝       ██╔══██╗██╔═══██╗╚██╗██╔╝'
+            '███████╗██║██╔██╗ ██║██║  ███╗█████╗██████╔╝██║   ██║ ╚███╔╝ '
+            '╚════██║██║██║╚██╗██║██║   ██║╚════╝██╔══██╗██║   ██║ ██╔██╗ '
+            '███████║██║██║ ╚████║╚██████╔╝      ██████╔╝╚██████╔╝██╔╝ ██╗'
+            '╚══════╝╚═╝╚═╝  ╚═══╝ ╚═════╝       ╚═════╝  ╚═════╝ ╚═╝  ╚═╝'
+        )
+    fi
+    for _i in "${!_lines[@]}"; do
+        printf ' %b%s%b\n' "${TITLE_GRADIENT[$_i]:-}" "${_lines[$_i]}" "$PLAIN"
+    done
+}
+
+show_header() {
+    local _title _state=""
+    clear_screen
+    print_big_title
+    _title="  ${WHITE}${BOLD}PROXY SUITE${PLAIN} ${DIM}${GLYPH_MID}${PLAIN} ${YELLOW}${BOLD}v2.1.0${PLAIN}"
+    # 计数来自上一次 get_status（主菜单每次刷新都会调用）；还没统计过时不显示。
+    if [ -n "${UI_RUNNING:-}" ]; then
+        _state="${GREEN}${GLYPH_DOT} 运行 ${UI_RUNNING}${PLAIN}"
+        [ "${UI_STOPPED:-0}" -gt 0 ] && _state="${_state}   ${YELLOW}${GLYPH_DOT} 停止 ${UI_STOPPED}${PLAIN}"
+        _state="${_state}   ${DIM}${GLYPH_HOLLOW} 未装 ${UI_ABSENT:-0}${PLAIN}"
+        case "${COUNTRY_CODE:-UN}" in
+            UN) ;;
+            *) _state="${_state}   ${WHITE}${COUNTRY_CODE} $(get_country_name "$COUNTRY_CODE")${PLAIN}" ;;
+        esac
+    fi
+    if [ "$(term_cols)" -ge 64 ]; then
+        echo -e "${_title}       ${_state}"
+    else
+        echo -e "$_title"
+        [ -n "$_state" ] && echo -e "  ${_state}"
+    fi
+    echo -e "  ${DIM}作者${PLAIN} ${WHITE}everettlabs${PLAIN}  ${DIM}${GLYPH_VBAR} 项目${PLAIN} ${YELLOW}github.com/everett7623/hy2${PLAIN}"
+    echo -e "  ${DIM}站点${PLAIN} ${SKYBLUE}seedloc.com${PLAIN} ${DIM}博客 ${GLYPH_VBAR}${PLAIN} ${SKYBLUE}vpsknow.com${PLAIN} ${DIM}测评 ${GLYPH_VBAR}${PLAIN} ${SKYBLUE}nodeloc.com${PLAIN} ${DIM}论坛${PLAIN}"
+    print_rule 1
+}
+
+# 调用前需先 get_status（main_menu 每轮刷新都会调用）。
 show_status_summary() {
-    get_status
     echo -e "  ${YELLOW}${BOLD}环境概览${PLAIN}"
     echo -e "  ${DIM}IPv4${PLAIN} ${WHITE}${NET_IPV4}${PLAIN}  ${DIM}IPv6${PLAIN} ${WHITE}${NET_IPV6}${PLAIN}"
     echo -e "  ${DIM}系统${PLAIN} ${WHITE}${OS_INFO} ${ARCH_INFO}${PLAIN}"
     echo -e "  ${DIM}内核${PLAIN} ${WHITE}${KERNEL_INFO}${PLAIN}  ${DIM}BBR${PLAIN} ${WHITE}${BBR_STATUS}${PLAIN}"
-    echo -e "  ${DIM}地区${PLAIN} ${WHITE}${COUNTRY_INFO}${PLAIN}"
-    echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
+    print_rule 1
     echo -e "  ${YELLOW}${BOLD}协议状态${PLAIN}"
     echo -e "  VLESS         $(echo -e "$VLESS_STATUS")"
     echo -e "  AnyTLS        $(echo -e "$ANYTLS_STATUS")"
@@ -473,7 +678,7 @@ show_status_summary() {
     echo -e "  HTTP/SOCKS    $(echo -e "$PROXY_STATUS")"
     echo -e "  家宽中转      $(echo -e "$LANDING_STATUS")"
     echo -e "  EUserv HY2    $(echo -e "$EUSERV_STATUS")"
-    echo -e "  ${SKYBLUE}──────────────────────────────────────────────────────────${PLAIN}"
+    print_rule 1
 }
 
 select_protocol_and_run() {
@@ -485,20 +690,20 @@ select_protocol_and_run() {
         show_header
         echo -e "${WHITE}${BOLD}${_title}${PLAIN}"
         echo ""
-        echo -e "  [1] VLESS + REALITY + Vision"
-        echo -e "  [2] AnyTLS"
-        echo -e "  [3] Hysteria2"
-        echo -e "  [4] Shadowsocks"
+        menu_item 1 "VLESS + REALITY + Vision"
+        menu_item 2 "AnyTLS"
+        menu_item 3 "Hysteria2"
+        menu_item 4 "Shadowsocks"
         if [ "$_show_proxy" = "1" ]; then
-            echo -e "  [5] HTTP/SOCKS 代理"
-            echo -e "  [6] 家宽 / 落地中转（线路机 + 落地机）"
-            echo -e "  [7] EUserv IPv6-only HY2"
+            menu_item 5 "HTTP/SOCKS 代理"
+            menu_item 6 "家宽 / 落地中转（线路机 + 落地机）"
+            menu_item 7 "EUserv IPv6-only HY2"
         else
-            echo -e "  [5] 家宽 / 落地中转（线路机 + 落地机）"
-            echo -e "  [6] EUserv IPv6-only HY2"
+            menu_item 5 "家宽 / 落地中转（线路机 + 落地机）"
+            menu_item 6 "EUserv IPv6-only HY2"
             echo -e "  ${DIM}（HTTP/SOCKS 仅支持 URI / 二维码导出）${PLAIN}"
         fi
-        echo -e "  [0] 返回"
+        menu_item 0 "返回"
         echo ""
         read -r -p "  请选择协议 [${_range}]: " p
         case "$p" in
@@ -548,14 +753,14 @@ export_config_menu() {
         echo -e "${WHITE}${BOLD}导出客户端配置${PLAIN}"
         echo -e "${DIM}选择格式后只输出对应配置；需要全部格式请选 [7]。${PLAIN}"
         echo ""
-        echo -e "  [1] URI 分享链接"
-        echo -e "  [2] Mihomo / Clash Meta / Clash Verge 单行配置"
-        echo -e "  [3] Surfboard 配置"
-        echo -e "  [4] Shadowrocket 配置"
-        echo -e "  [5] Loon 配置"
-        echo -e "  [6] Quantumult X 配置"
-        echo -e "  [7] 全部输出"
-        echo -e "  [0] 返回"
+        menu_item 1 "URI 分享链接"
+        menu_item 2 "Mihomo / Clash Meta / Clash Verge 单行配置"
+        menu_item 3 "Surfboard 配置"
+        menu_item 4 "Shadowrocket 配置"
+        menu_item 5 "Loon 配置"
+        menu_item 6 "Quantumult X 配置"
+        menu_item 7 "全部输出"
+        menu_item 0 "返回"
         echo ""
         echo -e "  ${DIM}提示: HTTP/SOCKS 仅支持 [1] URI 与二维码菜单；选 [2]-[6] 时不会列出该协议。${PLAIN}"
         echo ""
@@ -576,7 +781,7 @@ export_config_menu() {
 
 list_listening_ports() {
     echo -e "\n${WHITE}${BOLD}监听端口${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    print_rule 0
     if command -v ss >/dev/null 2>&1; then
         ss -tulnp 2>/dev/null | head -30
     elif command -v netstat >/dev/null 2>&1; then
@@ -606,14 +811,14 @@ protocol_service_menu() {
             && echo -e "当前状态: ${GREEN}运行中${PLAIN}" \
             || echo -e "当前状态: ${YELLOW}未运行 / 未安装${PLAIN}"
         echo ""
-        echo -e "  [1] 查看状态"
-        echo -e "  [2] 启动服务"
-        echo -e "  [3] 停止服务"
-        echo -e "  [4] 重启服务"
-        echo -e "  [5] 查看日志"
-        echo -e "  [6] 查看监听端口"
-        echo -e "  [7] 修改配置"
-        echo -e "  [0] 返回"
+        menu_item 1 "查看状态"
+        menu_item 2 "启动服务"
+        menu_item 3 "停止服务"
+        menu_item 4 "重启服务"
+        menu_item 5 "查看日志"
+        menu_item 6 "查看监听端口"
+        menu_item 7 "修改配置"
+        menu_item 0 "返回"
         echo ""
         read -r -p "  请选择 [0-7]: " opt
         case "$opt" in
@@ -644,21 +849,22 @@ protocol_service_menu() {
 }
 
 service_management_menu() {
+    local MENU_KEY_WIDTH=2
     while true; do
         show_header
         echo -e "${WHITE}${BOLD}服务管理${PLAIN}"
         echo ""
-        echo -e "  [1] VLESS 服务管理"
-        echo -e "  [2] AnyTLS 服务管理"
-        echo -e "  [3] Hysteria2 服务管理"
-        echo -e "  [4] Shadowsocks 服务管理"
-        echo -e "  [5] HTTP/SOCKS 服务管理"
-        echo -e "  [6] EUserv HY2 服务管理"
-        echo -e "  [7] 查看所有服务状态"
-        echo -e "  [8] 查看监听端口"
-        echo -e "  [9] 查看最近日志"
-        echo -e "  [10] 家宽中转服务管理"
-        echo -e "  [0] 返回"
+        menu_item 1 "VLESS 服务管理"
+        menu_item 2 "AnyTLS 服务管理"
+        menu_item 3 "Hysteria2 服务管理"
+        menu_item 4 "Shadowsocks 服务管理"
+        menu_item 5 "HTTP/SOCKS 服务管理"
+        menu_item 6 "EUserv HY2 服务管理"
+        menu_item 7 "查看所有服务状态"
+        menu_item 8 "查看监听端口"
+        menu_item 9 "查看最近日志"
+        menu_item 10 "家宽中转服务管理"
+        menu_item 0 "返回"
         echo ""
         read -r -p "  请选择 [0-10]: " opt
         case "$opt" in
@@ -694,9 +900,11 @@ qrcode_menu() {
 system_detect() {
     local _diag_ip=""
     show_header
+    # 检测要看实时结果：重新探测 IP / 地区并刷新首页缓存。
+    load_net_info 1
     get_status
     echo -e "${WHITE}${BOLD}系统检测${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    print_rule 0
     echo "OS       : ${OS_INFO}"
     echo "Arch     : ${ARCH_INFO}"
     echo "Kernel   : ${KERNEL_INFO}"
@@ -721,9 +929,9 @@ system_detect() {
     echo "Disk     : $(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')"
     echo "Memory   : $(awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END { if (t) printf "%.0fMB / %.0fMB", (t-a)/1024, t/1024 }' /proc/meminfo 2>/dev/null)"
     echo "Load     : $(uptime 2>/dev/null | awk -F'load average:' '{print $2}' | awk '{$1=$1; print}')"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    print_rule 0
     list_listening_ports
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    print_rule 0
     echo -ne "IPv4 网络: "
     # 单一探测站被阻断会误报「网络不通」，把用户引向错误方向。
     _diag_ip=$(probe_public_ip 4 2>/dev/null || true)
@@ -756,7 +964,7 @@ enable_standard_bbr() {
     echo -e "${WHITE}${BOLD}开启标准 BBR + fq${PLAIN}"
     echo -e "${DIM}仅手动启用，不会在安装协议时默认修改系统 TCP 参数。${PLAIN}"
     echo -e "${DIM}适合 VLESS / AnyTLS / Shadowsocks 等 TCP 代理；Hysteria2 主要走 UDP，收益不一定明显。${PLAIN}"
-    echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
+    print_rule 0
 
     local _kver _kmaj _kmin _cc _qdisc _sysctl_conf
     _kver=$(uname -r)
@@ -800,10 +1008,10 @@ system_tools_menu() {
         echo -e "${WHITE}${BOLD}系统检测 / BBR 优化${PLAIN}"
         echo -e "${DIM}默认只展示状态；需要时手动开启标准 bbr + fq。${PLAIN}"
         echo ""
-        echo -e "  [1] 系统检测"
-        echo -e "  [2] 查看 BBR 状态"
-        echo -e "  [3] 开启标准 BBR + fq"
-        echo -e "  [0] 返回"
+        menu_item 1 "系统检测"
+        menu_item 2 "查看 BBR 状态"
+        menu_item 3 "开启标准 BBR + fq"
+        menu_item 0 "返回"
         echo ""
         read -r -p "  请选择 [0-3]: " opt
         case "$opt" in
@@ -851,7 +1059,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.0.69" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.1.0" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -967,11 +1175,11 @@ backup_restore_menu() {
         show_header
         echo -e "${WHITE}${BOLD}备份 / 恢复${PLAIN}"
         echo ""
-        echo -e "  [1] 备份当前配置"
-        echo -e "  [2] 查看备份列表"
-        echo -e "  [3] 恢复指定备份"
-        echo -e "  [4] 删除旧备份"
-        echo -e "  [0] 返回"
+        menu_item 1 "备份当前配置"
+        menu_item 2 "查看备份列表"
+        menu_item 3 "恢复指定备份"
+        menu_item 4 "删除旧备份"
+        menu_item 0 "返回"
         echo ""
         read -r -p "  请选择 [0-4]: " opt
         case "$opt" in
@@ -1094,16 +1302,16 @@ update_menu() {
         echo -e "${WHITE}${BOLD}更新 / 升级中心${PLAIN}"
         echo -e "${DIM}脚本缓存 = 刷新菜单脚本；核心升级 = 更新已安装服务二进制。${PLAIN}"
         echo ""
-        echo -e "  [1] 刷新 install.sh 主入口缓存"
-        echo -e "  [2] 升级 VLESS 核心"
-        echo -e "  [3] 升级 AnyTLS 核心"
-        echo -e "  [4] 升级 Hysteria2 核心"
-        echo -e "  [5] 升级 Shadowsocks-Rust 核心"
-        echo -e "  [6] 升级 HTTP/SOCKS 核心"
-        echo -e "  [7] 刷新全部脚本缓存"
-        echo -e "  [8] 升级全部核心（VLESS/AnyTLS/HY2/SS/HTTP/SOCKS）"
-        echo -e "  [9] 升级家宽中转核心（可同时升级落地机）"
-        echo -e "  [0] 返回"
+        menu_item 1 "刷新 install.sh 主入口缓存"
+        menu_item 2 "升级 VLESS 核心"
+        menu_item 3 "升级 AnyTLS 核心"
+        menu_item 4 "升级 Hysteria2 核心"
+        menu_item 5 "升级 Shadowsocks-Rust 核心"
+        menu_item 6 "升级 HTTP/SOCKS 核心"
+        menu_item 7 "刷新全部脚本缓存"
+        menu_item 8 "升级全部核心（VLESS/AnyTLS/HY2/SS/HTTP/SOCKS）"
+        menu_item 9 "升级家宽中转核心（可同时升级落地机）"
+        menu_item 0 "返回"
         echo ""
         read -r -p "  请选择 [0-9]: " opt
         case "$opt" in
@@ -1143,22 +1351,23 @@ update_menu() {
 }
 
 uninstall_menu() {
+    local MENU_KEY_WIDTH=2
     while true; do
         show_header
         echo -e "${WHITE}${BOLD}卸载 / 清理中心${PLAIN}"
         echo -e "${DIM}单协议卸载会先确认；如需 VPS 配置备份，请先到“备份 / 恢复”手动创建。${PLAIN}"
         echo ""
-        echo -e "  [1] 卸载 VLESS"
-        echo -e "  [2] 卸载 AnyTLS"
-        echo -e "  [3] 卸载 Hysteria2"
-        echo -e "  [4] 卸载 Shadowsocks"
-        echo -e "  [5] 卸载 HTTP/SOCKS"
-        echo -e "  [6] 卸载家宽中转"
-        echo -e "  [7] 卸载 EUserv HY2"
-        echo -e "  [8] 卸载全部协议"
-        echo -e "  [9] 删除所有配置"
-        echo -e "  [10] 删除所有备份"
-        echo -e "  [0] 返回"
+        menu_item 1 "卸载 VLESS"
+        menu_item 2 "卸载 AnyTLS"
+        menu_item 3 "卸载 Hysteria2"
+        menu_item 4 "卸载 Shadowsocks"
+        menu_item 5 "卸载 HTTP/SOCKS"
+        menu_item 6 "卸载家宽中转"
+        menu_item 7 "卸载 EUserv HY2"
+        menu_item 8 "卸载全部协议"
+        menu_item 9 "删除所有配置"
+        menu_item 10 "删除所有备份"
+        menu_item 0 "返回"
         echo ""
         read -r -p "  请选择 [0-10]: " opt
         case "$opt" in
@@ -1210,28 +1419,31 @@ uninstall_menu() {
 
 main_menu() {
     while true; do
+        # 先统计状态，标题行的运行 / 未装计数才是本轮的；网络信息走缓存，不会每次联网。
+        get_status
         show_header
         show_status_summary
         echo -e "  ${YELLOW}${BOLD}主菜单${PLAIN}"
-        echo -e "  ${DIM}快捷命令: ${GREEN}sb${PLAIN}${DIM} 可直接打开本菜单${PLAIN}"
+        echo -e "  ${DIM}快捷命令: ${GREEN}sb${PLAIN}${DIM} 可直接打开本菜单 ${GLYPH_MID} 输入 r 刷新 IP 与地区${PLAIN}"
         echo ""
         echo -e "  ${YELLOW}${BOLD}部署与分享${PLAIN}"
-        echo -e "  [1] 安装 / 重装协议"
-        echo -e "  [2] 查看节点信息"
-        echo -e "  [3] 导出客户端配置"
-        echo -e "  [4] 生成二维码"
+        menu_item 1 "安装 / 重装协议"
+        menu_item 2 "查看节点信息"
+        menu_item 3 "导出客户端配置"
+        menu_item 4 "生成二维码"
         echo ""
         echo -e "  ${YELLOW}${BOLD}运维与安全${PLAIN}"
-        echo -e "  [5] 服务管理"
-        echo -e "  [6] 系统检测 / BBR 优化"
-        echo -e "  [7] 备份 / 恢复"
-        echo -e "  [8] 更新 / 升级中心"
-        echo -e "  [9] 卸载 / 清理中心"
-        echo -e "  [0] 退出"
+        menu_item 5 "服务管理"
+        menu_item 6 "系统检测 / BBR 优化"
+        menu_item 7 "备份 / 恢复"
+        menu_item 8 "更新 / 升级中心"
+        menu_item 9 "卸载 / 清理中心"
+        menu_item 0 "退出"
         echo ""
-        read -r -p "  请输入选项 [0-9]: " choice
+        read -r -p "  请输入选项 [0-9 / r]: " choice
 
         case "$choice" in
+            r|R) load_net_info 1 ;;
             1) install_menu ;;
             2) node_info_menu ;;
             3) export_config_menu ;;
@@ -1247,11 +1459,12 @@ main_menu() {
                 echo ""
                 exit 0
                 ;;
-            *) echo -e "${RED}无效选项，请输入 0-9${PLAIN}"; sleep 1 ;;
+            *) echo -e "${RED}无效选项，请输入 0-9 或 r${PLAIN}"; sleep 1 ;;
         esac
     done
 }
 
+init_ui
 check_root
 install_shortcut_command || true
 main_menu

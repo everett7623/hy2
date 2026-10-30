@@ -6,7 +6,7 @@
 
 Bash 脚本集合，用于在 Linux VPS 上一键部署和管理 VLESS、AnyTLS、Hysteria 2、Shadowsocks-Rust。脚本通过 `curl | bash` 从 GitHub `main` 分支远程执行。
 
-当前版本：v2.0.69 (2026-10-30)
+当前版本：v2.1.0 (2026-10-31)
 
 ## 关键约束
 

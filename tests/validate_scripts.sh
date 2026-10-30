@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.0.69"
+EXPECTED_VERSION="v2.1.0"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -39,7 +39,7 @@ for script in $SCRIPTS; do
     case "$script" in
         install.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
-            grep -q "Sing-box Multi-Protocol Tools.*${EXPECTED_VERSION}" "$script"
+            grep -q "PROXY SUITE.*${EXPECTED_VERSION}" "$script"
             ;;
         hy2.sh)
             grep -q "# 版本：${EXPECTED_VERSION}" "$script"
@@ -144,11 +144,11 @@ grep -q 'LANDING_URL="${BASE_URL}/landing.sh"' install.sh
 grep -q 'landing-server:start) nohup /usr/local/bin/landing-server' install.sh
 grep -q '"landing-server /var/run/landing-server.pid"' install.sh
 grep -q 'etc/systemd/system/landing-server.service' install.sh
-grep -q '\[6\] 家宽 / 落地中转（线路机 + 落地机）' install.sh
+grep -q 'menu_item 6 "家宽 / 落地中转（线路机 + 落地机）"' install.sh
 grep -q 'run_script "家宽中转" "$LANDING_URL" "$_action"' install.sh
-grep -q '\[6\] 卸载家宽中转' install.sh
+grep -q 'menu_item 6 "卸载家宽中转"' install.sh
 grep -q '6) run_uninstall_action "家宽中转" "$LANDING_URL"' install.sh
-! grep -q '\[10\] 卸载家宽中转' install.sh
+! grep -q 'menu_item 10 "卸载家宽中转"' install.sh
 ! grep -q '5) run_script "家宽中转" "$LANDING_URL" "menu"' install.sh
 grep -q 'download_script_to_cache landing.sh "$LANDING_URL"' install.sh
 grep -q '^ensure_outbound_bind()' anytls.sh
@@ -192,13 +192,13 @@ grep -q 'select_protocol_and_run "选择协议以导出 Mihomo / Clash 配置" "
 grep -q 'select_protocol_and_run "选择协议以导出 Shadowrocket 配置" "shadowrocket"' install.sh
 grep -q 'select_protocol_and_run "生成二维码" "qrcode"' install.sh
 ! grep -q '协议脚本会输出当前支持的全部格式' install.sh
-grep -q '\[4\] 生成二维码' install.sh
-grep -q '\[5\] 服务管理' install.sh
-grep -q '\[9\] 卸载 / 清理中心' install.sh
-! grep -q '\[10\] 卸载 / 清理中心' install.sh
-! grep -q '\[5\] 生成二维码' install.sh
-grep -q 'echo -e "  \[6\] 家宽 / 落地中转（线路机 + 落地机）"' install.sh
-grep -q 'echo -e "  \[7\] EUserv IPv6-only HY2"' install.sh
+grep -q 'menu_item 4 "生成二维码"' install.sh
+grep -q 'menu_item 5 "服务管理"' install.sh
+grep -q 'menu_item 9 "卸载 / 清理中心"' install.sh
+! grep -q 'menu_item 10 "卸载 / 清理中心"' install.sh
+! grep -q 'menu_item 5 "生成二维码"' install.sh
+grep -q 'menu_item 6 "家宽 / 落地中转（线路机 + 落地机）"' install.sh
+grep -q 'menu_item 7 "EUserv IPv6-only HY2"' install.sh
 grep -q 'etc/sysctl.d/99-singbox-tools-bbr.conf' install.sh
 ! grep -R -qE 'bbr3|tcp_bbr3' install.sh hy2.sh ss.sh README.md CHANGELOG.md
 grep -q 'net.ipv4.tcp_congestion_control = bbr' install.sh
@@ -257,13 +257,13 @@ grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "upgrade"' install.sh
 grep -q 'run_script "AnyTLS" "$ANYTLS_URL" "uninstall"' install.sh
 grep -q 'run_script "VLESS" "$VLESS_URL" "upgrade"' install.sh
 grep -q 'run_script "VLESS" "$VLESS_URL" "uninstall"' install.sh
-grep -q 'echo -e "  \[1\] VLESS + REALITY + Vision"' install.sh
+grep -q 'menu_item 1 "VLESS + REALITY + Vision"' install.sh
 grep -q '1) run_script "VLESS" "$VLESS_URL" "\$_action"' install.sh
-grep -q 'echo -e "  \[1\] VLESS 服务管理"' install.sh
+grep -q 'menu_item 1 "VLESS 服务管理"' install.sh
 grep -q '1) protocol_service_menu "VLESS"' install.sh
-grep -q 'echo -e "  \[2\] 升级 VLESS 核心"' install.sh
+grep -q 'menu_item 2 "升级 VLESS 核心"' install.sh
 grep -q '2) run_upgrade_action "VLESS" "$VLESS_URL"' install.sh
-grep -q 'echo -e "  \[1\] 卸载 VLESS"' install.sh
+grep -q 'menu_item 1 "卸载 VLESS"' install.sh
 grep -q '1) run_uninstall_action "VLESS" "$VLESS_URL"' install.sh
 for script in hy2.sh ss.sh anytls.sh vless.sh proxy.sh; do
     grep -q '^generate_random_port()' "$script"
@@ -589,5 +589,85 @@ grep -q 'bash "$CACHE_FILE" "$@"' "$tmp"
 grep -q 'trap cleanup EXIT INT TERM' "$tmp"
 [ "$(grep -c '^    exit \$?$' "$tmp")" -eq 2 ]
 rm -f "$tmp"
+
+# --- install.sh 界面：大字标题、色块菜单、NO_COLOR / ASCII 兜底、首页网络信息缓存 ---
+# 菜单项必须走 menu_item：直接 echo "[n] ..." 的菜单没有色块与加粗，也绕过 NO_COLOR 兜底。
+! grep -qE '^[[:space:]]*echo -e "  \[[0-9]+\]' install.sh
+grep -q '^print_big_title()' install.sh
+grep -q 'NO_COLOR' install.sh
+grep -q 'SB_ASCII' install.sh
+grep -q 'r|R) load_net_info 1 ;;' install.sh
+[ "$(grep -c '^    local MENU_KEY_WIDTH=2$' install.sh)" -eq 2 ]
+# 返回主菜单曾每次重新联网探测 IP / 地区（常等 1–3 秒）：get_status 只能读缓存，不得直接探测。
+! sed -n '/^get_status() {/,/^}$/p' install.sh | grep -qE 'probe_public_ip|get_ip_country'
+ui_tmp=$(mktemp -d)
+for _fn in menu_item load_net_info save_net_cache get_country_name init_ui terminal_ambiguous_wide term_cols print_rule; do
+    awk -v name="$_fn" '
+        index($0, name "() {") == 1 { capture = 1 }
+        capture { print }
+        capture && /^}$/ { exit }
+    ' install.sh
+done > "$ui_tmp/ui.sh"
+bash -n "$ui_tmp/ui.sh"
+(
+    RED='r'; GREEN='g'; YELLOW='y'; SKYBLUE='s'; CYAN='c'; MAGENTA='m'; WHITE='w'; PLAIN='p'; BOLD='b'; DIM='d'
+    KEY_BLOCK=''; KEY_BLOCK_EXIT=''; TITLE_GRADIENT=()
+    GLYPH_DOT='●'; GLYPH_HOLLOW='○'; GLYPH_RULE='─'; GLYPH_VBAR='│'; GLYPH_MID='·'; UI_ASCII=0
+    . "$ui_tmp/ui.sh"
+    # NO_COLOR 或输出被重定向：颜色全部清空，菜单退回原来的 [n] 文字；SB_ASCII=1 换成 ASCII 线框
+    NO_COLOR=1 SB_ASCII=1 init_ui
+    [ -z "$RED$PLAIN$BOLD$KEY_BLOCK$KEY_BLOCK_EXIT" ]
+    # set -e 下 a && b 中前项失败不会中止脚本，断言必须逐条写。
+    [ "$GLYPH_RULE" = "-" ]
+    [ "$GLYPH_DOT" = "*" ]
+    [ "$UI_ASCII" = 1 ]
+    [ "$(menu_item 1 '安装 / 重装协议')" = "  [1] 安装 / 重装协议" ]
+    # 有色块时编号在色块内、文字加粗；两位数编号的菜单用 MENU_KEY_WIDTH 补齐
+    KEY_BLOCK='<K>'; KEY_BLOCK_EXIT='<X>'; PLAIN='</>'; BOLD='<B>'
+    [ "$(menu_item 1 '服务管理')" = "  <K> 1 </> <B>服务管理</>" ]
+    [ "$(menu_item 0 '退出')" = "  <X> 0 </> <B>退出</>" ]
+    [ "$(MENU_KEY_WIDTH=2 menu_item 1 'VLESS')" = "  <K>  1 </> <B>VLESS</>" ]
+    # 分隔线最长 61 列（与大字标题同宽），窄屏按终端宽度收短
+    SKYBLUE=''; PLAIN=''
+    term_cols() { printf 120; }
+    [ "$(print_rule 1)" = " $(printf '%61s' '' | tr ' ' '-')" ]
+    term_cols() { printf 40; }
+    [ "$(print_rule 2)" = "  $(printf '%37s' '' | tr ' ' '-')" ]
+    # 首次探测并写缓存；再次加载只读缓存不联网；r（强制）重新探测
+    NET_CACHE_FILE="$ui_tmp/cache/netinfo"; NET_CACHE_TTL=1800; NET_INFO_LOADED=0
+    probe_public_ip() { echo x >> "$ui_tmp/probes"; [ "$1" = 4 ] && printf '203.0.113.7'; }
+    get_real_ipv6() { printf '2001:db8::7'; }
+    get_ip_country() { printf 'CA'; }
+    : > "$ui_tmp/probes"
+    load_net_info > /dev/null
+    [ "$NET_IPV4" = 203.0.113.7 ]
+    [ "$NET_IPV6" = 2001:db8::7 ]
+    [ "$COUNTRY_CODE" = CA ]
+    [ "$(wc -l < "$ui_tmp/probes" | tr -d ' ')" = 1 ]
+    grep -qx 'IPV4=203.0.113.7' "$NET_CACHE_FILE"
+    NET_INFO_LOADED=0; NET_IPV4=""; load_net_info > /dev/null
+    [ "$NET_IPV4" = 203.0.113.7 ]
+    [ "$(wc -l < "$ui_tmp/probes" | tr -d ' ')" = 1 ]
+    load_net_info 1 > /dev/null
+    [ "$(wc -l < "$ui_tmp/probes" | tr -d ' ')" = 2 ]
+    # 缓存会原样显示在终端：混入控制字符时按损坏处理并重新探测
+    printf 'TS=%s\nIPV4=192.0.2.1\033[31m\nIPV6=\nCOUNTRY=CA\n' "$(date +%s)" > "$NET_CACHE_FILE"
+    NET_INFO_LOADED=0; load_net_info > /dev/null
+    [ "$NET_IPV4" = 203.0.113.7 ]
+    [ "$(wc -l < "$ui_tmp/probes" | tr -d ' ')" = 3 ]
+    # 过期缓存重新探测
+    printf 'TS=1\nIPV4=198.51.100.9\nIPV6=\nCOUNTRY=US\n' > "$NET_CACHE_FILE"
+    NET_INFO_LOADED=0; load_net_info > /dev/null
+    [ "$NET_IPV4" = 203.0.113.7 ]
+    [ "$COUNTRY_CODE" = CA ]
+    # 两个地址都探测不到（网络暂时不通）时不写缓存，下次打开重新探测
+    rm -f "$NET_CACHE_FILE"
+    probe_public_ip() { return 1; }
+    get_real_ipv6() { return 1; }
+    NET_INFO_LOADED=0; load_net_info > /dev/null
+    [ "$NET_IPV4" = "无" ]
+    [ ! -e "$NET_CACHE_FILE" ]
+)
+rm -rf "$ui_tmp"
 
 echo "Static script validation passed."

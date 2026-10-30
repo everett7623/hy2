@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.0.69（2026-10-30） · 本次更新：AnyTLS 的 Surfboard / Loon 导出按官方文档修正格式，自签证书在两者中改用 64 位小写十六进制证书指纹严格校验；已部署节点重新查看节点信息后导入即可。
+> 当前版本：v2.1.0（2026-10-31） · 本次更新：`sb` 首页换上渐变大字标题，菜单编号改为彩色色块并加粗；公网 IP / 地区探测结果缓存，返回主菜单不再等待（输入 r 刷新）；终端把线框字符显示成双宽时自动改用 ASCII，并支持 `NO_COLOR`。
 
 ## 目录
 
@@ -249,6 +249,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.s
 ### 运行后无法输入
 
 使用 `bash <(curl -fsSL URL)`。交互菜单依赖 `/dev/tty`，`curl URL | sh` 不能保证正确工作。
+
+### 首页大字标题错位、显示成乱码，或想关闭颜色
+
+部分中文终端会把线框、方块字符显示成双宽，`sb` 启动时会自动检测并改用纯 ASCII 标题与分隔线。检测不准或需要截图时，可手动指定：
+
+```bash
+SB_ASCII=1 sb   # 强制纯 ASCII 线框
+SB_ASCII=0 sb   # 强制 Unicode 大字标题
+NO_COLOR=1 sb   # 不输出任何颜色
+```
+
+首页的公网 IP 与地区 30 分钟内直接读缓存，主菜单输入 `r` 可立即重新探测；「系统检测」始终实时探测。终端字号由 SSH 客户端决定，脚本无法调整，觉得字小请在客户端设置里调大。
 
 ### GitHub 下载失败或仍显示旧版本
 
