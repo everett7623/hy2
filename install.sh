@@ -3,7 +3,7 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.1.0
+# 版本：v2.1.1
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
@@ -58,10 +58,10 @@ BOLD='\033[1m'
 DIM='\033[2m'
 
 # ---- 界面主题（由 init_ui 按终端能力设置）----
-# 色块编号与大字标题渐变色；NO_COLOR 或输出被重定向时全部为空，菜单退回原来的 [n] 文字。
+# 色块编号与大字标题颜色；NO_COLOR 或输出被重定向时全部为空，菜单退回原来的 [n] 文字。
 KEY_BLOCK=''
 KEY_BLOCK_EXIT=''
-TITLE_GRADIENT=()
+TITLE_COLOR=''
 # 线框 / 圆点字符：中文终端把它们显示成双宽，或设置 SB_ASCII=1 时换成纯 ASCII。
 GLYPH_DOT='●'
 GLYPH_HOLLOW='○'
@@ -539,23 +539,24 @@ terminal_ambiguous_wide() {
 }
 
 # 只在启动时调用一次：NO_COLOR（no-color.org）或输出被重定向时不输出任何颜色码；
-# 支持 256 色的终端用渐变大字与色块编号，其余退回 16 色。
+# 支持 256 色的终端：大字标题用天蓝纯色（#00afff，与蓝色编号色块同色系），其余退回 16 色青色。
+# 渐变（v2.1.0）实测在终端里色带明显、显得杂乱，v2.1.1 起改为纯色。
 # SB_ASCII=1 强制纯 ASCII 线框，SB_ASCII=0 强制 Unicode，未设置时自动检测。
 init_ui() {
     if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then
         RED=''; GREEN=''; YELLOW=''; SKYBLUE=''; CYAN=''; MAGENTA=''; WHITE=''; PLAIN=''; BOLD=''; DIM=''
-        KEY_BLOCK=''; KEY_BLOCK_EXIT=''; TITLE_GRADIENT=()
+        KEY_BLOCK=''; KEY_BLOCK_EXIT=''; TITLE_COLOR=''
     else
         case "${COLORTERM:-}:${TERM:-}" in
             *truecolor*|*24bit*|*256color*|*:xterm*|*:screen*|*:tmux*|*:rxvt*|*:alacritty|*:foot*|*:kitty*|*:wezterm)
                 KEY_BLOCK='\033[1;97;48;5;25m'
                 KEY_BLOCK_EXIT='\033[1;97;48;5;242m'
-                TITLE_GRADIENT=('\033[1;38;5;51m' '\033[1;38;5;45m' '\033[1;38;5;39m' '\033[1;38;5;33m' '\033[1;38;5;63m' '\033[1;38;5;99m')
+                TITLE_COLOR='\033[1;38;5;39m'
                 ;;
             *)
                 KEY_BLOCK='\033[1;37;44m'
                 KEY_BLOCK_EXIT='\033[1;37;40m'
-                TITLE_GRADIENT=('\033[1;36m' '\033[1;36m' '\033[1;34m' '\033[1;34m' '\033[1;35m' '\033[1;35m')
+                TITLE_COLOR='\033[1;36m'
                 ;;
         esac
     fi
@@ -579,12 +580,12 @@ term_cols() {
     printf '%s' "$_cols"
 }
 
-# 分隔线：最长 61 列，与大字标题同宽；窄屏按终端宽度收短，避免折行。
+# 分隔线：最长 60 列，与大字标题同宽；窄屏按终端宽度收短，避免折行。
 # 按次数拼接而不用 ${#var}：C locale 下 ${#var} 数的是字节，多字节线框字符会只画出三分之一。
 print_rule() {
     local _indent="${1:-2}" _width _line="" _i=0
     _width=$(( $(term_cols) - _indent - 1 ))
-    [ "$_width" -gt 61 ] && _width=61
+    [ "$_width" -gt 60 ] && _width=60
     [ "$_width" -lt 10 ] && _width=10
     while [ "$_i" -lt "$_width" ]; do
         _line="${_line}${GLYPH_RULE}"
@@ -605,13 +606,14 @@ menu_item() {
     fi
 }
 
-# 首页大字标题：6 行方块字，自上而下青→蓝→紫渐变；ASCII 模式用 5 行线条字；
+# 首页大字标题：5 行纯方块字（只用 █，天蓝纯色）；ASCII 模式用 5 行线条字；
 # 不足 64 列（手机 SSH）时只显示单行标题。
+# 不用带阴影线的字体（╗ ═ ║ ╚）：不少终端字体把这些线框字符画成断续的细线，字母显得碎。
 print_big_title() {
     local _i
     local -a _lines
     if [ "$(term_cols)" -lt 64 ]; then
-        printf '  %b%s%b\n' "${TITLE_GRADIENT[0]:-}${BOLD}" "SING-BOX" "$PLAIN"
+        printf '  %b%s%b\n' "${TITLE_COLOR}${BOLD}" "SING-BOX" "$PLAIN"
         return 0
     fi
     if [ "$UI_ASCII" = "1" ]; then
@@ -624,16 +626,15 @@ print_big_title() {
         )
     else
         _lines=(
-            '███████╗██╗███╗   ██╗ ██████╗       ██████╗  ██████╗ ██╗  ██╗'
-            '██╔════╝██║████╗  ██║██╔════╝       ██╔══██╗██╔═══██╗╚██╗██╔╝'
-            '███████╗██║██╔██╗ ██║██║  ███╗█████╗██████╔╝██║   ██║ ╚███╔╝ '
-            '╚════██║██║██║╚██╗██║██║   ██║╚════╝██╔══██╗██║   ██║ ██╔██╗ '
-            '███████║██║██║ ╚████║╚██████╔╝      ██████╔╝╚██████╔╝██╔╝ ██╗'
-            '╚══════╝╚═╝╚═╝  ╚═══╝ ╚═════╝       ╚═════╝  ╚═════╝ ╚═╝  ╚═╝'
+            '███████ ██ ███    ██  ██████        ██████   ██████  ██   ██'
+            '██      ██ ████   ██ ██             ██   ██ ██    ██  ██ ██ '
+            '███████ ██ ██ ██  ██ ██   ███ █████ ██████  ██    ██   ███  '
+            '     ██ ██ ██  ██ ██ ██    ██       ██   ██ ██    ██  ██ ██ '
+            '███████ ██ ██   ████  ██████        ██████   ██████  ██   ██'
         )
     fi
     for _i in "${!_lines[@]}"; do
-        printf ' %b%s%b\n' "${TITLE_GRADIENT[$_i]:-}" "${_lines[$_i]}" "$PLAIN"
+        printf ' %b%s%b\n' "$TITLE_COLOR" "${_lines[$_i]}" "$PLAIN"
     done
 }
 
@@ -641,7 +642,7 @@ show_header() {
     local _title _state=""
     clear_screen
     print_big_title
-    _title="  ${WHITE}${BOLD}PROXY SUITE${PLAIN} ${DIM}${GLYPH_MID}${PLAIN} ${YELLOW}${BOLD}v2.1.0${PLAIN}"
+    _title="  ${WHITE}${BOLD}PROXY SUITE${PLAIN} ${DIM}${GLYPH_MID}${PLAIN} ${YELLOW}${BOLD}v2.1.1${PLAIN}"
     # 计数来自上一次 get_status（主菜单每次刷新都会调用）；还没统计过时不显示。
     if [ -n "${UI_RUNNING:-}" ]; then
         _state="${GREEN}${GLYPH_DOT} 运行 ${UI_RUNNING}${PLAIN}"
@@ -1059,7 +1060,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.1.0" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.1.1" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 

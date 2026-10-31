@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.1.0（2026-10-31） · 本次更新：`sb` 首页换上渐变大字标题，菜单编号改为彩色色块并加粗；公网 IP / 地区探测结果缓存，返回主菜单不再等待（输入 r 刷新）；终端把线框字符显示成双宽时自动改用 ASCII，并支持 `NO_COLOR`。
+> 当前版本：v2.1.1（2026-10-31） · 本次更新：`sb` 首页大字标题改为天蓝纯色、纯方块字体（去掉渐变和阴影线），在常见终端字体里更清晰、更统一。
 
 ## 目录
 

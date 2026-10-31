@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.1.0"
+EXPECTED_VERSION="v2.1.1"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -600,8 +600,12 @@ grep -q 'r|R) load_net_info 1 ;;' install.sh
 [ "$(grep -c '^    local MENU_KEY_WIDTH=2$' install.sh)" -eq 2 ]
 # 返回主菜单曾每次重新联网探测 IP / 地区（常等 1–3 秒）：get_status 只能读缓存，不得直接探测。
 ! sed -n '/^get_status() {/,/^}$/p' install.sh | grep -qE 'probe_public_ip|get_ip_country'
+# 大字标题为天蓝纯色：v2.1.0 的青→蓝→紫逐行渐变在终端里色带明显、显得杂乱。
+! grep -q 'TITLE_GRADIENT' install.sh
+# 大字标题只用 █：带阴影线的字体（╗ ═ ║ ╚）在不少终端字体里画成断续细线，字母显得碎。
+! sed -n '/^print_big_title() {/,/^}$/p' install.sh | grep -qF -e '╗' -e '═' -e '║' -e '╚' -e '╝' -e '╔'
 ui_tmp=$(mktemp -d)
-for _fn in menu_item load_net_info save_net_cache get_country_name init_ui terminal_ambiguous_wide term_cols print_rule; do
+for _fn in menu_item load_net_info save_net_cache get_country_name init_ui terminal_ambiguous_wide term_cols print_rule print_big_title; do
     awk -v name="$_fn" '
         index($0, name "() {") == 1 { capture = 1 }
         capture { print }
@@ -611,12 +615,20 @@ done > "$ui_tmp/ui.sh"
 bash -n "$ui_tmp/ui.sh"
 (
     RED='r'; GREEN='g'; YELLOW='y'; SKYBLUE='s'; CYAN='c'; MAGENTA='m'; WHITE='w'; PLAIN='p'; BOLD='b'; DIM='d'
-    KEY_BLOCK=''; KEY_BLOCK_EXIT=''; TITLE_GRADIENT=()
+    KEY_BLOCK=''; KEY_BLOCK_EXIT=''; TITLE_COLOR='t'
     GLYPH_DOT='●'; GLYPH_HOLLOW='○'; GLYPH_RULE='─'; GLYPH_VBAR='│'; GLYPH_MID='·'; UI_ASCII=0
     . "$ui_tmp/ui.sh"
+    # 大字标题 5 行、每行同一种颜色（纯色）；不足 64 列时退回单行标题
+    TITLE_COLOR='<T>'; PLAIN='</>'; BOLD='<B>'
+    term_cols() { printf 80; }
+    [ "$(print_big_title | wc -l | tr -d ' ')" = 5 ]
+    [ "$(print_big_title | grep -c '^ <T>.*</>$')" = 5 ]
+    term_cols() { printf 50; }
+    [ "$(print_big_title)" = "  <T><B>SING-BOX</>" ]
+    TITLE_COLOR='t'; PLAIN='p'; BOLD='b'
     # NO_COLOR 或输出被重定向：颜色全部清空，菜单退回原来的 [n] 文字；SB_ASCII=1 换成 ASCII 线框
     NO_COLOR=1 SB_ASCII=1 init_ui
-    [ -z "$RED$PLAIN$BOLD$KEY_BLOCK$KEY_BLOCK_EXIT" ]
+    [ -z "$RED$PLAIN$BOLD$KEY_BLOCK$KEY_BLOCK_EXIT$TITLE_COLOR" ]
     # set -e 下 a && b 中前项失败不会中止脚本，断言必须逐条写。
     [ "$GLYPH_RULE" = "-" ]
     [ "$GLYPH_DOT" = "*" ]
@@ -627,10 +639,10 @@ bash -n "$ui_tmp/ui.sh"
     [ "$(menu_item 1 '服务管理')" = "  <K> 1 </> <B>服务管理</>" ]
     [ "$(menu_item 0 '退出')" = "  <X> 0 </> <B>退出</>" ]
     [ "$(MENU_KEY_WIDTH=2 menu_item 1 'VLESS')" = "  <K>  1 </> <B>VLESS</>" ]
-    # 分隔线最长 61 列（与大字标题同宽），窄屏按终端宽度收短
+    # 分隔线最长 60 列（与大字标题同宽），窄屏按终端宽度收短
     SKYBLUE=''; PLAIN=''
     term_cols() { printf 120; }
-    [ "$(print_rule 1)" = " $(printf '%61s' '' | tr ' ' '-')" ]
+    [ "$(print_rule 1)" = " $(printf '%60s' '' | tr ' ' '-')" ]
     term_cols() { printf 40; }
     [ "$(print_rule 2)" = "  $(printf '%37s' '' | tr ' ' '-')" ]
     # 首次探测并写缓存；再次加载只读缓存不联网；r（强制）重新探测

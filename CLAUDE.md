@@ -8,7 +8,7 @@ Read `docs/ARCHITECTURE.md`, `CONTRIBUTING.md`, and the relevant sections of `do
 
 ## Current version
 
-v2.1.0 (2026-10-31)
+v2.1.1 (2026-10-31)
 
 ## Project overview
 
@@ -37,7 +37,7 @@ When testing local changes to `install.sh`, run it directly (`bash install.sh`) 
 
 `install.sh` downloads sub-scripts to a temp file (`mktemp /tmp/hy2_sub_XXXXXX.sh`) then runs `bash "$_tmp"` — it never sources local files. To test local edits, run the sub-script directly (e.g., `bash hy2.sh`) rather than going through `install.sh`.
 
-`install.sh` UI (v2.1.0): `init_ui` runs once at startup. It sets the colour-block / gradient variables, clears every colour for `NO_COLOR` or non-TTY output, and switches the `GLYPH_*` box/dot characters to ASCII when `SB_ASCII=1` or when `terminal_ambiguous_wide` (a DSR cursor-position probe) finds them rendered double-width, as CJK-configured terminals do. Every menu entry goes through `menu_item N "text"`, never a raw `echo -e "  [N] …"`; tests pin the `menu_item` strings, and menus with a `[10]` set `local MENU_KEY_WIDTH=2`. Separators come from `print_rule`, which counts iterations rather than using `${#var}` because C-locale bash counts bytes. `get_status` must never probe the network itself: it calls `load_net_info`, which serves public IP / country from `/root/singbox-tools/cache/netinfo` (30-minute TTL, validated before display). Only the main-menu `r` key and `system_detect` force a re-probe. `main_menu` calls `get_status` before `show_header`, because the header's running/stopped/not-installed counts come from it. The version-display assertion pins the `PROXY SUITE … ${EXPECTED_VERSION}` header line.
+`install.sh` UI (v2.1.0): `init_ui` runs once at startup. It sets the colour-block variables and a single `TITLE_COLOR` (sky blue, 256-colour 39). The user rejected the v2.1.0 per-row gradient as banded and ugly, and the title font uses only `█`, because shadow strokes (`╗ ═ ║`) render as broken lines in common terminal fonts; tests lock both. It also clears every colour for `NO_COLOR` or non-TTY output, and switches the `GLYPH_*` box/dot characters to ASCII when `SB_ASCII=1` or when `terminal_ambiguous_wide` (a DSR cursor-position probe) finds them rendered double-width, as CJK-configured terminals do. Every menu entry goes through `menu_item N "text"`, never a raw `echo -e "  [N] …"`; tests pin the `menu_item` strings, and menus with a `[10]` set `local MENU_KEY_WIDTH=2`. Separators come from `print_rule`, which counts iterations rather than using `${#var}` because C-locale bash counts bytes. `get_status` must never probe the network itself: it calls `load_net_info`, which serves public IP / country from `/root/singbox-tools/cache/netinfo` (30-minute TTL, validated before display). Only the main-menu `r` key and `system_detect` force a re-probe. `main_menu` calls `get_status` before `show_header`, because the header's running/stopped/not-installed counts come from it. The version-display assertion pins the `PROXY SUITE … ${EXPECTED_VERSION}` header line.
 
 ## No shared library
 
@@ -127,7 +127,7 @@ See `CONTRIBUTING.md` and `docs/RELEASE.md` for the complete checklist.
 Fastest way to find every location that still holds the old version:
 
 ```bash
-grep -rnF "v2.1.0" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
+grep -rnF "v2.1.1" --include="*.sh" --include="*.md" --include="*.bash" . | grep -v CHANGELOG.md
 ```
 
 ## Testing and validation
