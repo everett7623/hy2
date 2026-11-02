@@ -3,12 +3,12 @@
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
 # 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.1.1
+# 版本：v2.1.2
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-10-31
+# 更新日期: 2026-11-02
 #====================================================================================
 
 # ============================================================
@@ -642,7 +642,7 @@ show_header() {
     local _title _state=""
     clear_screen
     print_big_title
-    _title="  ${WHITE}${BOLD}PROXY SUITE${PLAIN} ${DIM}${GLYPH_MID}${PLAIN} ${YELLOW}${BOLD}v2.1.1${PLAIN}"
+    _title="  ${WHITE}${BOLD}PROXY SUITE${PLAIN} ${DIM}${GLYPH_MID}${PLAIN} ${YELLOW}${BOLD}v2.1.2${PLAIN}"
     # 计数来自上一次 get_status（主菜单每次刷新都会调用）；还没统计过时不显示。
     if [ -n "${UI_RUNNING:-}" ]; then
         _state="${GREEN}${GLYPH_DOT} 运行 ${UI_RUNNING}${PLAIN}"
@@ -1060,7 +1060,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.1.1" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.1.2" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 

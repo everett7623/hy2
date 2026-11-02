@@ -4,6 +4,14 @@
 
 ---
 
+## v2.1.2 (2026-11-02)
+
+- 修复家宽 AnyTLS 节点偶发连接失败：v2rayN 日志里出现 `failed to create session: tls: first record does not look like a TLS handshake`，表现为个别网页、图片加载不出来。原因在客户端：分享链接带 `fp=chrome`，客户端于是用 uTLS 的 Chrome 指纹建立 AnyTLS 会话，新建会话时偶发这个错误。本机用真实 sing-box 1.14.3 加字节级抓包压测：Chrome 指纹约 15 / 912 个新会话失败（约 1.6%），失败的连接上线路机一个字节都没收到也没发出；不带指纹（标准 TLS）0 / 360，firefox、edge 指纹各 0 / 120。线路机端改曲线（去掉 MLKEM）无效。
+- 家宽 AnyTLS 分享链接不再带 `fp`，Mihomo 配置不再带 `client-fingerprint`（Mihomo 与 sing-box 用同一个 uTLS 分支）。v2rayN 只在链接带 `fp` 时才启用 uTLS，重新导入后即用标准 TLS；sing-box 官方文档也已将 uTLS 标为不推荐。线路机配置不变，已部署节点无需重新部署：重新查看节点信息、导入新链接即可，或在 v2rayN 编辑节点把 Fingerprint 清空。
+- v2rayN 对自签证书 + `insecure=1` 会提示「检测到不安全配置：AllowInsecure 已启用，但未提供证书」。这是提示，不影响连接；它的链接格式里也没有能传完整证书的参数（`pcs` 只对 Xray 内核生效），所以无法从服务端消除。节点信息页改为说明严格校验的办法：v2rayN 编辑节点，在「固定证书」处点「获取证书」。已实测：填入线路机证书后严格校验通过（24 / 24），填别的证书时全部失败（`x509: certificate signed by unknown authority`）。
+- 不改线路机 AnyTLS 入站：`"padding_scheme": []` 与不写等价（sing-box 为空时用默认填充方案），不能解决此问题，未加入。
+- 回归测试：AnyTLS 链接与 Mihomo 配置不得带 uTLS 指纹（导出断言与静态检查，旧代码会被拦下），节点信息页给出 v2rayN「获取证书」说明。
+
 ## v2.1.1 (2026-10-31)
 
 - `sb` 首页大字标题改为天蓝纯色（256 色 39 / #00afff，与菜单蓝色编号色块同色系；16 色终端用青色）。v2.1.0 的青→蓝→紫逐行渐变在终端里色带明显，显得杂乱。

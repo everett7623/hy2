@@ -652,11 +652,15 @@ restore_current_install
 
 # 客户端导出：Exclave 只认 anytls://密码@地址:端口?sni=…&insecure=1，并拒绝 security=reality。
 _uri=$(render_anytls_uri 192.0.2.10 34567 "$ANYTLS_PASSWORD" 'test node')
-[ "$_uri" = "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?security=tls&sni=www.amd.com&fp=chrome&insecure=1#test%20node" ]
+[ "$_uri" = "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?security=tls&sni=www.amd.com&insecure=1#test%20node" ]
 render_anytls_uri 2001:db8::10 34567 "$ANYTLS_PASSWORD" n | grep -q '@\[2001:db8::10\]:34567?'
 [ "$(export_shadowrocket_anytls 192.0.2.10 34567 'test node')" = "$_uri" ]
+# 不带 uTLS 指纹：fp=chrome / client-fingerprint: chrome 会让客户端新建会话偶发
+# “tls: first record does not look like a TLS handshake”（v2rayN 实际报错，本机压测约 1.6%）。
+( ! printf '%s\n' "$_uri" | grep -q 'fp=' )
+( ! export_mihomo_anytls 192.0.2.10 34567 node | grep -q 'client-fingerprint' )
 # Mihomo / Surfboard 用证书指纹严格校验；Surfboard 可选项写成 key=value，指纹为 64 位十六进制。
-export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "type: anytls, server: 192.0.2.10, port: 34567, password: '${TEST_ANYTLS_PASS}',"
+export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "type: anytls, server: 192.0.2.10, port: 34567, password: '${TEST_ANYTLS_PASS}', udp: true,"
 export_mihomo_anytls 192.0.2.10 34567 node | grep -qF "sni: 'www.amd.com', skip-cert-verify: false, fingerprint: '${_fp}'}"
 export_mihomo_anytls 2001:db8::10 34567 node | grep -qF "server: '2001:db8::10', port: 34567"
 [ "$(export_surfboard_anytls 192.0.2.10 34567 node)" = "node = anytls, 192.0.2.10, 34567, ${TEST_ANYTLS_PASS}, skip-cert-verify=true, sni=www.amd.com, server-cert-fingerprint-sha256=${_fp}" ]
@@ -683,6 +687,8 @@ printf '%s\n' "$_out" | grep -q 'TLS SNI   : .*www.amd.com'
 printf '%s\n' "$_out" | grep -qF "证书 SHA256: $(printf '\033[0;33m')${_fp}"
 printf '%s\n' "$_out" | grep -qF "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?"
 ( ! printf '%s\n' "$_out" | grep -q '伪装 SNI' )
+# v2rayN 对自签 + insecure=1 一律提示「AllowInsecure 已启用」，链接里没有可传完整证书的参数：告诉用户用「获取证书」。
+printf '%s\n' "$_out" | grep -q 'v2rayN 会提示「AllowInsecure 已启用」，编辑节点点「获取证书」即改为严格校验'
 unset -f service_is_active get_country_code get_country_name
 
 # --- 出口验证 ---

@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.1.1"
+EXPECTED_VERSION="v2.1.2"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -321,6 +321,10 @@ grep -qF '节点协议 [默认 1]' landing.sh
 grep -q '"tag": "anytls-in"' landing.sh
 grep -qF '{ "inbound": ["${_node_tag}", "probe-in"], "action": "route", "outbound": "wg-out" }' landing.sh
 ( ! grep -qF '"inbound": ["vless-in"' landing.sh )
+# 家宽 AnyTLS 导出不带 uTLS 指纹：fp=chrome / client-fingerprint: chrome 让客户端（v2rayN 等 sing-box 内核）
+# 新建会话偶发 “tls: first record does not look like a TLS handshake”，本机压测约 1.6%，标准 TLS 为 0（v2.1.1 及以前）。
+( ! grep -qE "anytls://[^']*fp=" landing.sh )
+( ! grep -qE "type: anytls[^\"]*client-fingerprint" landing.sh )
 # 自愈不能只认 REALITY 的 "handshake" 字段，否则 AnyTLS 线路机在诊断 / 自动更新时永远不会被修复。
 ( ! grep -qF "grep -q '\"handshake\"' \"\$LANDING_CONFIG\" || return 0" landing.sh )
 grep -qF "grep -q '\"tag\": \"wg-out\"' \"\$LANDING_CONFIG\" || return 0" landing.sh

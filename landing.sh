@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.1.1
+# 版本：v2.1.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-10-31
+# 更新日期: 2026-11-02
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: KVM / 独立服务器 / OpenVZ / LXC（用户态 WireGuard，不依赖内核模块）
@@ -1626,6 +1626,10 @@ render_uri() {
 }
 
 # AnyTLS 自签证书节点带 insecure=1。Exclave 只读取 sni 与 insecure，并拒绝 security=reality。
+# 不写 fp：带 fp=chrome 时客户端改用 uTLS 的 Chrome 指纹，新建会话偶发
+# “failed to create session: tls: first record does not look like a TLS handshake”
+# （sing-box 内核本机压测约 1.6% 的新会话失败，标准 TLS 与 firefox / edge 指纹为 0）。
+# v2rayN 只在链接带 fp 时才启用 uTLS；sing-box 文档也已将 uTLS 标为不推荐。
 render_anytls_uri() {
     local _server="$1" _port="$2" _password="$3" _name="$4" _sni="${5:-$SERVER_NAME}"
     local _host _enc_name _enc_password _enc_sni
@@ -1633,7 +1637,7 @@ render_anytls_uri() {
     _enc_name=$(uri_encode "$_name")
     _enc_password=$(uri_encode "$_password")
     _enc_sni=$(uri_encode "$_sni")
-    printf 'anytls://%s@%s:%s?security=tls&sni=%s&fp=chrome&insecure=1#%s\n' \
+    printf 'anytls://%s@%s:%s?security=tls&sni=%s&insecure=1#%s\n' \
         "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
 }
 
@@ -3457,6 +3461,7 @@ export_quantumultx_vless() {
 }
 
 # AnyTLS 节点是自签证书：能读到证书时用指纹固定（严格校验），读不到才退回跳过校验。
+# 不写 client-fingerprint：Mihomo 与 sing-box 用同一个 uTLS 分支，原因见 render_anytls_uri。
 export_mihomo_anytls() {
     local _server="$1" _port="$2" _node="$3" _yaml_server _safe_node _sni _fp _verify
     _yaml_server=$(format_server_for_yaml "$_server")
@@ -3467,7 +3472,7 @@ export_mihomo_anytls() {
     else
         _verify="skip-cert-verify: true"
     fi
-    printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${ANYTLS_PASSWORD}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', ${_verify}}"
+    printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${ANYTLS_PASSWORD}', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', ${_verify}}"
 }
 
 # Surfboard 文档（profile-format/proxy/external-proxy/anytls）：前四项按位置写，可选项写成 key=value。
@@ -3643,7 +3648,7 @@ show_config() {
     [ "${EXIT_HAS_IPV6:-0}" = "1" ] || \
         echo -e "${DIM}落地机没有 IPv6：经本节点查询的 DNS 已自动去掉 IPv6 地址，客户端一般无需改设置；若客户端用加密 DNS（https:// / tls://）或本地解析，请关闭客户端 IPv6（如 Exclave「IPv6 路由」设为禁用）。${PLAIN}"
     [ "$NODE_PROTO" != "anytls" ] || \
-        echo -e "${DIM}证书校验：URI 链接不校验证书（insecure=1）；Mihomo / Surfboard 配置已固定证书指纹；Exclave 可在节点设置里填入上面的证书 SHA256 固定证书。${PLAIN}"
+        echo -e "${DIM}证书校验：URI 带 insecure=1，v2rayN 会提示「AllowInsecure 已启用」，编辑节点点「获取证书」即改为严格校验；Mihomo / Surfboard / Loon 配置已固定证书指纹；Exclave 可在节点设置里填入上面的证书 SHA256。${PLAIN}"
     echo -e "${DIM}提示: 客户端 DNS 须经本节点（Mihomo 开启 fake-ip 或 nameserver 走节点），否则可能泄露本地 DNS。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -4374,7 +4379,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.1.1${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.1.2${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
