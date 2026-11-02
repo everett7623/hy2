@@ -4,6 +4,14 @@
 
 ---
 
+## v2.1.4 (2026-11-02)
+
+- 独立 AnyTLS 自签证书的节点信息页（证书校验段）补充 v2rayN 说明：导入后提示「检测到不安全配置：AllowInsecure 已启用，但未提供证书」属正常——自签链接只能带 `insecure=1`，v2rayN 的链接格式里没有能传完整证书的参数（`pcs` 只对 Xray 内核生效）；编辑节点点「获取证书」即改为严格校验。域名证书模式不显示这条。家宽中转的节点信息页自 v2.1.2 起已有同样说明。
+- 按真实 sing-box 1.14.3 压测确认 v2.1.3 的修复：用 `anytls.sh` 自身函数生成的服务端配置，客户端按旧链接（uTLS chrome）240 个新会话失败 4 个（全是 `first record does not look like a TLS handshake`），按新链接（不带指纹）240 / 240 成功。
+- 按 AnyTLS 官方链接格式（`anytls://密码@地址:端口/?sni=…&insecure=1`）核对导出：保留 `security=tls`——规范允许第三方参数，v2rayN 只有在它为 `tls` 时才给 AnyTLS 加 TLS，去掉会连不上；`?` 前是否带 `/` 两种写法 v2rayN、Exclave 都能解析（v2rayN 自己导出不带，Exclave 带），不改；`"padding_scheme": []` 即 sing-box 官方示例写法，等同默认填充方案。
+- `docs/TESTING.md` 恢复 v2.0.62 子任务里没合进来的措辞：自签时 Mihomo / Surfboard / Loon 钉住证书指纹、URI / Shadowrocket 输出兼容参数。
+- 回归测试：自签节点信息页出现「获取证书」说明，域名证书模式不出现。
+
 ## v2.1.3 (2026-11-02)
 
 - 独立安装的 AnyTLS（`anytls.sh`）同样修复客户端偶发 `failed to create session: tls: first record does not look like a TLS handshake`（个别网页、图片加载失败）：分享链接不再带 `fp=chrome`，Mihomo 配置不再带 `client-fingerprint: chrome`。原因与证据同 v2.1.2：带指纹时客户端用 uTLS 的 Chrome 指纹建立 AnyTLS 会话，本机压测约 1.6% 的新会话失败，标准 TLS 为 0；v2rayN 只在链接带 `fp` 时才启用 uTLS。

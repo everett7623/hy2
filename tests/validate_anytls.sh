@@ -165,6 +165,8 @@ echo "$node_output" | grep -q '公钥 SHA256 Pin: TestPin+/='
 echo "$node_output" | grep -q "证书 SHA256 指纹: ${test_fingerprint}"
 echo "$node_output" | grep -q '严格模式: Mihomo / Surfboard / Loon 使用证书指纹'
 echo "$node_output" | grep -q '兼容模式: URI / Shadowrocket 使用 skip-cert-verify=true'
+# 自签 + insecure=1 时 v2rayN 必然提示 AllowInsecure（链接格式无法传完整证书），告诉用户用「获取证书」。
+echo "$node_output" | grep -q 'v2rayN: 导入后提示「AllowInsecure 已启用」属正常，编辑节点点「获取证书」即改为严格校验'
 ! echo "$node_output" | grep -q '当前模式: skip-cert-verify=true'
 ! echo "$node_output" | grep -q 'Sing-box'
 ! echo "$node_output" | grep -q '"outbounds"'
@@ -191,6 +193,8 @@ CERT_MODE=existing
 [ "$(export_surfboard_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = 'AnyTLS Test = anytls, 192.0.2.1, 8443, Abcdef12, skip-cert-verify=false, sni=www.example.com' ]
 [ "$(export_loon_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = 'AnyTLS Test = AnyTLS,192.0.2.1,8443,"Abcdef12",skip-cert-verify=false,sni=www.example.com' ]
 [ "$(export_mihomo_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = "- {name: 'AnyTLS Test', type: anytls, server: 192.0.2.1, port: 8443, password: 'Abcdef12', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: 'www.example.com', skip-cert-verify: false}" ]
+# 域名证书链接不带 insecure，v2rayN 不会提示，也就不显示「获取证书」说明。
+( ! print_certificate_verification_status | grep -q '获取证书' )
 CERT_MODE=self_signed
 
 tmp=$(mktemp -d)

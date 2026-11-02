@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.1.3（2026-11-02） · 本次更新：独立安装的 AnyTLS 节点同样修复 v2rayN 等客户端偶发连接失败（`tls: first record does not look like a TLS handshake`）：分享链接与 Mihomo 配置不再带 uTLS Chrome 指纹。服务端无需重装，但已导入的节点要重新导入（或在 v2rayN 编辑节点把 Fingerprint 清空）。
+> 当前版本：v2.1.4（2026-11-02） · 本次更新：独立 AnyTLS 节点信息页补充 v2rayN 说明——自签证书导入后提示「AllowInsecure 已启用」属正常，编辑节点点「获取证书」即改为严格校验；已按真实 sing-box 压测确认独立 AnyTLS 去掉指纹后不再偶发 `first record does not look like a TLS handshake`。
 
 ## 目录
 

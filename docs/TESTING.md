@@ -59,7 +59,7 @@ bash tests/validate_scripts.sh
 - 卸载后的文件、服务和 cron 清理
 - `/etc/sing-box` 存在其他配置时，卸载 AnyTLS 或 VLESS 不得删除共享文件和核心
 - AnyTLS/VLESS 任一入口升级 sing-box 前，必须用候选二进制校验所有 `/etc/sing-box/*.json`
-- AnyTLS 三种证书模式均需验证：自签输出兼容参数；已有证书校验 SAN、有效期、root 私钥权限和密钥配对；ACME 仅在 sing-box >= 1.14.0 使用 `certificate_provider`，并验证 TCP 80/443 防火墙所有权、回滚和卸载清理
+- AnyTLS 三种证书模式均需验证：自签时 Mihomo / Surfboard / Loon 钉住证书指纹、URI / Shadowrocket 输出兼容参数（v2rayN 导入后提示 AllowInsecure 属正常，编辑节点「获取证书」后严格校验仍可连通）；已有证书校验 SAN、有效期、root 私钥权限和密钥配对；ACME 仅在 sing-box >= 1.14.0 使用 `certificate_provider`，并验证 TCP 80/443 防火墙所有权、回滚和卸载清理
 - 核心替换后必须重启替换前正在运行的 AnyTLS/VLESS/HTTP/SOCKS/家宽中转（`proxy-server`、`landing-server` 均为共享消费者）；任一服务恢复失败时回滚核心和原服务状态
 - 最后一个项目管理的 sing-box 协议卸载时，只有存在 `.singbox-tools-managed` 或协议元数据确认所有权后才可删除核心
 
