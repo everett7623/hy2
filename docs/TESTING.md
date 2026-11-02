@@ -65,7 +65,7 @@ bash tests/validate_scripts.sh
 
 ### 3. 用户侧连接验证
 
-服务器监听正常不等于客户端可连接。至少使用一个真实客户端验证分享链接、IPv4/IPv6 地址、端口及认证参数。VLESS 还需核对 UUID、SNI、REALITY 公钥、short ID 与 `xtls-rprx-vision`，并确认 VPS 可访问 REALITY 握手目标。
+服务器监听正常不等于客户端可连接。至少使用一个真实客户端验证分享链接、IPv4/IPv6 地址、端口及认证参数。VLESS 还需核对 UUID、SNI、REALITY 公钥、short ID 与 `xtls-rprx-vision`，并确认 VPS 可访问 REALITY 握手目标。AnyTLS 链接不得带 `fp`、Mihomo 配置不得带 `client-fingerprint`（独立 AnyTLS 自 v2.1.3 起）：Windows v2rayN（sing-box 内核）导入后连续浏览一段时间，日志里不应出现 `failed to create session: tls: first record does not look like a TLS handshake`。
 
 ## 推荐测试矩阵
 

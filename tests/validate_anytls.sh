@@ -138,15 +138,15 @@ unset -f ip curl
 
 LISTEN_PORT=8443; BIND_FAMILY=v6
 [ "$(listen_address)" = "[::]:8443" ]
-[ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
+[ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&insecure=1#AnyTLS%20Test" ]
 CERT_MODE=existing
-[ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com&fp=chrome#AnyTLS%20Test" ]
+[ "$(render_uri '2001:db8::1' 8443 'Abcdef12' 'AnyTLS Test' 'www.example.com')" = "anytls://Abcdef12@[2001:db8::1]:8443?security=tls&sni=www.example.com#AnyTLS%20Test" ]
 echo "$(export_mihomo_anytls 192.0.2.1 8443 'AnyTLS Test')" | grep -q 'skip-cert-verify: false'
 CERT_MODE=self_signed
 
 PASSWORD=Abcdef12; SERVER_NAME=www.example.com
 shadowrocket_uri=$(export_shadowrocket_anytls 192.0.2.1 8443 'AnyTLS Test' 'TestPin+/=')
-[ "$shadowrocket_uri" = "anytls://Abcdef12@192.0.2.1:8443?security=tls&sni=www.example.com&fp=chrome&insecure=1#AnyTLS%20Test" ]
+[ "$shadowrocket_uri" = "anytls://Abcdef12@192.0.2.1:8443?security=tls&sni=www.example.com&insecure=1#AnyTLS%20Test" ]
 test_fingerprint=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 certificate_public_key_sha256() { printf 'TestPin+/='; }
 certificate_fingerprint_sha256() { printf '%s' "$test_fingerprint"; }
@@ -181,10 +181,16 @@ echo "$node_output" | grep -qF ",\"Abcdef12\",skip-cert-verify=false,sni=www.exa
 [ "$(export_surfboard_anytls 192.0.2.1 8443 'AnyTLS Test')" = 'AnyTLS Test = anytls, 192.0.2.1, 8443, Abcdef12, skip-cert-verify=true, sni=www.example.com' ]
 [ "$(export_loon_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = "AnyTLS Test = AnyTLS,192.0.2.1,8443,\"Abcdef12\",skip-cert-verify=false,sni=www.example.com,tls-cert-sha256=${test_fingerprint}" ]
 [ "$(export_loon_anytls 192.0.2.1 8443 'AnyTLS Test')" = 'AnyTLS Test = AnyTLS,192.0.2.1,8443,"Abcdef12",skip-cert-verify=true,sni=www.example.com' ]
+# URI 与 Mihomo 不带 uTLS 指纹：fp=chrome / client-fingerprint: chrome 会让客户端新建会话偶发
+# “tls: first record does not look like a TLS handshake”（v2rayN 实际报错，本机压测约 1.6%）。
+[ "$(export_mihomo_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = "- {name: 'AnyTLS Test', type: anytls, server: 192.0.2.1, port: 8443, password: 'Abcdef12', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: 'www.example.com', skip-cert-verify: false, fingerprint: '${test_fingerprint}'}" ]
+[ "$(export_mihomo_anytls 192.0.2.1 8443 'AnyTLS Test')" = "- {name: 'AnyTLS Test', type: anytls, server: 192.0.2.1, port: 8443, password: 'Abcdef12', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: 'www.example.com', skip-cert-verify: true}" ]
+( ! printf '%s\n' "$node_output" | grep -qE 'fp=|client-fingerprint' )
 # 域名证书走系统信任链，不得钉住续期后就会变化的证书指纹。
 CERT_MODE=existing
 [ "$(export_surfboard_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = 'AnyTLS Test = anytls, 192.0.2.1, 8443, Abcdef12, skip-cert-verify=false, sni=www.example.com' ]
 [ "$(export_loon_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = 'AnyTLS Test = AnyTLS,192.0.2.1,8443,"Abcdef12",skip-cert-verify=false,sni=www.example.com' ]
+[ "$(export_mihomo_anytls 192.0.2.1 8443 'AnyTLS Test' "$test_fingerprint")" = "- {name: 'AnyTLS Test', type: anytls, server: 192.0.2.1, port: 8443, password: 'Abcdef12', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: 'www.example.com', skip-cert-verify: false}" ]
 CERT_MODE=self_signed
 
 tmp=$(mktemp -d)

@@ -2,7 +2,7 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.1.2
+# 版本：v2.1.3
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
@@ -1225,6 +1225,10 @@ generate_online_qrcode_url() {
     printf 'https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=%s' "$_encoded"
 }
 
+# 不写 fp：带 fp=chrome 时客户端改用 uTLS 的 Chrome 指纹，新建会话偶发
+# “failed to create session: tls: first record does not look like a TLS handshake”
+# （sing-box 内核本机压测约 1.6% 的新会话失败，标准 TLS 与 firefox / edge 指纹为 0）。
+# v2rayN 只在链接带 fp 时才启用 uTLS；sing-box 文档也已将 uTLS 标为不推荐。
 render_uri() {
     local _server="$1" _port="$2" _password="$3" _name="$4" _sni="${5:-$SERVER_NAME}"
     local _host
@@ -1234,10 +1238,10 @@ render_uri() {
     _enc_password=$(uri_encode "$_password")
     _enc_sni=$(uri_encode "$_sni")
     if [ "$CERT_MODE" = "self_signed" ]; then
-        printf 'anytls://%s@%s:%s?security=tls&sni=%s&fp=chrome&insecure=1#%s\n' \
+        printf 'anytls://%s@%s:%s?security=tls&sni=%s&insecure=1#%s\n' \
             "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
     else
-        printf 'anytls://%s@%s:%s?security=tls&sni=%s&fp=chrome#%s\n' \
+        printf 'anytls://%s@%s:%s?security=tls&sni=%s#%s\n' \
             "$_enc_password" "$_host" "$_port" "$_enc_sni" "$_enc_name"
     fi
 }
@@ -2281,6 +2285,7 @@ export_uri_anytls() {
     render_uri "$1" "$2" "$PASSWORD" "$3" "$SERVER_NAME"
 }
 
+# 不写 client-fingerprint：Mihomo 与 sing-box 用同一个 uTLS 分支，原因见 render_uri。
 export_mihomo_anytls() {
     local _server="$1" _port="$2" _node="$3" _fingerprint="${4:-}" _yaml_server _password _sni _safe_node
     _yaml_server=$(format_server_for_yaml "$_server")
@@ -2288,11 +2293,11 @@ export_mihomo_anytls() {
     _sni=$(yaml_single_quote_escape "$SERVER_NAME")
     _safe_node=$(yaml_single_quote_escape "$_node")
     if [ "$CERT_MODE" != "self_signed" ]; then
-        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: false}"
+        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: false}"
     elif [ -n "$_fingerprint" ]; then
-        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: false, fingerprint: '${_fingerprint}'}"
+        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: false, fingerprint: '${_fingerprint}'}"
     else
-        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', client-fingerprint: chrome, udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: true}"
+        printf '%s' "- {name: '${_safe_node}', type: anytls, server: ${_yaml_server}, port: ${_port}, password: '${_password}', udp: true, idle-session-check-interval: 30, idle-session-timeout: 30, min-idle-session: 0, sni: '${_sni}', skip-cert-verify: true}"
     fi
 }
 
@@ -2853,7 +2858,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.1.2${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.1.3${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

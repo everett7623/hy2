@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.1.2（2026-11-02） · 本次更新：修复家宽 AnyTLS 节点在 v2rayN 等客户端偶发连接失败（`tls: first record does not look like a TLS handshake`）：分享链接与 Mihomo 配置不再带 uTLS Chrome 指纹，已部署节点无需重新部署，重新导入节点链接即可。
+> 当前版本：v2.1.3（2026-11-02） · 本次更新：独立安装的 AnyTLS 节点同样修复 v2rayN 等客户端偶发连接失败（`tls: first record does not look like a TLS handshake`）：分享链接与 Mihomo 配置不再带 uTLS Chrome 指纹。服务端无需重装，但已导入的节点要重新导入（或在 v2rayN 编辑节点把 Fingerprint 清空）。
 
 ## 目录
 
@@ -316,6 +316,17 @@ VLESS 诊断会检查 REALITY 目标、Cloudflare 下载探针和当前 TCP 拥�
 - VPS 下载探针也慢：检查 VPS 带宽、负载、线路和服务商限速。
 - VPS 下载探针正常但客户端慢：继续检查客户端分流、MTU、运营商路由和云安全组。
 - 只有 Speedtest 失败：测速站可能限制数据中心 IP 或代理流量，请用普通 HTTPS 下载交叉验证。
+
+### AnyTLS 偶发 `tls: first record does not look like a TLS handshake`
+
+表现为 v2rayN 等 sing-box 内核客户端里个别网页、图片加载不出来，日志出现 `failed to create session: tls: first record does not look like a TLS handshake`。原因在客户端：旧版导出的 AnyTLS 链接带 `fp=chrome`（Mihomo 配置带 `client-fingerprint: chrome`），客户端于是用 uTLS 的 Chrome 指纹建立会话，新建会话时偶发此错误（本机压测约 1.6% 的新会话失败，不带指纹为 0）。
+
+独立 AnyTLS 自 v2.1.3、家宽中转自 v2.1.2 起不再导出 uTLS 指纹。服务端配置不变、无需重装，但客户端里已导入的节点不会自动更新：
+
+- 重新查看节点信息，删除旧节点后重新导入链接或 Mihomo 配置；
+- 或在 v2rayN 编辑节点，把 Fingerprint 清空（Mihomo 则删掉该节点的 `client-fingerprint: chrome`）。
+
+VLESS REALITY 节点不受影响：REALITY 依赖 uTLS 指纹，链接里的 `fp=chrome` 必须保留。
 
 <details>
 <summary>运行截图</summary>

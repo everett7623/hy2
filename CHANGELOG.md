@@ -4,6 +4,14 @@
 
 ---
 
+## v2.1.3 (2026-11-02)
+
+- 独立安装的 AnyTLS（`anytls.sh`）同样修复客户端偶发 `failed to create session: tls: first record does not look like a TLS handshake`（个别网页、图片加载失败）：分享链接不再带 `fp=chrome`，Mihomo 配置不再带 `client-fingerprint: chrome`。原因与证据同 v2.1.2：带指纹时客户端用 uTLS 的 Chrome 指纹建立 AnyTLS 会话，本机压测约 1.6% 的新会话失败，标准 TLS 为 0；v2rayN 只在链接带 `fp` 时才启用 uTLS。
+- 自签证书（`insecure=1`）与域名证书两种链接、Mihomo 的三种证书校验写法都已去掉指纹；Shadowrocket 与二维码用同一条链接，一并生效。Surfboard、Loon 配置本来就不带 uTLS 指纹，未改动。
+- 服务端配置不变，无需重装；但客户端里已导入的节点不会自动更新：重新查看节点信息，删除旧节点后重新导入链接或 Mihomo 配置，或在 v2rayN 编辑节点把 Fingerprint 清空。
+- VLESS REALITY 导出保留 `fp=chrome` / `client-fingerprint: chrome`：REALITY 依赖 uTLS 指纹。
+- 回归测试：AnyTLS 链接与三种 Mihomo 配置改为整行断言，节点信息页不得出现 `fp=` / `client-fingerprint`；静态检查 `anytls.sh` 的链接与 Mihomo 行不得再带 uTLS 指纹（旧代码会被拦下）。
+
 ## v2.1.2 (2026-11-02)
 
 - 修复家宽 AnyTLS 节点偶发连接失败：v2rayN 日志里出现 `failed to create session: tls: first record does not look like a TLS handshake`，表现为个别网页、图片加载不出来。原因在客户端：分享链接带 `fp=chrome`，客户端于是用 uTLS 的 Chrome 指纹建立 AnyTLS 会话，新建会话时偶发这个错误。本机用真实 sing-box 1.14.3 加字节级抓包压测：Chrome 指纹约 15 / 912 个新会话失败（约 1.6%），失败的连接上线路机一个字节都没收到也没发出；不带指纹（标准 TLS）0 / 360，firefox、edge 指纹各 0 / 120。线路机端改曲线（去掉 MLKEM）无效。
