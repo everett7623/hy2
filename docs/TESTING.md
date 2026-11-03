@@ -8,7 +8,7 @@
 
 同一入口还会执行 `tests/validate_proxy.sh`。该测试会 source `proxy.sh`，验证端口/用户名/密码校验、mixed 入站 JSON、`bind_interface` 出站、wrapper、systemd/OpenRC 单元名 `proxy-server`，以及在无真实 sing-box 时对 `check_config` 的 mock 行为。
 
-同一入口还会执行 `tests/validate_landing.sh`。该测试会 source `landing.sh`，验证 WireGuard 密钥/落地机地址/SSH 用户校验、远程结果与参数文件解析、线路机和落地机 JSON、元数据往返（含以 `=` 结尾的密钥）、参数注入拒绝、落地机两阶段 commit/abort、角色与共享核心卸载所有权、出口 IP 校验，以及 SSH 不使用 `StrictHostKeyChecking=no`、sshpass、`ip_forward` 或 iptables NAT 的静态约束。设置 `REAL_SING_BOX_BIN` 时会对两端 JSON 运行真实 `sing-box check`。
+同一入口还会执行 `tests/validate_landing.sh`。该测试会 source `landing.sh`，验证 WireGuard 密钥/落地机地址/SSH 用户校验、远程结果与参数文件解析、线路机和落地机 JSON、元数据往返（含以 `=` 结尾的密钥）、参数注入拒绝、落地机两阶段 commit/abort、角色与共享核心卸载所有权、出口 IP 校验、AnyTLS 核心下限（1.12.10）与线路机自动更新的询问 / 写入 / 移除时机，以及 SSH 不使用 `StrictHostKeyChecking=no`、sshpass、`ip_forward` 或 iptables NAT 的静态约束。设置 `REAL_SING_BOX_BIN` 时会对两端 JSON 运行真实 `sing-box check`。
 
 本机已有真实 sing-box 时，可额外校验测试生成的 VLESS JSON：
 
@@ -130,6 +130,7 @@ bash tests/validate_scripts.sh
 - v2.0.59 起落地机只有 IPv4 时：客户端**保持 IPv6 开启**、远程 DNS 用明文（Exclave 默认 `tcp://1.1.1.1`），网页与 YouTube 也必须正常；线路机日志（debug 级别）应出现 `port=53 => hijack-dns` 与 `query_type=AAAA => predefined`。客户端改用 DoH / DoT 时仍需关闭 IPv6。
 - v2.0.61 起节点协议默认 AnyTLS：部署时直接回车生成 AnyTLS 节点，Exclave 导入 `anytls://…&insecure=1` 链接后网页、YouTube 与 Telegram 正常（DNS 接管、AAAA 过滤与 VLESS 相同）；Mihomo 导入带 `fingerprint` 的单行配置可连通。选「保留现有节点参数」重新部署后证书 SHA256 不变，已导入的客户端无需更新；不保留参数、改选 `[2]` 重新部署为 VLESS 成功后，旧节点端口关闭、`/etc/sing-box/landing-cert/` 删除。
 - v2.1.2 起 AnyTLS 链接不带 `fp`：Windows v2rayN（sing-box 内核）导入后连续浏览一段时间，日志里不应再出现 `failed to create session: tls: first record does not look like a TLS handshake`；导入时的「AllowInsecure 已启用」提示属正常，编辑节点点「获取证书」后提示消失且仍可连通。
+- v2.2.0 起：线路机已有 sing-box 1.12.0–1.12.9 时部署 AnyTLS 节点会先提示「会话卡死问题」并升级核心（VLESS 节点不升级）；诊断在 AnyTLS 线路机核心低于 1.12.10 时给出升级提示。部署时询问「本机（线路机）也开启每周自动更新」，直接回车后 `crontab -l` 出现 `47 4 * * 1 /usr/local/bin/landing-autoupdate.sh`；答 `n` 不写入（已有则移除）；部署失败回滚后线路机不留下该任务。
 - 真实客户端经线路机访问 IP、域名与 DNS 均从落地机出口；停止落地机服务后流量应失败，证明不存在绕过隧道的直连。
 - 内网目标（RFC1918、回环）被拒绝。
 - 重新部署失败（例如指定的 UDP 端口被占用）时两端配置、服务和防火墙恢复到部署前状态；重新部署成功时保留客户端 UUID。

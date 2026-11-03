@@ -495,6 +495,24 @@ upgrade_core >/dev/null
 [ -f "$tmp/shared-proxy-restarted" ]
 grep -q 'sing-box version 1.13.15' "$SING_BOX_BIN"
 
+# AnyTLS 最低核心 1.12.10：之前的 sing-anytls 在会话接收循环里阻塞回写 FIN、控制帧写入没有超时，
+# 一条连接写阻塞就让整条复用会话卡住。已有核心低于下限时安装必须升级，达到下限则不重复下载。
+(
+    get_latest_version() { LAST_VERSION_TAG=v1.14.4; return 0; }
+    download_anytls() { echo dl >> "$tmp/anytls-core-dl"; }
+    : > "$tmp/anytls-core-dl"
+    SING_BOX_BIN="$tmp/old-sing-box"
+    printf '#!/bin/sh\necho "sing-box version 1.12.9"\n' > "$SING_BOX_BIN"
+    chmod +x "$SING_BOX_BIN"
+    ensure_anytls_bin > "$tmp/anytls-core.out"
+    [ "$(wc -l < "$tmp/anytls-core-dl" | tr -d ' ')" = 1 ]
+    grep -q '会话卡死' "$tmp/anytls-core.out"
+    : > "$tmp/anytls-core-dl"
+    printf '#!/bin/sh\necho "sing-box version 1.12.10"\n' > "$SING_BOX_BIN"
+    ensure_anytls_bin > /dev/null
+    [ ! -s "$tmp/anytls-core-dl" ]
+)
+
 # 卸载只能删除 AnyTLS 产物，存在其他 sing-box 配置时必须保留目录与核心。
 printf '{}' > "$ANYTLS_DIR/other.json"
 SYSTEMD_SERVICE="$tmp/anytls.service"

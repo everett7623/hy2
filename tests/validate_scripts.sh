@@ -6,7 +6,7 @@ cd "$ROOT"
 
 SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
 HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.1.4"
+EXPECTED_VERSION="v2.2.0"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -337,6 +337,14 @@ grep -qF "grep -q '\"tag\": \"wg-out\"' \"\$LANDING_CONFIG\" || return 0" landin
 grep -qF 'cp -a "$LANDING_CERT_DIR" "$INSTALL_BACKUP_DIR/cert"' landing.sh
 grep -qF 'rm -rf "$LANDING_META" "$LANDING_PENDING_DIR" "$LANDING_CERT_DIR"' landing.sh
 grep -qF '[ "$NODE_PROTO" = "anytls" ] || rm -rf "$LANDING_CERT_DIR"' landing.sh
+# AnyTLS 最低核心 1.12.10：之前内置的 sing-anytls v0.0.8 在会话接收循环里阻塞回写 FIN、控制帧写入没有超时，
+# 一条连接写阻塞就让整条复用会话一起卡住；家宽线路机与独立 AnyTLS 都要把低于下限的核心升级。
+grep -qx 'ANYTLS_MIN_SING_BOX="1.12.10"' landing.sh
+grep -qx 'ANYTLS_MIN_SING_BOX="1.12.10"' anytls.sh
+grep -qF 'version_at_least "${_installed_version:-0.0.0}" "$ANYTLS_MIN_SING_BOX"' anytls.sh
+# 线路机自身的每周自动更新在部署前询问、部署成功后才写入 cron（失败回滚时不留下半套配置）。
+grep -q '^prompt_relay_auto_update()' landing.sh
+grep -q '^apply_relay_auto_update()' landing.sh
 ! grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '每周一 04:37' proxy.sh
 grep -q '是否重选 REALITY 目标并写回配置' vless.sh

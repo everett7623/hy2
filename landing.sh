@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.1.4
+# 版本：v2.2.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-11-02
+# 更新日期: 2026-11-03
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: KVM / 独立服务器 / OpenVZ / LXC（用户态 WireGuard，不依赖内核模块）
@@ -164,12 +164,18 @@ PROBE_PORT=""
 PROBE_USER=""
 PROBE_PASS=""
 AUTO_UPDATE=0
+# 线路机自身是否每周自动更新 sing-box（AUTO_UPDATE 是传给落地机的选择）；只在部署成功后生效。
+RELAY_AUTO_UPDATE=0
 MANAGED_SING_BOX=0
 CONFIG_SCHEMA=0
 LANDING_CONFIG_SCHEMA=1
 LAST_VERSION_TAG=""
 LAST_EGRESS_IP=""
 SING_BOX_STABLE_FALLBACK_TAG="${SING_BOX_STABLE_FALLBACK_TAG:-v1.13.14}"
+# AnyTLS 节点要求的最低核心：1.12.10 之前内置 sing-anytls v0.0.8，收到对端 FIN 时在会话接收循环里
+# 回写 FIN，控制帧写入也没有超时；只要一条连接写阻塞，整条复用会话上的所有连接一起卡住。
+# 1.12.10 起（sing-anytls v0.0.11）改为本地关闭，控制帧写入 5 秒超时。
+ANYTLS_MIN_SING_BOX="1.12.10"
 INSTALL_BACKUP_DIR=""
 INSTALL_ROLLBACK_ARMED=0
 INSTALL_PREV_INT_TRAP=""
@@ -1466,20 +1472,35 @@ download_singbox() {
     echo -e "${GREEN}sing-box 安装完成: $("$SING_BOX_BIN" version 2>/dev/null | head -1)${PLAIN}"
 }
 
+# 本次部署需要的最低核心：AnyTLS 节点（线路机）要 ANYTLS_MIN_SING_BOX，其余 1.12.0。
+# 落地机只跑 WireGuard，NODE_PROTO 为空，不受影响。
+singbox_min_version() {
+    if [ "${NODE_PROTO:-}" = "anytls" ]; then
+        printf '%s' "$ANYTLS_MIN_SING_BOX"
+    else
+        printf '%s' "1.12.0"
+    fi
+}
+
 ensure_singbox_bin() {
-    local _preexisting=0
+    local _preexisting=0 _min_version
+    _min_version=$(singbox_min_version)
     if [ -x "$SING_BOX_BIN" ]; then
         _preexisting=1
         local _installed_version
         _installed_version=$(get_installed_version)
-        if version_at_least "${_installed_version:-0.0.0}" "1.12.0"; then
+        if version_at_least "${_installed_version:-0.0.0}" "$_min_version"; then
             if [ -f "$LANDING_META/config.env" ]; then
                 MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$LANDING_META/config.env")
                 [ "$MANAGED_SING_BOX" = "1" ] || MANAGED_SING_BOX=0
             fi
             return 0
         fi
-        echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 低于脚本最低版本 1.12.0，将安装最新版${PLAIN}"
+        if version_at_least "${_installed_version:-0.0.0}" "1.12.0"; then
+            echo -e "${YELLOW}现有 sing-box ${_installed_version} 的 AnyTLS 入站有会话卡死问题（${_min_version} 起修复），将升级到最新稳定版${PLAIN}"
+        else
+            echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 低于脚本最低版本 1.12.0，将安装最新版${PLAIN}"
+        fi
     fi
     get_latest_version || return 1
     download_singbox || return 1
@@ -3291,6 +3312,7 @@ deploy_landing() {
         choose_relay_protocol
     fi
     prompt_exit_target || return 1
+    prompt_relay_auto_update
 
     backup_current_install || {
         echo -e "${RED}无法创建安装备份，已取消操作${PLAIN}"
@@ -3379,6 +3401,7 @@ deploy_landing() {
     # 由 AnyTLS 改为 VLESS 重新部署成功后，旧证书已不再使用。
     [ "$NODE_PROTO" = "anytls" ] || rm -rf "$LANDING_CERT_DIR"
     ensure_exit_watchdog || true
+    apply_relay_auto_update
     echo -e "${GREEN}✓ 部署完成：客户端流量将从落地机 ${LAST_EGRESS_IP} 出网${PLAIN}"
     [ "$_port_warn" = "0" ] || echo -e "${RED}! 客户端暂时连不上：请先在线路机商家面板 / 安全组放行 TCP ${EXT_PORT}${PLAIN}"
     show_config
@@ -3724,7 +3747,7 @@ ensure_reality_handshake_direct() {
 }
 
 diagnose_landing() {
-    local _confirm _cur_ip
+    local _confirm _cur_ip _core_ver
     echo -e "\n${GREEN}家宽中转诊断${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     if [ ! -f "$LANDING_CONFIG" ] && [ ! -f "$LANDING_META/config.env" ]; then
@@ -3791,6 +3814,10 @@ diagnose_landing() {
             echo -e "  ${GREEN}✓ AnyTLS 自签证书有效（SNI ${SERVER_NAME}）${PLAIN}"
         else
             echo -e "  ${RED}✗ AnyTLS 证书缺失、与私钥不匹配或即将过期：请重新部署（可保留现有节点参数）${PLAIN}"
+        fi
+        _core_ver=$(get_installed_version 2>/dev/null || true)
+        if [ -n "$_core_ver" ] && ! version_at_least "$_core_ver" "$ANYTLS_MIN_SING_BOX"; then
+            echo -e "  ${YELLOW}! sing-box ${_core_ver} 的 AnyTLS 入站有会话卡死问题（${ANYTLS_MIN_SING_BOX} 起修复）：请在菜单「升级 sing-box」升级${PLAIN}"
         fi
     elif reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
         echo -e "  ${GREEN}✓ REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 可达${PLAIN}"
@@ -4016,12 +4043,43 @@ AUTOUPDATE_EOF
 }
 
 remove_auto_update() {
+    local _mode="${1:-interactive}"
     if command -v crontab >/dev/null 2>&1; then
         crontab -l 2>/dev/null | grep -vF "$AUTO_UPDATE_SCRIPT" | crontab - 2>/dev/null || true
     fi
     rm -f "$AUTO_UPDATE_SCRIPT"
     echo -e "${GREEN}✓ 已移除家宽中转自动更新任务${PLAIN}"
-    sleep 2
+    [ "$_mode" = "quiet" ] || sleep 2
+}
+
+relay_auto_update_enabled() {
+    command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$AUTO_UPDATE_SCRIPT"
+}
+
+# 线路机自身的每周自动更新。此前只问落地机，线路机上的节点入站会一直停在部署时的核心版本，
+# 拿不到 sing-box 的修复（例如 AnyTLS 会话卡死要 1.12.10 才修复）。
+# 升级走 upgrade_core：先用新核心校验 /etc/sing-box 下的全部配置，重启失败自动回滚。
+prompt_relay_auto_update() {
+    local _input
+    if relay_auto_update_enabled; then
+        read -r -p "本机（线路机）已开启每周自动更新 sing-box，保留？[Y/n]: " _input
+    else
+        read -r -p "本机（线路机）也开启每周自动更新 sing-box（推荐）？[Y/n]: " _input
+    fi
+    case "$_input" in
+        [nN]*) RELAY_AUTO_UPDATE=0 ;;
+        *) RELAY_AUTO_UPDATE=1 ;;
+    esac
+}
+
+# 部署成功后才调用：部署失败回滚时不会在线路机留下定时任务。
+apply_relay_auto_update() {
+    if [ "$RELAY_AUTO_UPDATE" = "1" ]; then
+        setup_auto_update quiet || true
+    elif relay_auto_update_enabled; then
+        remove_auto_update quiet
+    fi
+    return 0
 }
 
 # ============================================================
@@ -4379,7 +4437,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.1.4${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.2.0${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

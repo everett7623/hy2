@@ -2,14 +2,14 @@
 
 ## sing-box 协议上游边界
 
-- 唯一二进制上游是 `https://github.com/SagerNet/sing-box`，要求版本 >= 1.12.0。
+- 唯一二进制上游是 `https://github.com/SagerNet/sing-box`，要求版本 >= 1.12.0；AnyTLS（独立安装与家宽中转的 AnyTLS 节点）要求 >= 1.12.10（`ANYTLS_MIN_SING_BOX`），之前的 sing-anytls 收到 FIN 时会卡住整条复用会话。
 - 发布包格式为 `sing-box-<version>-linux-<arch>.tar.gz`；上游命名变化时必须同步行为测试。
 - AnyTLS 配置位于 `/etc/sing-box/anytls.json`，元数据、证书分别位于 `anytls-meta/`、`anytls-cert/`。
 - VLESS 配置位于 `/etc/sing-box/vless.json`，元数据位于 `vless-meta/`；默认使用 TCP + REALITY + `xtls-rprx-vision`。
 - `/etc/sing-box` 与 `/usr/local/bin/sing-box` 由 AnyTLS、VLESS 或其他服务共享。协议卸载只能删除自身产物；`.singbox-tools-managed` 用于延续项目安装核心的所有权。
 - AnyTLS/VLESS 下载候选核心后，必须先用候选二进制校验 `/etc/sing-box/*.json`，全部通过后才可原子替换共享核心。
 - AnyTLS/VLESS 使用第三方下载镜像时，必须先从 GitHub 官方 Release API 获取对应资产 SHA-256 摘要并校验；无法取得可信摘要时只允许官方 GitHub 资产 URL。
-- AnyTLS/VLESS/HTTP/SOCKS 核心升级共用 `/var/lock/sing-box-tools-upgrade.lock`；自动任务分别在每周一 04:17、04:27、04:37 执行，避免并发替换共享二进制。
+- AnyTLS/VLESS/HTTP/SOCKS 核心升级共用 `/var/lock/sing-box-tools-upgrade.lock`；自动任务分别在每周一 04:17、04:27、04:37 执行，家宽中转（落地机与 v2.2.0 起的线路机）在 04:47，避免并发替换共享二进制。
 - 核心替换成功后，升级入口会重启替换前处于运行状态的 AnyTLS/VLESS 服务；任一共享服务启动失败时恢复旧核心并重启原服务。
 - 自动测试不替代真实 VPS 的服务启动、防火墙和客户端连通性验证。
 

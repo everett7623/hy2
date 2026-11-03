@@ -809,6 +809,59 @@ show_config </dev/null 2>&1 | grep -q 'IPv6 路由」设为禁用'
 PUBLIC_IPV6=""
 unset -f show_node get_country_code get_country_name
 
+# --- AnyTLS 节点的核心版本下限：1.12.10 之前 AnyTLS 会话会整条卡住，部署时自动升级 ---
+# 只针对 AnyTLS 线路机；VLESS 线路机与落地机（NODE_PROTO 为空）仍只要求 1.12.0。
+get_latest_version() { LAST_VERSION_TAG=v1.14.4; }
+download_singbox() { echo dl >> "$tmp/core-dl"; }
+: > "$tmp/core-dl"
+get_installed_version() { echo 1.12.9; }
+NODE_PROTO=anytls ensure_singbox_bin > "$tmp/core.out"
+[ "$(wc -l < "$tmp/core-dl" | tr -d ' ')" = 1 ]
+grep -q '会话卡死' "$tmp/core.out"
+: > "$tmp/core-dl"
+NODE_PROTO=vless ensure_singbox_bin > /dev/null
+NODE_PROTO="" ensure_singbox_bin > /dev/null
+[ ! -s "$tmp/core-dl" ]
+get_installed_version() { echo 1.12.10; }
+NODE_PROTO=anytls ensure_singbox_bin > /dev/null
+[ ! -s "$tmp/core-dl" ]
+get_installed_version() { echo 1.11.9; }
+NODE_PROTO=vless ensure_singbox_bin > "$tmp/core.out"
+[ "$(wc -l < "$tmp/core-dl" | tr -d ' ')" = 1 ]
+grep -q '低于脚本最低版本 1.12.0' "$tmp/core.out"
+unset -f get_latest_version download_singbox get_installed_version
+
+# --- 线路机也可开启每周自动更新；定时任务只在部署成功后写入 ---
+CRONTAB_FILE="$tmp/crontab-relay"; : > "$CRONTAB_FILE"
+crontab() { if [ "${1:-}" = "-l" ]; then cat "$CRONTAB_FILE" 2>/dev/null; else cat > "$CRONTAB_FILE"; fi; }
+rm -f "$AUTO_UPDATE_SCRIPT"
+RELAY_AUTO_UPDATE=0
+prompt_relay_auto_update <<< '' > /dev/null
+[ "$RELAY_AUTO_UPDATE" = 1 ]
+prompt_relay_auto_update <<< 'n' > /dev/null
+[ "$RELAY_AUTO_UPDATE" = 0 ]
+# 未开启且选 n：不写任何定时任务（否定断言放进子 shell，set -e 才会在失败时中止）
+apply_relay_auto_update > /dev/null
+[ ! -s "$CRONTAB_FILE" ]
+( ! relay_auto_update_enabled )
+# 选 Y：写入与落地机相同的每周一 04:47 任务
+RELAY_AUTO_UPDATE=1
+apply_relay_auto_update > /dev/null
+grep -qxF "47 4 * * 1 $AUTO_UPDATE_SCRIPT" "$CRONTAB_FILE"
+[ -x "$AUTO_UPDATE_SCRIPT" ]
+relay_auto_update_enabled
+# 已开启时重新部署选 n：移除任务与脚本
+prompt_relay_auto_update <<< 'n' > /dev/null
+[ "$RELAY_AUTO_UPDATE" = 0 ]
+apply_relay_auto_update > /dev/null
+( ! grep -qF "$AUTO_UPDATE_SCRIPT" "$CRONTAB_FILE" )
+[ ! -e "$AUTO_UPDATE_SCRIPT" ]
+unset -f crontab
+# 只能在部署成功、落地机确认生效之后写入（失败回滚时不留下线路机的定时任务）
+_deploy=$(sed -n '/^deploy_landing() {/,/^}$/p' landing.sh)
+[ "$(printf '%s\n' "$_deploy" | grep -n 'apply_relay_auto_update' | cut -d: -f1)" -gt "$(printf '%s\n' "$_deploy" | grep -n -- '--remote-exit-commit' | cut -d: -f1)" ]
+[ "$(printf '%s\n' "$_deploy" | grep -n 'prompt_relay_auto_update' | cut -d: -f1)" -lt "$(printf '%s\n' "$_deploy" | grep -n 'backup_current_install' | cut -d: -f1)" ]
+
 # --- 卸载：线路机，共享核心无其他使用者时随最后一个协议移除 ---
 : > "$SING_BOX_MANAGED_MARKER"
 MANAGED_SING_BOX=1

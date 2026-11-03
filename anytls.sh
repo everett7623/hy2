@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.1.4
+# 版本：v2.2.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-11-02
+# 更新日期: 2026-11-03
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -114,6 +114,10 @@ ACME_EMAIL=""
 MANAGED_SING_BOX=0
 LAST_VERSION_TAG=""
 SING_BOX_STABLE_FALLBACK_TAG="${SING_BOX_STABLE_FALLBACK_TAG:-v1.13.14}"
+# AnyTLS 要求的最低核心：1.12.10 之前内置 sing-anytls v0.0.8，收到对端 FIN 时在会话接收循环里
+# 回写 FIN，控制帧写入也没有超时；只要一条连接写阻塞，整条复用会话上的所有连接一起卡住。
+# 1.12.10 起（sing-anytls v0.0.11）改为本地关闭，控制帧写入 5 秒超时。
+ANYTLS_MIN_SING_BOX="1.12.10"
 INSTALL_BACKUP_DIR=""
 INSTALL_ROLLBACK_ARMED=0
 INSTALL_PREV_INT_TRAP=""
@@ -1072,14 +1076,18 @@ ensure_anytls_bin() {
         _preexisting=1
         local _installed_version
         _installed_version=$(get_installed_version)
-        if version_at_least "${_installed_version:-0.0.0}" "1.12.0"; then
+        if version_at_least "${_installed_version:-0.0.0}" "$ANYTLS_MIN_SING_BOX"; then
             if [ -f "$ANYTLS_META/config.env" ]; then
                 MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$ANYTLS_META/config.env")
                 [ "$MANAGED_SING_BOX" = "1" ] || MANAGED_SING_BOX=0
             fi
             return 0
         fi
-        echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 不支持原生 AnyTLS，将安装最新版${PLAIN}"
+        if version_at_least "${_installed_version:-0.0.0}" "1.12.0"; then
+            echo -e "${YELLOW}现有 sing-box ${_installed_version} 的 AnyTLS 入站有会话卡死问题（${ANYTLS_MIN_SING_BOX} 起修复），将升级到最新稳定版${PLAIN}"
+        else
+            echo -e "${YELLOW}现有 sing-box ${_installed_version:-未知版本} 不支持原生 AnyTLS，将安装最新版${PLAIN}"
+        fi
     fi
     get_latest_version || return 1
     download_anytls || return 1
@@ -2860,7 +2868,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.1.4${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.2.0${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

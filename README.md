@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.1.4（2026-11-02） · 本次更新：独立 AnyTLS 节点信息页补充 v2rayN 说明——自签证书导入后提示「AllowInsecure 已启用」属正常，编辑节点点「获取证书」即改为严格校验；已按真实 sing-box 压测确认独立 AnyTLS 去掉指纹后不再偶发 `first record does not look like a TLS handshake`。
+> 当前版本：v2.2.0（2026-11-03） · 本次更新：家宽中转的 AnyTLS 节点与独立 AnyTLS 要求 sing-box ≥ 1.12.10（更早版本收到 FIN 时可能卡住整条复用会话），旧核心在部署 / 安装时自动升级；线路机部署时也询问每周自动更新（默认开启）；已用 sing-box 1.14.4 本机压测完整中转链路，并说明 reverse 模式重启线路机后最长约 3 分钟恢复。
 
 ## 目录
 
@@ -190,6 +190,8 @@ IPv6 问题的来龙去脉：客户端开着 IPv6 时，浏览器、YouTube 会�
 - AnyTLS 分享链接与 Mihomo 配置不带 uTLS 指纹（`fp` / `client-fingerprint`）。v2.1.1 及以前带 `fp=chrome`，v2rayN 等 sing-box 内核客户端新建会话时偶发 `failed to create session: tls: first record does not look like a TLS handshake`，表现为个别网页或图片加载失败（本机压测约 1.6% 的新会话失败，不带指纹为 0）。已导入的旧节点重新导入链接，或在 v2rayN 编辑节点把 Fingerprint 清空即可，线路机无需重新部署。
 - 两端都不修改系统路由、不开启 `ip_forward`、不写 iptables NAT；落地机拒绝隧道访问其局域网与本机服务。
 - 选 1（落地机主动连接）时家宽换 IP 无需任何操作；「更新落地机地址」只改 SSH 管理地址。选 2 时推荐给落地机配置 DDNS 域名：线路机每 2 分钟检查一次解析（需要 cron），变化后自动重启服务重连；若填固定 IP，换 IP 后在线路机菜单选择「更新落地机地址」。
+- 选 1 时重启线路机（菜单重启、升级核心、VPS 重启）后，节点要等落地机下一次 WireGuard 握手才恢复：通常 2 分钟内，最长约 3 分钟（本机实测 19 秒和 125 秒）。这期间线路机日志每 5 秒出现一条 `no known endpoint for peer`，属正常，不必重新部署。重启落地机则立即恢复。
+- AnyTLS 节点要求 sing-box ≥ 1.12.10：更早的版本收到连接关闭（FIN）时，可能让同一条复用会话上的所有连接一起卡住。部署时线路机核心低于此版本会自动升级；「出口检测与诊断」也会提示。部署时会分别询问落地机和线路机是否每周一 04:47 自动更新 sing-box（默认都开启），线路机的定时任务在部署成功后才写入。
 - 客户端 DNS 需经节点解析（如 Mihomo 使用 fake-ip），否则网站可能看到本地 DNS。
 
 ## 客户端导出
