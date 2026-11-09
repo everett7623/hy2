@@ -787,6 +787,92 @@ EXT_PORT='34567;id' check_node_port_from_exit >/dev/null
 [ ! -e "$tmp/ssh-cmd" ]
 unset -f ssh_run
 
+# --- 落地机重装系统后 SSH 主机密钥变化 ---
+# 以前所有 SSH 失败都报“请检查地址、SSH 端口、用户名与密码”，主机密钥变化时用户无从下手。
+# 现在先不登录地探测：说明原因、给出落地机现在的指纹，用户确认后才删除旧记录；绝不自动信任。
+_saved_hk="$EXIT_HOST|$SSH_PORT|$SSH_USER"
+EXIT_HOST=198.51.100.7; SSH_PORT=22; SSH_USER=root
+HK_STATE="$tmp/hk-state"; HK_CALLS="$tmp/hk-calls"; HK_KNOWN="$tmp/known_hosts"; : > "$HK_KNOWN"
+ssh() {
+    local _a
+    for _a in "$@"; do
+        case "$_a" in
+            PreferredAuthentications=none)
+                printf 'probe\n' >> "$HK_CALLS"
+                case "$(cat "$HK_STATE")" in
+                    changed)
+                        printf '%s\n' '@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @' \
+                            'The fingerprint for the ED25519 key sent by the remote host is' \
+                            'SHA256:TestOnlyFingerprint0123456789abcdefABCD+/x.' \
+                            "Offending ECDSA key in ${HK_KNOWN}:3" \
+                            'Host key verification failed.' >&2 ;;
+                    down) printf 'ssh: connect to host 198.51.100.7 port 22: Connection refused\n' >&2 ;;
+                    *) printf 'root@198.51.100.7: Permission denied (publickey,password).\n' >&2 ;;
+                esac
+                return 255 ;;
+            ControlMaster=yes) printf 'master\n' >> "$HK_CALLS"; return 0 ;;
+        esac
+    done
+    return 0
+}
+ssh-keygen() { printf 'ssh-keygen %s\n' "$*" >> "$HK_CALLS"; [ -e "$HK_STATE.stuck" ] || echo ok > "$HK_STATE"; }
+# 确认（y）：说明原因与指纹 → 删除旧记录 → 再探测 → 正式登录。
+echo changed > "$HK_STATE"; : > "$HK_CALLS"
+_out=$(ssh_open_master <<< y 2>&1)
+printf '%s\n' "$_out" | grep -q '落地机 198.51.100.7 的 SSH 主机密钥和本机上次记录的不一致'
+printf '%s\n' "$_out" | grep -qF 'SHA256:TestOnlyFingerprint0123456789abcdefABCD+/x'
+printf '%s\n' "$_out" | grep -qF 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+printf '%s\n' "$_out" | grep -q '已删除本机记录的旧主机密钥'
+printf '%s\n' "$_out" | grep -q '已连接落地机'
+grep -qxF "ssh-keygen -f ${HK_KNOWN} -R 198.51.100.7" "$HK_CALLS"
+[ "$(grep -c '^probe$' "$HK_CALLS")" = 2 ]
+[ "$(grep -n '^ssh-keygen' "$HK_CALLS" | cut -d: -f1)" -lt "$(grep -n '^master$' "$HK_CALLS" | cut -d: -f1)" ]
+ssh_close_master
+# 非 22 端口：known_hosts 里记为 [主机]:端口。
+SSH_PORT=2222; echo changed > "$HK_STATE"; : > "$HK_CALLS"
+ssh_open_master <<< y >/dev/null 2>&1
+grep -qxF "ssh-keygen -f ${HK_KNOWN} -R [198.51.100.7]:2222" "$HK_CALLS"
+ssh_close_master
+SSH_PORT=22
+# 直接回车（默认不信任）：不删除、不登录，给出手动命令，也不再误报“用户名与密码”。
+echo changed > "$HK_STATE"; : > "$HK_CALLS"
+( ! ssh_open_master <<< '' > "$tmp/hk-out" 2>&1 )
+grep -q '已取消，未连接落地机' "$tmp/hk-out"
+grep -qF "ssh-keygen -f '${HK_KNOWN}' -R '198.51.100.7'" "$tmp/hk-out"
+( ! grep -q '^ssh-keygen' "$HK_CALLS" )
+( ! grep -qx 'master' "$HK_CALLS" )
+( ! grep -q '用户名与密码' "$tmp/hk-out" )
+# 删除后仍不一致（旧密钥记在别的文件）：停止并指出出问题的记录，不登录。
+echo changed > "$HK_STATE"; : > "$HK_STATE.stuck"; : > "$HK_CALLS"
+( ! ssh_open_master <<< y > "$tmp/hk-out" 2>&1 )
+grep -q '删除旧记录后主机密钥仍不一致' "$tmp/hk-out"
+( ! grep -qx 'master' "$HK_CALLS" )
+rm -f "$HK_STATE.stuck"
+# 删不掉旧记录（缺少 ssh-keygen 或 known_hosts 不可写）：如实报错并给出手动命令，不误报“仍不一致”，不登录。
+ssh-keygen() { printf 'ssh-keygen %s\n' "$*" >> "$HK_CALLS"; return 1; }
+echo changed > "$HK_STATE"; : > "$HK_CALLS"
+( ! ssh_open_master <<< y > "$tmp/hk-out" 2>&1 )
+grep -q '无法自动删除旧记录' "$tmp/hk-out"
+grep -qF "ssh-keygen -f '${HK_KNOWN}' -R '198.51.100.7'" "$tmp/hk-out"
+( ! grep -q '仍不一致' "$tmp/hk-out" )
+( ! grep -qx 'master' "$HK_CALLS" )
+ssh-keygen() { printf 'ssh-keygen %s\n' "$*" >> "$HK_CALLS"; [ -e "$HK_STATE.stuck" ] || echo ok > "$HK_STATE"; }
+# 连不上：直接给出 ssh 原话，不再用正式登录把超时再等一遍。
+echo down > "$HK_STATE"; : > "$HK_CALLS"
+( ! ssh_open_master < /dev/null > "$tmp/hk-out" 2>&1 )
+grep -q 'Connection refused' "$tmp/hk-out"
+grep -q '无法连接落地机，请检查地址与 SSH 端口' "$tmp/hk-out"
+[ "$(grep -c '^probe$' "$HK_CALLS")" = 1 ]
+( ! grep -qx 'master' "$HK_CALLS" )
+# 主机密钥正常：不提示，直接登录。
+echo ok > "$HK_STATE"; : > "$HK_CALLS"
+_out=$(ssh_open_master < /dev/null 2>&1)
+( ! printf '%s\n' "$_out" | grep -q '主机密钥' )
+grep -qx 'master' "$HK_CALLS"
+ssh_close_master
+unset -f ssh ssh-keygen
+IFS='|' read -r EXIT_HOST SSH_PORT SSH_USER <<< "$_saved_hk"
+
 # --- 双栈线路机：只有 IPv4 节点出二维码，IPv6 备用节点只给链接 ---
 # 部署输出最下方的二维码最容易被扫；手机走 IPv6 连不上线路机时日志里一条连接都没有，看起来像节点坏了。
 get_country_code() { printf 'US'; }
@@ -879,6 +965,12 @@ grep -q 'StrictHostKeyChecking=accept-new' landing.sh
 grep -q 'ControlMaster=yes -o ControlPersist=900' landing.sh
 grep -q 'BatchMode=yes' landing.sh
 ! grep -q 'StrictHostKeyChecking=no' landing.sh
+# 落地机主机密钥变化：先不登录地探测，用户确认后才删除旧记录；
+# 不能用关闭校验或丢弃 known_hosts 的方式“修好”，否则冒充落地机的中间人能截获 SSH 密码。
+grep -q '^ssh_check_host_key()' landing.sh
+grep -qF -- '-o PreferredAuthentications=none' landing.sh
+grep -q '确认落地机重装过、信任新的主机密钥？\[y/N\]' landing.sh
+( ! grep -qE 'StrictHostKeyChecking=(no|off)|UserKnownHostsFile=/dev/null' landing.sh )
 ! grep -qE 'sshpass|PasswordAuthentication=yes' landing.sh
 ! grep -qE 'net.ipv4.ip_forward|MASQUERADE|wg-quick' landing.sh
 grep -q '47 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' landing.sh

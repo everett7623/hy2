@@ -135,6 +135,7 @@ bash tests/validate_scripts.sh
 - 内网目标（RFC1918、回环）被拒绝。
 - 重新部署失败（例如指定的 UDP 端口被占用）时两端配置、服务和防火墙恢复到部署前状态；重新部署成功时保留客户端 UUID。
 - 修改落地机地址、诊断和卸载（含远端清理）后两端无残留（含线路机 `/etc/sing-box/landing-cert/`）；与 VLESS/AnyTLS/HTTP/SOCKS 共存时不误删共享核心。
+- v2.2.1 起落地机重装系统后在线路机重新部署：应提示「SSH 主机密钥和本机上次记录的不一致」，显示的指纹与落地机上 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 一致；输入 `y` 后只需输入一次 SSH 密码，部署照常完成，`/root/.ssh/known_hosts.old` 留有旧记录；直接回车则不连接、给出手动命令，也不再误报「请检查用户名与密码」。
 - 家宽落地机位于路由器后且选择 `[2]` 时，需验证路由器 UDP 端口转发到落地机后可握手。
 
 ### `euservhy2.sh`

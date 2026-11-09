@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.2.0
+# 版本：v2.2.1
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-11-03
+# 更新日期: 2026-11-09
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: KVM / 独立服务器 / OpenVZ / LXC（用户态 WireGuard，不依赖内核模块）
@@ -305,12 +305,13 @@ install_dependencies() {
 
 # 一键对接依赖 OpenSSH 的连接复用（ControlMaster），dropbear 等客户端不支持。
 ensure_ssh_client() {
-    if command -v ssh >/dev/null 2>&1 && ssh -V 2>&1 | grep -qi openssh; then
+    # ssh-keygen 用于落地机重装系统后删除旧主机密钥；Alpine 上它在单独的 openssh-keygen 包里。
+    if command -v ssh >/dev/null 2>&1 && command -v ssh-keygen >/dev/null 2>&1 && ssh -V 2>&1 | grep -qi openssh; then
         return 0
     fi
     echo -e "${YELLOW}正在安装 OpenSSH 客户端...${PLAIN}"
     case "$RELEASE" in
-        alpine) retry_command apk add --no-cache openssh-client >/dev/null 2>&1 ;;
+        alpine) retry_command apk add --no-cache openssh-client openssh-keygen >/dev/null 2>&1 ;;
         centos) retry_command yum install -y openssh-clients >/dev/null 2>&1 ;;
         fedora|rocky) retry_command dnf install -y openssh-clients >/dev/null 2>&1 ;;
         arch) retry_command pacman -Sy --noconfirm openssh >/dev/null 2>&1 ;;
@@ -2574,6 +2575,106 @@ ssh_build_opts() {
     fi
 }
 
+# known_hosts 里的落地机名称：非 22 端口时 OpenSSH 记录为 [主机]:端口。
+ssh_known_hosts_name() {
+    if [ "${SSH_PORT:-22}" = "22" ]; then
+        printf '%s' "$EXIT_HOST"
+    else
+        printf '[%s]:%s' "$EXIT_HOST" "$SSH_PORT"
+    fi
+}
+
+# 不登录、不提示密码，只连到主机密钥校验为止（认证方式 none 必然被拒），ssh 的报错写入 $1。
+ssh_probe_host_key() {
+    ssh "${SSH_OPTS[@]}" -o ControlMaster=no -o BatchMode=yes -o PreferredAuthentications=none \
+        -T "$(ssh_target)" true </dev/null >/dev/null 2>"$1"
+    return 0
+}
+
+ssh_host_key_changed() {
+    grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED' "$1" 2>/dev/null
+}
+
+# 落地机现在出示的主机密钥指纹与类型，取自 ssh 报错：
+#   The fingerprint for the ED25519 key sent by the remote host is
+#   SHA256:xxxx.
+ssh_presented_fingerprint() {
+    awk '
+        f || /sent by the remote host is/ {
+            if (match($0, /SHA256:[A-Za-z0-9+\/=]+/)) { print substr($0, RSTART, RLENGTH); exit }
+            f = 1
+        }
+    ' "$1" 2>/dev/null
+}
+
+ssh_presented_key_type() {
+    awk '/key sent by the remote host is/ {
+        for (i = 2; i <= NF; i++) if ($i == "key" && $(i + 1) == "sent") { print $(i - 1); exit }
+    }' "$1" 2>/dev/null
+}
+
+# 本机记录旧密钥的 known_hosts 文件（“Offending ECDSA key in /root/.ssh/known_hosts:3”）。
+ssh_offending_known_hosts() {
+    awk '/^Offending .* key in / { sub(/^Offending .* key in /, ""); sub(/:[0-9]+$/, ""); print; exit }' "$1" 2>/dev/null
+}
+
+# 删除本机记录的落地机旧密钥；ssh-keygen 会把原文件备份为 .old，之后 accept-new 记录新密钥。
+ssh_forget_host_key() {
+    local _file="$1"
+    if [ -n "$_file" ] && [ -f "$_file" ]; then
+        ssh-keygen -f "$_file" -R "$(ssh_known_hosts_name)" >/dev/null 2>&1
+    else
+        ssh-keygen -R "$(ssh_known_hosts_name)" >/dev/null 2>&1
+    fi
+}
+
+# 落地机重装系统后主机密钥会变，ssh 拒绝连接；此前脚本把它报成“请检查用户名与密码”，用户无从下手。
+# 正式登录前先探测一次：密钥变化时说明原因、给出落地机现在的指纹，用户确认后才删除旧记录。
+# 不能自动信任新密钥：那等于关闭主机密钥校验，冒充落地机的中间人就能截获 SSH 密码。
+# 返回 0 继续登录，1 不登录（已提示原因）。
+ssh_check_host_key() {
+    local _err="${SSH_CTL_DIR}/hostkey.err" _file _fp _type _answer
+    ssh_probe_host_key "$_err"
+    # 连不上就直接报 ssh 的原话，不再用正式登录把同样的超时再等一遍。
+    if grep -qE '^ssh: (connect to host|Could not resolve hostname)' "$_err" 2>/dev/null; then
+        sed 's/^/  /' "$_err"
+        echo -e "${RED}✗ 无法连接落地机，请检查地址与 SSH 端口（落地机是否开机、防火墙是否放行）${PLAIN}"
+        return 1
+    fi
+    ssh_host_key_changed "$_err" || return 0
+    _file=$(ssh_offending_known_hosts "$_err")
+    _fp=$(ssh_presented_fingerprint "$_err")
+    _type=$(ssh_presented_key_type "$_err")
+    echo -e "${YELLOW}! 落地机 ${EXIT_HOST} 的 SSH 主机密钥和本机上次记录的不一致，ssh 已拒绝连接。${PLAIN}"
+    echo -e "${DIM}  最常见的原因是落地机重装了系统（会生成新的主机密钥）；如果你没有动过落地机，可能有人在冒充它，请不要继续。${PLAIN}"
+    if [ -n "$_fp" ]; then
+        echo -e "  落地机现在的 ${_type:-主机} 密钥指纹：${YELLOW}${_fp}${PLAIN}"
+        [ -z "$_type" ] || echo -e "${DIM}  可在落地机上运行 ssh-keygen -lf /etc/ssh/ssh_host_$(printf '%s' "$_type" | tr '[:upper:]' '[:lower:]')_key.pub 核对${PLAIN}"
+    fi
+    read -r -p "确认落地机重装过、信任新的主机密钥？[y/N]: " _answer
+    case "$_answer" in
+        [yY]*) ;;
+        *)
+            echo -e "${YELLOW}已取消，未连接落地机。确认落地机重装过后重新操作并输入 y，或在本机执行：${PLAIN}"
+            echo "  ssh-keygen ${_file:+-f '${_file}' }-R '$(ssh_known_hosts_name)'"
+            return 1
+            ;;
+    esac
+    if ! command -v ssh-keygen >/dev/null 2>&1 || ! ssh_forget_host_key "$_file"; then
+        echo -e "${RED}✗ 无法自动删除旧记录（本机缺少 ssh-keygen 或 known_hosts 不可写），请手动执行：${PLAIN}"
+        echo "  ssh-keygen ${_file:+-f '${_file}' }-R '$(ssh_known_hosts_name)'"
+        return 1
+    fi
+    ssh_probe_host_key "$_err"
+    if ssh_host_key_changed "$_err"; then
+        echo -e "${RED}✗ 删除旧记录后主机密钥仍不一致，请检查本机 known_hosts：${PLAIN}"
+        grep '^Offending ' "$_err" | sed 's/^/  /'
+        return 1
+    fi
+    echo -e "${GREEN}✓ 已删除本机记录的旧主机密钥并记录新的（原文件备份为 ${_file:-~/.ssh/known_hosts}.old）${PLAIN}"
+    return 0
+}
+
 # 建立一条复用的主连接：整个对接过程只需输入一次 SSH 密码，
 # 密码由 ssh 自己在终端读取，脚本不接触、不保存。
 ssh_open_master() {
@@ -2585,6 +2686,10 @@ ssh_open_master() {
     chmod 700 "$SSH_CTL_DIR"
     ssh_build_opts
     echo -e "${YELLOW}正在连接落地机 $(ssh_target)（端口 ${SSH_PORT}）...${PLAIN}"
+    if ! ssh_check_host_key; then
+        ssh_close_master
+        return 1
+    fi
     echo -e "${DIM}如提示输入密码，请输入落地机 ${SSH_USER} 的 SSH 密码（输入时不显示）；脚本不会读取或保存密码。${PLAIN}"
     if ! ssh "${SSH_OPTS[@]}" -o ControlMaster=yes -o ControlPersist=900 -fN "$(ssh_target)" </dev/null; then
         echo -e "${RED}✗ 无法 SSH 登录落地机，请检查地址、SSH 端口、用户名与密码${PLAIN}"
@@ -4437,7 +4542,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.2.0${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.2.1${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"
