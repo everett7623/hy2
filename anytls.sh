@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.2.1
+# 版本：v2.2.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-11-09
+# 更新日期: 2026-11-10
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -2342,7 +2342,7 @@ export_quantumultx_anytls() {
 }
 
 print_certificate_verification_status() {
-    local _pin="${1:-}" _fingerprint="${2:-}"
+    local _pin="${1:-}" _fingerprint="${2:-}" _show_pem="${3:-0}"
     echo -e "${GREEN}证书校验:${PLAIN}"
     if [ "$CERT_MODE" != "self_signed" ]; then
         echo -e "${GREEN}[OK] 域名证书模式，客户端使用系统信任链严格校验。${PLAIN}"
@@ -2359,8 +2359,21 @@ print_certificate_verification_status() {
     else
         echo -e "${YELLOW}[WARN] 未读取到证书 pin/指纹，客户端输出将使用 skip-cert-verify=true 兼容模式。${PLAIN}"
     fi
-    # v2rayN 的链接格式没有可传完整证书的参数（pcs 只对 Xray 内核生效），自签 + insecure=1 必然提示。
-    echo "v2rayN: 导入后提示「AllowInsecure 已启用」属正常，编辑节点点「获取证书」即改为严格校验"
+    print_v2rayn_certificate_guide "$_fingerprint" "$_show_pem" || true
+}
+
+# v2rayN 的 AnyTLS 走 sing-box 内核，只有节点里存了完整 PEM 证书才会关掉 insecure、不再告警，
+# 链接参数（包括 pcs）填不进这个字段。「获取证书」是从网络现取的，首次连接就被劫持时会把
+# 攻击者的证书固定下来，所以给出本机证书原文，并按 v2rayN 的显示格式（大写、无冒号）给出指纹供核对。
+print_v2rayn_certificate_guide() {
+    local _fp="${1:-}" _show_pem="${2:-0}"
+    [ "$CERT_MODE" = "self_signed" ] && [ -n "$_fp" ] || return 1
+    _fp=$(printf '%s' "$_fp" | tr '[:lower:]' '[:upper:]')
+    echo -e "${YELLOW}v2rayN 证书校验${PLAIN}（提示「AllowInsecure 已启用，但未提供证书」时请务必完成，否则可能被中间人攻击）："
+    echo -e "  方法一：编辑节点 → 把本机证书整段粘贴到「完整证书（链），PEM 格式」→ 确定，即改为严格校验且不再提示"
+    echo -e "  方法二：编辑节点 → 点「获取证书」，「证书指纹（SHA-256）」必须是 ${YELLOW}${_fp}${PLAIN}，不一致说明连接被劫持，不要保存"
+    [ "$_show_pem" = "1" ] || return 0
+    awk '/-----BEGIN CERTIFICATE-----/ { p = 1 } p { print } /-----END CERTIFICATE-----/ { exit }' "$CERT_PATH"
 }
 
 should_show_output() {
@@ -2487,7 +2500,7 @@ show_config() {
     [ "$NAT_MODE" = "1" ] && echo -e "机器类型 : ${YELLOW}NAT 机器${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     if [ "$_mode" = "all" ]; then
-        print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint"
+        print_certificate_verification_status "$_cert_pin" "$_cert_fingerprint" 1
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
     fi
 
@@ -2868,7 +2881,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.2.1${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.2.2${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

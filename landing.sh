@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.2.1
+# 版本：v2.2.2
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-11-09
+# 更新日期: 2026-11-10
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: KVM / 独立服务器 / OpenVZ / LXC（用户态 WireGuard，不依赖内核模块）
@@ -738,6 +738,20 @@ landing_certificate_sha256() {
     case "$_fp" in ""|*[!0-9a-f]*) return 1 ;; esac
     [ "${#_fp}" = 64 ] || return 1
     printf '%s' "$_fp"
+}
+
+# v2rayN 的 AnyTLS 走 sing-box 内核，只有节点里存了完整 PEM 证书才会关掉 insecure、不再告警，
+# 链接参数（包括 pcs）填不进这个字段。「获取证书」是从网络现取的，首次连接就被劫持时会把
+# 攻击者的证书固定下来，所以给出本机证书原文，并按 v2rayN 的显示格式（大写、无冒号）给出指纹供核对。
+print_v2rayn_certificate_guide() {
+    local _show_pem="${1:-1}" _fp
+    _fp=$(landing_certificate_sha256 2>/dev/null) || return 1
+    _fp=$(printf '%s' "$_fp" | tr '[:lower:]' '[:upper:]')
+    echo -e "${YELLOW}v2rayN 证书校验${PLAIN}（提示「AllowInsecure 已启用，但未提供证书」时请务必完成，否则可能被中间人攻击）："
+    echo -e "  方法一：编辑节点 → 把下面整段证书粘贴到「完整证书（链），PEM 格式」→ 确定，即改为严格校验且不再提示"
+    echo -e "  方法二：编辑节点 → 点「获取证书」，「证书指纹（SHA-256）」必须是 ${YELLOW}${_fp}${PLAIN}，不一致说明连接被劫持，不要保存"
+    [ "$_show_pem" = "1" ] || return 0
+    awk '/-----BEGIN CERTIFICATE-----/ { p = 1 } p { print } /-----END CERTIFICATE-----/ { exit }' "$LANDING_CERT"
 }
 
 # ============================================================
@@ -3775,8 +3789,14 @@ show_config() {
     echo -e "${DIM}请导入「线路机」IPv4 节点，不要填落地出口 IP；若同时给出 IPv6 节点，客户端网络需能访问 IPv6。${PLAIN}"
     [ "${EXIT_HAS_IPV6:-0}" = "1" ] || \
         echo -e "${DIM}落地机没有 IPv6：经本节点查询的 DNS 已自动去掉 IPv6 地址，客户端一般无需改设置；若客户端用加密 DNS（https:// / tls://）或本地解析，请关闭客户端 IPv6（如 Exclave「IPv6 路由」设为禁用）。${PLAIN}"
-    [ "$NODE_PROTO" != "anytls" ] || \
-        echo -e "${DIM}证书校验：URI 带 insecure=1，v2rayN 会提示「AllowInsecure 已启用」，编辑节点点「获取证书」即改为严格校验；Mihomo / Surfboard / Loon 配置已固定证书指纹；Exclave 可在节点设置里填入上面的证书 SHA256。${PLAIN}"
+    if [ "$NODE_PROTO" = "anytls" ]; then
+        echo -e "${DIM}证书校验：Mihomo / Surfboard / Loon 配置已固定证书指纹；Exclave 可在节点设置里填入上面的证书 SHA256；URI 带 insecure=1，v2rayN 需按下面的步骤固定证书。${PLAIN}"
+        if [ "$_mode" = "all" ]; then
+            print_v2rayn_certificate_guide 1 || true
+        else
+            print_v2rayn_certificate_guide 0 || true
+        fi
+    fi
     echo -e "${DIM}提示: 客户端 DNS 须经本节点（Mihomo 开启 fake-ip 或 nameserver 走节点），否则可能泄露本地 DNS。${PLAIN}"
     echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
 
@@ -4542,7 +4562,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.2.1${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.2.2${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

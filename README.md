@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.2.1（2026-11-09） · 本次更新：修复落地机重装系统后家宽中转部署失败——SSH 主机密钥变了时，脚本以前误报「请检查地址、端口、用户名与密码」；现在先说明原因并显示落地机新指纹，确认后自动删除旧记录并继续部署，不需要手动执行 ssh-keygen。
+> 当前版本：v2.2.2（2026-11-10） · 本次更新：修复 v2rayN 导入 AnyTLS 自签节点后的中间人风险——以前只提示点「获取证书」，但它从网络现取证书，首次连接就被劫持时会把攻击者的证书固定下来；现在节点信息直接给出本机证书原文（粘贴到「完整证书（链）」即严格校验、不再提示）和 v2rayN 格式的证书指纹供核对。
 
 ## 目录
 
@@ -187,7 +187,7 @@ IPv6 问题的来龙去脉：客户端开着 IPv6 时，浏览器、YouTube 会�
 - 只有本节点流量从落地机出网；VLESS 的 REALITY 握手从线路机直连伪装站，SSH 与系统更新也不走隧道。
 - 换协议解决不了 IP 被封：线路机 IP 被封（所有端口都连不上）时两种协议都用不了，只能换 IP。AnyTLS 换掉的是 REALITY 的握手与流量特征，不保证不被封。
 - AnyTLS 证书：自签证书放在线路机 `/etc/sing-box/landing-cert/`，有效期 10 年。选「保留现有节点参数」重新部署时沿用原证书，客户端里固定的证书指纹不变。节点信息页会显示证书 SHA256，Exclave 可在节点设置里手动填入以固定证书。
-- v2rayN 导入 AnyTLS 节点会提示「检测到不安全配置：AllowInsecure 已启用，但未提供证书」：自签证书的链接只能带 `insecure=1`，链接格式里也没有能传完整证书的参数，所以这条提示属正常，不影响连接。想改为严格校验：编辑节点，在「固定证书」处点「获取证书」，保存后不再提示（已实测，填错证书会直接连不上）。
+- v2rayN 导入 AnyTLS 节点会提示「检测到不安全配置：AllowInsecure 已启用，但未提供证书」：自签证书的链接只能带 `insecure=1`，链接格式里也没有能传完整证书的参数，这时客户端不校验证书，连接可能被中间人劫持，请务必固定证书：查看节点信息（脚本菜单「查看节点信息」），把输出的整段 `-----BEGIN CERTIFICATE-----` 证书粘贴到 v2rayN 编辑节点里的「完整证书（链），PEM 格式」，保存后即严格校验、不再提示（填错证书会直接连不上）。也可以点「获取证书」，但它是从网络现取的，必须核对显示的「证书指纹（SHA-256）」与节点信息里给出的一致，不一致说明连接正被劫持，不要保存。
 - AnyTLS 分享链接与 Mihomo 配置不带 uTLS 指纹（`fp` / `client-fingerprint`）。v2.1.1 及以前带 `fp=chrome`，v2rayN 等 sing-box 内核客户端新建会话时偶发 `failed to create session: tls: first record does not look like a TLS handshake`，表现为个别网页或图片加载失败（本机压测约 1.6% 的新会话失败，不带指纹为 0）。已导入的旧节点重新导入链接，或在 v2rayN 编辑节点把 Fingerprint 清空即可，线路机无需重新部署。
 - 两端都不修改系统路由、不开启 `ip_forward`、不写 iptables NAT；落地机拒绝隧道访问其局域网与本机服务。
 - 选 1（落地机主动连接）时家宽换 IP 无需任何操作；「更新落地机地址」只改 SSH 管理地址。选 2 时推荐给落地机配置 DDNS 域名：线路机每 2 分钟检查一次解析（需要 cron），变化后自动重启服务重连；若填固定 IP，换 IP 后在线路机菜单选择「更新落地机地址」。

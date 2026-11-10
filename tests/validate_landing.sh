@@ -687,8 +687,18 @@ printf '%s\n' "$_out" | grep -q 'TLS SNI   : .*www.amd.com'
 printf '%s\n' "$_out" | grep -qF "证书 SHA256: $(printf '\033[0;33m')${_fp}"
 printf '%s\n' "$_out" | grep -qF "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?"
 ( ! printf '%s\n' "$_out" | grep -q '伪装 SNI' )
-# v2rayN 对自签 + insecure=1 一律提示「AllowInsecure 已启用」，链接里没有可传完整证书的参数：告诉用户用「获取证书」。
-printf '%s\n' "$_out" | grep -q 'v2rayN 会提示「AllowInsecure 已启用」，编辑节点点「获取证书」即改为严格校验'
+# v2rayN 对自签 + insecure=1 一律提示「AllowInsecure 已启用」，链接里没有可传完整证书的参数。「获取证书」从网络现取，
+# 首次连接被劫持时会固定攻击者证书：必须给出 v2rayN 格式（大写、无冒号）的指纹供核对，并提供本机证书原文。
+_fp_upper=$(printf '%s' "$_fp" | tr '[:lower:]' '[:upper:]')
+printf '%s\n' "$_out" | grep -q '提示「AllowInsecure 已启用，但未提供证书」时请务必完成，否则可能被中间人攻击'
+printf '%s\n' "$_out" | grep -qF "「证书指纹（SHA-256）」必须是 $(printf '\033[0;33m')${_fp_upper}"
+printf '%s\n' "$_out" | grep -q '不一致说明连接被劫持，不要保存'
+( ! printf '%s\n' "$_out" | grep -q '编辑节点点「获取证书」即改为严格校验' )
+# uri 模式不打印证书原文；all 模式只打印证书本身，不带私钥。
+( ! printf '%s\n' "$_out" | grep -q 'BEGIN CERTIFICATE' )
+_out=$(show_config all </dev/null 2>&1 || true)
+[ "$(printf '%s\n' "$_out" | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/')" = "$(awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' "$LANDING_CERT")" ]
+( ! printf '%s\n' "$_out" | grep -q 'PRIVATE KEY' )
 unset -f service_is_active get_country_code get_country_name
 
 # --- 出口验证 ---

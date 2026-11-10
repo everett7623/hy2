@@ -59,7 +59,7 @@ bash tests/validate_scripts.sh
 - 卸载后的文件、服务和 cron 清理
 - `/etc/sing-box` 存在其他配置时，卸载 AnyTLS 或 VLESS 不得删除共享文件和核心
 - AnyTLS/VLESS 任一入口升级 sing-box 前，必须用候选二进制校验所有 `/etc/sing-box/*.json`
-- AnyTLS 三种证书模式均需验证：自签时 Mihomo / Surfboard / Loon 钉住证书指纹、URI / Shadowrocket 输出兼容参数（v2rayN 导入后提示 AllowInsecure 属正常，编辑节点「获取证书」后严格校验仍可连通）；已有证书校验 SAN、有效期、root 私钥权限和密钥配对；ACME 仅在 sing-box >= 1.14.0 使用 `certificate_provider`，并验证 TCP 80/443 防火墙所有权、回滚和卸载清理
+- AnyTLS 三种证书模式均需验证：自签时 Mihomo / Surfboard / Loon 钉住证书指纹、URI / Shadowrocket 输出兼容参数（v2rayN 导入后提示 AllowInsecure；把节点信息给出的 PEM 粘贴到「完整证书（链）」后提示消失、严格校验仍可连通）；已有证书校验 SAN、有效期、root 私钥权限和密钥配对；ACME 仅在 sing-box >= 1.14.0 使用 `certificate_provider`，并验证 TCP 80/443 防火墙所有权、回滚和卸载清理
 - 核心替换后必须重启替换前正在运行的 AnyTLS/VLESS/HTTP/SOCKS/家宽中转（`proxy-server`、`landing-server` 均为共享消费者）；任一服务恢复失败时回滚核心和原服务状态
 - 最后一个项目管理的 sing-box 协议卸载时，只有存在 `.singbox-tools-managed` 或协议元数据确认所有权后才可删除核心
 
@@ -136,6 +136,7 @@ bash tests/validate_scripts.sh
 - 重新部署失败（例如指定的 UDP 端口被占用）时两端配置、服务和防火墙恢复到部署前状态；重新部署成功时保留客户端 UUID。
 - 修改落地机地址、诊断和卸载（含远端清理）后两端无残留（含线路机 `/etc/sing-box/landing-cert/`）；与 VLESS/AnyTLS/HTTP/SOCKS 共存时不误删共享核心。
 - v2.2.1 起落地机重装系统后在线路机重新部署：应提示「SSH 主机密钥和本机上次记录的不一致」，显示的指纹与落地机上 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` 一致；输入 `y` 后只需输入一次 SSH 密码，部署照常完成，`/root/.ssh/known_hosts.old` 留有旧记录；直接回车则不连接、给出手动命令，也不再误报「请检查用户名与密码」。
+- v2.2.2 起 AnyTLS 自签节点（家宽中转与独立 AnyTLS）的节点信息给出 v2rayN 证书校验步骤：Windows v2rayN 导入链接后，把输出的 PEM 证书粘贴到编辑节点「完整证书（链），PEM 格式」，保存后「AllowInsecure 已启用，但未提供证书」不再出现且仍可连通；改点「获取证书」时，显示的「证书指纹（SHA-256）」应与脚本给出的大写指纹完全一致。输出里不得出现私钥。
 - 家宽落地机位于路由器后且选择 `[2]` 时，需验证路由器 UDP 端口转发到落地机后可握手。
 
 ### `euservhy2.sh`
