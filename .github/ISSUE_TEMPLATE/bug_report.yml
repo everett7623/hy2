@@ -1,0 +1,321 @@
+name: 故障报告
+description: 安装、升级、服务或客户端连接和预期不符。请附上版本、系统和打码后的日志。
+title: "[故障] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。表单会自动加上 `bug` 标签。请在「相关脚本」里选准：维护者会再加 `script: hy2`、`script: anytls`、`script: vless`、`script: ss`、`script: landing`、`script: proxy` 或 `script: install`。`hy2.sh` 和 `euservhy2.sh` 都用 `script: hy2`。
+
+        **发出来之前打码：** 公网 IP、内网 IP、域名、密码、UUID、REALITY 公钥和私钥、Short ID、节点链接、证书 PEM、SSH 用户名和密码。`sb` 的「系统检测」和家宽诊断都会打印地址，贴之前同样要打码。不要粘贴整份配置；如果必须贴一小段，先删掉 `password`、`uuid`、`private_key`、`short_id`。
+
+        版本号在 `sb` 首页 `PROXY SUITE` 旁边，或各脚本菜单标题上（例如 `Hysteria2 Management Script v…`，EUserv 菜单上是 `版本: v…`）。
+
+  - type: dropdown
+    id: script
+    attributes:
+      label: 相关脚本
+      description: 可多选。家宽 / 落地中转选 landing.sh，不要选成节点用到的 AnyTLS 或 VLESS。统一入口或 sb 菜单本身选 install.sh。
+      multiple: true
+      options:
+        - hy2.sh（Hysteria 2）
+        - euservhy2.sh（EUserv IPv6-only Hysteria 2）
+        - ss.sh（Shadowsocks-Rust）
+        - anytls.sh（AnyTLS）
+        - vless.sh（VLESS REALITY）
+        - proxy.sh（HTTP/SOCKS）
+        - landing.sh（家宽 / 落地中转）
+        - install.sh（统一入口 sb）
+        - 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: 现象
+      description: 可多选。说不清时选「其他」，在复现步骤里写菜单上的原文。
+      multiple: true
+      options:
+        - 安装失败
+        - 升级或自动更新失败
+        - 服务起不来或反复重启
+        - 卸载或回滚异常
+        - 客户端完全连不上
+        - 能连接，但网页慢、卡或打不开
+        - 分享链接、二维码或客户端配置
+        - 端口、防火墙或 NAT 映射
+        - 家宽隧道或出口 IP 不对
+        - 菜单显示异常或无法输入
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: script_version
+    attributes:
+      label: 脚本版本
+      description: 菜单标题上的版本，不是 sing-box 或 hysteria 二进制的版本。
+      placeholder: "例如 v2.2.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 发行版
+      description: 与 README「系统与网络支持」一致。EUserv 脚本只支持 systemd，并且主要面向 Debian / RHEL 系。
+      options:
+        - Debian
+        - Ubuntu
+        - CentOS / RHEL
+        - Rocky Linux
+        - AlmaLinux
+        - Fedora
+        - Arch Linux
+        - Manjaro
+        - Alpine Linux
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: 发行版版本
+      description: 可执行 cat /etc/os-release，只贴 PRETTY_NAME 或 VERSION_ID。
+      placeholder: "例如 Debian 12、Ubuntu 24.04、Alpine 3.20"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: arch
+    attributes:
+      label: CPU 架构
+      description: 在 VPS 上执行 uname -m，选对应的一项。选「其他」时把命令输出贴到日志里。
+      options:
+        - x86_64
+        - aarch64 或 arm64
+        - armv7l 或 armv7
+        - i386 或 i686
+        - s390x
+        - loongarch64
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: init_system
+    attributes:
+      label: 初始化系统
+      description: Debian、Ubuntu、RHEL 系一般是 systemd。Alpine 是 OpenRC。
+      options:
+        - systemd
+        - OpenRC
+        - 不确定
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: 服务商（可选）
+      description: 云厂商或家宽运营商。和问题无关可以留空。
+      placeholder: "例如哪家 VPS，或家宽运营商"
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: 网络类型
+      description: 可多选。例如线路机是公网 IPv4、落地机是家宽，或 EUserv 纯 IPv6 并且开了 WARP。
+      multiple: true
+      options:
+        - 公网 IPv4
+        - 双栈（IPv4 + IPv6）
+        - 纯 IPv6
+        - NAT（需要端口映射）
+        - 家宽或住宅出口
+        - EUserv IPv6-only
+        - 已开启 WARP
+        - 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: firewall
+    attributes:
+      label: 本机防火墙（可选）
+      description: 可多选。云厂商安全组脚本改不了，如果只在面板放行，请选「云厂商安全组」。
+      multiple: true
+      options:
+        - 不确定
+        - ufw
+        - firewalld
+        - iptables 或 ip6tables
+        - 云厂商安全组
+        - 未启用防火墙
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: 安装方式
+      options:
+        - 统一入口 install.sh，之后使用 sb
+        - 单独运行某一个协议脚本
+        - 先保存成文件，再在本地执行
+        - 其他或不记得
+    validations:
+      required: true
+
+  - type: textarea
+    id: install_command
+    attributes:
+      label: 安装命令
+      description: 贴你实际执行的命令。地址打码，不要带节点参数。
+      placeholder: "bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/install.sh)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: 客户端（可选）
+      description: 可多选。和服务端安装无关就选「不涉及客户端」。
+      multiple: true
+      options:
+        - 不涉及客户端
+        - v2rayN
+        - Mihomo / Clash Meta
+        - Shadowrocket
+        - Loon
+        - Surfboard
+        - Quantumult X
+        - Exclave
+        - NekoBox
+        - Stash
+        - 其他
+
+  - type: input
+    id: core_version
+    attributes:
+      label: 核心版本（可选）
+      description: sb 的「系统检测」里有 sing-box、hysteria、ssserver 行，也可以运行 sing-box version。
+      placeholder: "例如 sing-box 1.14.4"
+
+  - type: dropdown
+    id: landing_proto
+    attributes:
+      label: 家宽节点协议（可选）
+      description: 只有 landing.sh 需要填。协议是客户端连线路机的方式，和下面的隧道方向无关。
+      options:
+        - 不涉及
+        - AnyTLS
+        - VLESS REALITY
+        - 不确定
+
+  - type: dropdown
+    id: wg_mode
+    attributes:
+      label: 家宽隧道方向（可选）
+      description: 只有 landing.sh 需要填。新部署默认是 reverse。
+      options:
+        - 不涉及
+        - reverse（落地机主动连接线路机）
+        - forward（线路机连接落地机）
+        - 不确定
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按菜单上的原文写。交互式问题请写每次的选择，例如节点协议、连接方式、端口。
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      placeholder: "例如：部署完成后客户端能打开网页，出口 IP 是落地机的地址"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 把屏幕上的报错原文贴在这里（先打码）。没有报错就写现象，例如一直转圈、只有 Telegram 能用。
+      placeholder: "脚本或客户端的原文，不要只写「失败了」"
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        日志里同样要打码。还没装成功、没有日志时，在下一栏写「无」，并说明停在哪一句提示。
+
+        系统信息：
+
+        ```bash
+        cat /etc/os-release
+        uname -m
+        uname -r
+        ```
+
+        服务状态和最近日志。把服务名换成实际的那个：`hysteria-server`、`shadowsocks-server`、`anytls-server`、`vless-server`、`proxy-server`、`landing-server`。
+
+        ```bash
+        systemctl status hysteria-server --no-pager
+        journalctl -u hysteria-server -n 80 --no-pager
+        ```
+
+        没有 systemd（Alpine / OpenRC）时，脚本把输出写在文件里：
+
+        ```bash
+        rc-service hysteria-server status
+        tail -n 80 /var/log/hysteria.log
+        tail -n 80 /var/log/ssserver.log
+        tail -n 80 /var/log/anytls-server.log
+        tail -n 80 /var/log/vless-server.log
+        tail -n 80 /var/log/proxy-server.log
+        tail -n 80 /var/log/landing-server.log
+        ```
+
+        菜单里也能看：Hysteria 2 和 Shadowsocks 在「管理」中选「查看日志」，系统信息在「服务器工具」。EUserv 主菜单第 6 项是「查看运行日志」，安装过程还可以看 `/var/log/euserv_hy2_install.log`。AnyTLS、VLESS、HTTP/SOCKS 的「服务器工具」里有「运行状态诊断」和日志。家宽中转主菜单第 4 项是「出口检测与诊断」，「服务器工具」里也有同一项。这四个脚本也支持下面的只读命令（`check` 和 `health` 相同）。Hysteria 2、Shadowsocks、EUserv 没有 `diagnose` 子命令。
+
+        ```bash
+        bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/vless.sh) diagnose
+        bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/anytls.sh) diagnose
+        bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/proxy.sh) diagnose
+        bash <(curl -fsSL https://raw.githubusercontent.com/everett7623/hy2/main/landing.sh) diagnose
+        ```
+
+        升级失败时，再附上对应的 `/var/log/hy2-autoupdate.log`、`ss-autoupdate.log`、`anytls-autoupdate.log`、`vless-autoupdate.log`、`proxy-autoupdate.log` 或 `landing-autoupdate.log` 末尾。家宽是 forward 且落地地址是域名时，还可以看 `/var/log/landing-watchdog.log`。
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 贴打码后的命令输出。没有日志就写「无」。
+      placeholder: "systemctl status / journalctl 或上面的日志文件，IP 和密钥打码"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前确认
+      description: 最新版本以菜单标题和 [Releases](https://github.com/everett7623/hy2/releases) 为准。安装或升级过程本身失败时，第二项也请勾选，并在正文说明。
+      options:
+        - label: 我已经搜索过已有 issue，没有找到相同问题
+          required: true
+        - label: 我使用的是当前最新脚本，或问题出在安装 / 升级过程本身
+          required: true
+        - label: 我已打码公网 IP、域名、密码、UUID、密钥、节点链接和 SSH 信息
+          required: true

@@ -1,0 +1,99 @@
+name: 功能建议
+description: 希望脚本增加或改变某种能力，例如家宽中转支持新的落地方式。已经发生的故障请用「故障报告」。
+title: "[建议] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        用来提议还没有的能力，或希望改掉的用法。表单会自动加上 `enhancement` 标签。
+
+        请在「相关脚本」里选准。维护者会再加对应的 `script:` 标签：`hy2.sh` 和 `euservhy2.sh` 都是 `script: hy2`，其余为 `script: anytls`、`script: vless`、`script: ss`、`script: landing`、`script: proxy`、`script: install`。
+
+        已经能复现的异常请改用「故障报告」，不要用这个表单。
+
+  - type: dropdown
+    id: script
+    attributes:
+      label: 相关脚本
+      description: 可多选。新协议如果还对不上现有脚本，选 install.sh 或「不确定」。家宽 / 落地中转选 landing.sh。
+      multiple: true
+      options:
+        - hy2.sh（Hysteria 2）
+        - euservhy2.sh（EUserv IPv6-only Hysteria 2）
+        - ss.sh（Shadowsocks-Rust）
+        - anytls.sh（AnyTLS）
+        - vless.sh（VLESS REALITY）
+        - proxy.sh（HTTP/SOCKS）
+        - landing.sh（家宽 / 落地中转）
+        - install.sh（统一入口 sb）
+        - 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 建议落在哪一块
+      options:
+        - 协议或客户端导出
+        - 家宽 / 落地中转
+        - 安装、升级、卸载或自动更新
+        - 网络检测、防火墙或 BBR
+        - 菜单或日常操作
+        - 文档或文案
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决的问题
+      description: 写使用场景，而不是只写一个名词。例如：家宽落地想换某种隧道，现在的用户态 WireGuard 在什么情况下不够用。
+      placeholder: "谁在用、卡在哪一步、现在的脚本为什么不够"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 希望变成什么样
+      description: 写用户能看到的结果。如果只希望某一种部署方式可选，请说明默认行为不要变。
+      placeholder: "例如：部署家宽中转时增加一种可选隧道，现有 reverse / forward 保持不变"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你已经试过的办法（可选）
+      description: 包括现在用其他脚本绕过去的做法，或你觉得不该采用的做法。
+      placeholder: "没有就留空"
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: 和哪种网络有关（可选）
+      description: 可多选。和机器类型无关就不用选。
+      multiple: true
+      options:
+        - 公网 IPv4
+        - 双栈（IPv4 + IPv6）
+        - 纯 IPv6
+        - NAT（需要端口映射）
+        - 家宽或住宅出口
+        - EUserv IPv6-only
+        - 已开启 WARP
+        - 和网络无关
+
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经搜索过已有 issue 和变更日志，没有找到相同建议
+          required: true
+        - label: 这是功能建议，不是已经发生、希望修复的故障
+          required: true
