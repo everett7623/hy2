@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.2.2（2026-11-10） · 本次更新：修复 v2rayN 导入 AnyTLS 自签节点后的中间人风险——以前只提示点「获取证书」，但它从网络现取证书，首次连接就被劫持时会把攻击者的证书固定下来；现在节点信息直接给出本机证书原文（粘贴到「完整证书（链）」即严格校验、不再提示）和 v2rayN 格式的证书指纹供核对。
+> 当前版本：v2.3.0（2026-11-12） · 本次更新：家宽中转新增 TCP 隧道（禁 UDP 时用）；新增一键 Realm TCP 中转（落地机跑节点、线路机只转发）。
 
 ## 目录
 
@@ -33,7 +33,8 @@
 | 节点导出 | 按协议输出 URI、Mihomo、Surfboard、Shadowrocket、Loon、Quantumult X 与二维码 |
 | 服务管理 | 安装、重装、查看状态、启停、重启、日志、修改配置、升级和卸载 |
 | 共享核心 | AnyTLS、VLESS、HTTP/SOCKS 与家宽中转安全共用 sing-box，升级前检查全部现存配置 |
-| 家宽中转 | 节点协议可选 AnyTLS（默认）或 VLESS REALITY；线路机一键 SSH 部署落地机，用户态 WireGuard 隧道，自动验证出口 IP，失败两端回滚 |
+| 家宽中转 | 节点协议可选 AnyTLS（默认）或 VLESS REALITY；隧道可选 WireGuard（UDP）或 AnyTLS TCP（禁 UDP）；线路机一键 SSH 部署落地机，自动验证出口 IP，失败两端回滚 |
+| Realm TCP 中转 | 落地机跑节点、线路机 realm 纯 TCP 转发；适合禁 UDP 且习惯传统中转的场景，一键 SSH 部署 |
 | 系统工具 | 网络诊断、手动备份/恢复（恢复前校验归档、失败自动回滚），以及按需启用标准 `bbr + fq` |
 
 ## 快速开始
@@ -129,8 +130,10 @@ REALITY 目标只参与握手伪装，不承载客户端后续下载流量。用
 适合「线路好的 VPS 做入口，家宽 / 住宅 IP 机器做出口」的场景，例如流媒体解锁或需要住宅 IP 的网站。
 
 ```text
-客户端 ──AnyTLS / VLESS REALITY──▶ 线路机 ══WireGuard（UDP）══▶ 落地机 / 家宽机 ──▶ 互联网
+客户端 ──AnyTLS / VLESS REALITY──▶ 线路机 ══WireGuard（UDP）或 TCP 隧道══▶ 落地机 / 家宽机 ──▶ 互联网
 ```
+
+禁 UDP 时：部署菜单选「TCP 隧道」，落地机放行一个 TCP 端口即可（本期 TCP 仅支持本机连接落地机）。若只要传统「线路机端口转发、节点在落地机」，用菜单里的「Realm TCP 中转」。
 
 使用方法：在**线路机**上运行 `sb` → `[1] 安装 / 重装协议` → `[6] 家宽 / 落地中转` → `1. 一键部署`，选择节点协议（直接回车为 AnyTLS），按提示填写落地机 IP（或 DDNS 域名）、SSH 端口和用户，输入一次落地机 SSH 密码即可。脚本会：
 
@@ -187,7 +190,7 @@ IPv6 问题的来龙去脉：客户端开着 IPv6 时，浏览器、YouTube 会�
 - 只有本节点流量从落地机出网；VLESS 的 REALITY 握手从线路机直连伪装站，SSH 与系统更新也不走隧道。
 - 换协议解决不了 IP 被封：线路机 IP 被封（所有端口都连不上）时两种协议都用不了，只能换 IP。AnyTLS 换掉的是 REALITY 的握手与流量特征，不保证不被封。
 - AnyTLS 证书：自签证书放在线路机 `/etc/sing-box/landing-cert/`，有效期 10 年。选「保留现有节点参数」重新部署时沿用原证书，客户端里固定的证书指纹不变。节点信息页会显示证书 SHA256，Exclave 可在节点设置里手动填入以固定证书。
-- v2rayN 导入 AnyTLS 节点会提示「检测到不安全配置：AllowInsecure 已启用，但未提供证书」：自签证书的链接只能带 `insecure=1`，链接格式里也没有能传完整证书的参数，这时客户端不校验证书，连接可能被中间人劫持，请务必固定证书：查看节点信息（脚本菜单「查看节点信息」），把输出的整段 `-----BEGIN CERTIFICATE-----` 证书粘贴到 v2rayN 编辑节点里的「完整证书（链），PEM 格式」，保存后即严格校验、不再提示（填错证书会直接连不上）。也可以点「获取证书」，但它是从网络现取的，必须核对显示的「证书指纹（SHA-256）」与节点信息里给出的一致，不一致说明连接正被劫持，不要保存。
+- v2rayN 导入 AnyTLS 节点会提示「检测到不安全配置：AllowInsecure 已启用，但未提供证书」：自签证书的链接只能带 `insecure=1`，链接格式里也没有能传完整证书的参数，这时客户端不校验证书，连接可能被中间人劫持，请务必固定证书。AnyTLS 走 sing-box，「证书指纹（SHA-256）【仅 Xray】」那一栏无效，只填指纹时警告不会消失。正确做法：查看节点信息（脚本菜单「查看节点信息」），把输出的整段 `-----BEGIN CERTIFICATE-----` 证书粘贴到「完整证书（链），PEM 格式」，保存后「跳过证书验证」会自动关掉、提示消失（填错证书会直接连不上）。自签时「获取证书」常失败；若仍要点，成功后「完整证书」须非空，并核对指纹与节点信息一致，不一致说明连接正被劫持，不要保存。
 - AnyTLS 分享链接与 Mihomo 配置不带 uTLS 指纹（`fp` / `client-fingerprint`）。v2.1.1 及以前带 `fp=chrome`，v2rayN 等 sing-box 内核客户端新建会话时偶发 `failed to create session: tls: first record does not look like a TLS handshake`，表现为个别网页或图片加载失败（本机压测约 1.6% 的新会话失败，不带指纹为 0）。已导入的旧节点重新导入链接，或在 v2rayN 编辑节点把 Fingerprint 清空即可，线路机无需重新部署。
 - 两端都不修改系统路由、不开启 `ip_forward`、不写 iptables NAT；落地机拒绝隧道访问其局域网与本机服务。
 - 选 1（落地机主动连接）时家宽换 IP 无需任何操作；「更新落地机地址」只改 SSH 管理地址。选 2 时推荐给落地机配置 DDNS 域名：线路机每 2 分钟检查一次解析（需要 cron），变化后自动重启服务重连；若填固定 IP，换 IP 后在线路机菜单选择「更新落地机地址」。

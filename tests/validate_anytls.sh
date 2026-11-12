@@ -165,12 +165,13 @@ echo "$node_output" | grep -q '公钥 SHA256 Pin: TestPin+/='
 echo "$node_output" | grep -q "证书 SHA256 指纹: ${test_fingerprint}"
 echo "$node_output" | grep -q '严格模式: Mihomo / Surfboard / Loon 使用证书指纹'
 echo "$node_output" | grep -q '兼容模式: URI / Shadowrocket 使用 skip-cert-verify=true'
-# 自签 + insecure=1 时 v2rayN 必然提示 AllowInsecure（链接格式无法传完整证书）。「获取证书」是从网络现取，
-# 首次连接被劫持时会固定攻击者证书，所以必须给出 v2rayN 格式（大写、无冒号）的指纹供核对，不能只说点一下就安全。
+# 自签 + insecure=1 时 v2rayN 必然提示 AllowInsecure（链接格式无法传完整证书）。
+# 「证书指纹【仅 Xray】」对 AnyTLS 无效；「获取证书」对自签常失败，且可能固定攻击者证书。
 echo "$node_output" | grep -q '提示「AllowInsecure 已启用，但未提供证书」时请务必完成，否则可能被中间人攻击'
+echo "$node_output" | grep -q '不要只填「证书指纹（SHA-256）【仅 Xray】」'
 echo "$node_output" | grep -q '粘贴到「完整证书（链），PEM 格式」'
 echo "$node_output" | grep -qF "「证书指纹（SHA-256）」必须是 $(printf '\033[0;33m')0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
-echo "$node_output" | grep -q '不一致说明连接被劫持，不要保存'
+echo "$node_output" | grep -q '不一致说明被劫持，不要保存'
 ( ! echo "$node_output" | grep -q '属正常，编辑节点点「获取证书」即改为严格校验' )
 # 每个节点块只给指纹与步骤，证书原文只在 show_config 打印一次。
 ( ! echo "$node_output" | grep -q 'BEGIN CERTIFICATE' )

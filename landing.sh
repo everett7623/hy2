@@ -2,17 +2,18 @@
 #====================================================================================
 # 项目：Landing Relay Management Script（线路机 + 落地机 / 家宽机）
 # 作者：everettlabs
-# 版本：v2.2.2
+# 版本：v2.3.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-11-10
+# 更新日期: 2026-11-12
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: KVM / 独立服务器 / OpenVZ / LXC（用户态 WireGuard，不依赖内核模块）
-# 实现方式: 线路机 = sing-box AnyTLS 或 VLESS REALITY 入站 + WireGuard endpoint 出站
-#           落地机 = sing-box WireGuard endpoint 入站 + direct 出站
+# 实现方式: 线路机 = sing-box AnyTLS 或 VLESS REALITY 入站 + 隧道出站
+#           隧道 = WireGuard（UDP，默认）或 AnyTLS TCP（禁 UDP 时用，仅 forward）
+#           落地机 = 对应隧道入站 + direct 出站
 #           落地机无需 ip_forward / iptables NAT，也不修改任何一端的系统路由
 #====================================================================================
 
@@ -93,6 +94,10 @@ LANDING_PENDING_DIR="${LANDING_PENDING_DIR:-${LANDING_DIR}/landing-pending}"
 LANDING_CERT_DIR="${LANDING_CERT_DIR:-${LANDING_DIR}/landing-cert}"
 LANDING_CERT="${LANDING_CERT:-${LANDING_CERT_DIR}/cert.pem}"
 LANDING_KEY="${LANDING_KEY:-${LANDING_CERT_DIR}/private.key}"
+# TCP 隧道（线路机 ↔ 落地机）自签证书，与客户端向的 landing-cert/ 分离。
+LANDING_TUNNEL_CERT_DIR="${LANDING_TUNNEL_CERT_DIR:-${LANDING_DIR}/landing-tunnel-cert}"
+LANDING_TUNNEL_CERT="${LANDING_TUNNEL_CERT:-${LANDING_TUNNEL_CERT_DIR}/cert.pem}"
+LANDING_TUNNEL_KEY="${LANDING_TUNNEL_KEY:-${LANDING_TUNNEL_CERT_DIR}/private.key}"
 SING_BOX_MANAGED_MARKER="${SING_BOX_MANAGED_MARKER:-${LANDING_DIR}/.singbox-tools-managed}"
 SYSTEMD_SERVICE="${SYSTEMD_SERVICE:-/etc/systemd/system/landing-server.service}"
 OPENRC_SERVICE="${OPENRC_SERVICE:-/etc/init.d/landing-server}"
@@ -151,8 +156,13 @@ WG_PUBLIC_KEY=""
 WG_PEER_PUBLIC_KEY=""
 WG_PSK=""
 WG_PORT=""
-# 隧道方向：forward = 线路机拨号落地机（落地机需放行 / 转发 UDP）；
+# 隧道传输：wireguard（UDP，默认）或 tcp（AnyTLS，禁 UDP 时用）。旧元数据缺键按 wireguard。
+TUNNEL_TYPE="wireguard"
+TUNNEL_PASSWORD=""
+TUNNEL_SERVER_NAME="landing-tunnel.local"
+# 隧道方向：forward = 线路机拨号落地机（落地机需放行 / 转发端口）；
 # reverse = 落地机主动拨号线路机（落地机无需入站端口，家宽换 IP 自动重连）。
+# TCP 隧道本期只支持 forward（AnyTLS 无法做 WireGuard 那种反向灌流量）。
 WG_MODE="forward"
 RELAY_HOST=""
 EXIT_HOST=""
@@ -172,7 +182,7 @@ LANDING_CONFIG_SCHEMA=1
 LAST_VERSION_TAG=""
 LAST_EGRESS_IP=""
 SING_BOX_STABLE_FALLBACK_TAG="${SING_BOX_STABLE_FALLBACK_TAG:-v1.13.14}"
-# AnyTLS 节点要求的最低核心：1.12.10 之前内置 sing-anytls v0.0.8，收到对端 FIN 时在会话接收循环里
+# AnyTLS 节点 / TCP 隧道要求的最低核心：1.12.10 之前内置 sing-anytls v0.0.8，收到对端 FIN 时在会话接收循环里
 # 回写 FIN，控制帧写入也没有超时；只要一条连接写阻塞，整条复用会话上的所有连接一起卡住。
 # 1.12.10 起（sing-anytls v0.0.11）改为本地关闭，控制帧写入 5 秒超时。
 ANYTLS_MIN_SING_BOX="1.12.10"
@@ -195,6 +205,9 @@ REMOTE_PARAM_AUTO_UPDATE=1
 REMOTE_PARAM_WG_PORT=""
 REMOTE_PARAM_WG_MODE="forward"
 REMOTE_PARAM_RELAY_HOST=""
+REMOTE_PARAM_TUNNEL_TYPE="wireguard"
+REMOTE_PARAM_TUNNEL_PASSWORD=""
+REMOTE_PARAM_TUNNEL_SERVER_NAME="landing-tunnel.local"
 REQUESTED_WG_PORT=""
 
 
@@ -688,6 +701,43 @@ generate_anytls_password() {
     printf '%s' "$_password"
 }
 
+# TCP 隧道证书与私钥都在、互相匹配，且一天内不会过期。
+tunnel_certificate_ok() {
+    local _cert_pub _key_pub
+    [ -s "$LANDING_TUNNEL_CERT" ] && [ -s "$LANDING_TUNNEL_KEY" ] || return 1
+    openssl x509 -in "$LANDING_TUNNEL_CERT" -noout -checkend 86400 >/dev/null 2>&1 || return 1
+    _cert_pub=$(openssl x509 -in "$LANDING_TUNNEL_CERT" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null) || return 1
+    _key_pub=$(openssl pkey -in "$LANDING_TUNNEL_KEY" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null) || return 1
+    [ -n "$_cert_pub" ] && [ "$_cert_pub" = "$_key_pub" ]
+}
+
+# 线路机 ↔ 落地机 AnyTLS TCP 隧道的自签证书（10 年）。不带 force 时沿用现有有效证书。
+generate_tunnel_certificate() {
+    local _force="${1:-}" _tmp_dir _status=0 _cn="${TUNNEL_SERVER_NAME:-landing-tunnel.local}"
+    if [ "$_force" != "force" ] && tunnel_certificate_ok; then
+        return 0
+    fi
+    mkdir -p "$LANDING_TUNNEL_CERT_DIR" && chmod 700 "$LANDING_TUNNEL_CERT_DIR" || return 1
+    _tmp_dir=$(mktemp -d "${LANDING_TUNNEL_CERT_DIR}/new.XXXXXX" 2>/dev/null) || return 1
+    if ! openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=${_cn}" -addext "subjectAltName=DNS:${_cn}" \
+        -keyout "$_tmp_dir/private.key" -out "$_tmp_dir/cert.pem" >/dev/null 2>&1; then
+        rm -f "$_tmp_dir/private.key" "$_tmp_dir/cert.pem"
+        openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+            -subj "/CN=${_cn}" \
+            -keyout "$_tmp_dir/private.key" -out "$_tmp_dir/cert.pem" >/dev/null 2>&1 || _status=1
+    fi
+    if [ "$_status" = "0" ] && [ -s "$_tmp_dir/cert.pem" ] && [ -s "$_tmp_dir/private.key" ]; then
+        chmod 600 "$_tmp_dir/private.key" "$_tmp_dir/cert.pem" && \
+            mv -f "$_tmp_dir/private.key" "$LANDING_TUNNEL_KEY" && \
+            mv -f "$_tmp_dir/cert.pem" "$LANDING_TUNNEL_CERT" || _status=1
+    else
+        _status=1
+    fi
+    rm -rf "$_tmp_dir"
+    return "$_status"
+}
+
 # 证书与私钥都在、互相匹配，且一天内不会过期。
 landing_certificate_ok() {
     local _cert_pub _key_pub
@@ -741,15 +791,17 @@ landing_certificate_sha256() {
 }
 
 # v2rayN 的 AnyTLS 走 sing-box 内核，只有节点里存了完整 PEM 证书才会关掉 insecure、不再告警，
-# 链接参数（包括 pcs）填不进这个字段。「获取证书」是从网络现取的，首次连接就被劫持时会把
-# 攻击者的证书固定下来，所以给出本机证书原文，并按 v2rayN 的显示格式（大写、无冒号）给出指纹供核对。
+# 链接参数（包括 pcs）填不进这个字段；「证书指纹（SHA-256）【仅 Xray】」对 AnyTLS 无效。
+# 「获取证书」对自签常失败，且从网络现取，首次被劫持时会固定攻击者证书，所以优先给出本机证书原文。
 print_v2rayn_certificate_guide() {
     local _show_pem="${1:-1}" _fp
     _fp=$(landing_certificate_sha256 2>/dev/null) || return 1
     _fp=$(printf '%s' "$_fp" | tr '[:lower:]' '[:upper:]')
     echo -e "${YELLOW}v2rayN 证书校验${PLAIN}（提示「AllowInsecure 已启用，但未提供证书」时请务必完成，否则可能被中间人攻击）："
-    echo -e "  方法一：编辑节点 → 把下面整段证书粘贴到「完整证书（链），PEM 格式」→ 确定，即改为严格校验且不再提示"
-    echo -e "  方法二：编辑节点 → 点「获取证书」，「证书指纹（SHA-256）」必须是 ${YELLOW}${_fp}${PLAIN}，不一致说明连接被劫持，不要保存"
+    echo -e "  AnyTLS 内核是 sing-box：不要只填「证书指纹（SHA-256）【仅 Xray】」，那一栏对 AnyTLS 无效，警告也不会消失"
+    echo -e "  正确做法：编辑节点 →「固定证书」→ 把下面整段证书粘贴到「完整证书（链），PEM 格式」（含 BEGIN/END 行）→ 确定"
+    echo -e "  粘贴成功后「跳过证书验证」会自动关掉，提示消失；只填指纹或关掉跳过但不贴证书，会报 certificate signed by unknown authority"
+    echo -e "  自签时「获取证书」常失败；若仍要点，成功后「完整证书」须非空，且「证书指纹（SHA-256）」必须是 ${YELLOW}${_fp}${PLAIN}，不一致说明被劫持，不要保存"
     [ "$_show_pem" = "1" ] || return 0
     awk '/-----BEGIN CERTIFICATE-----/ { p = 1 } p { print } /-----END CERTIFICATE-----/ { exit }' "$LANDING_CERT"
 }
@@ -1245,7 +1297,13 @@ role_port() {
 
 role_proto() {
     case "$ROLE" in
-        exit) printf 'udp' ;;
+        exit)
+            if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+                printf 'tcp'
+            else
+                printf 'udp'
+            fi
+            ;;
         *) printf 'tcp' ;;
     esac
 }
@@ -1254,7 +1312,8 @@ role_proto() {
 # close_ports 只处理本脚本留下标记的规则，不会误删他人放行的端口。
 close_role_ports() {
     close_ports "$(role_port)" "$(role_proto)"
-    if [ "$ROLE" = "relay" ] && [ "${WG_MODE:-forward}" = "reverse" ]; then
+    if [ "$ROLE" = "relay" ] && [ "${TUNNEL_TYPE:-wireguard}" = "wireguard" ] && \
+        [ "${WG_MODE:-forward}" = "reverse" ]; then
         close_ports "${WG_PORT:-}" udp
     fi
 }
@@ -1487,10 +1546,10 @@ download_singbox() {
     echo -e "${GREEN}sing-box 安装完成: $("$SING_BOX_BIN" version 2>/dev/null | head -1)${PLAIN}"
 }
 
-# 本次部署需要的最低核心：AnyTLS 节点（线路机）要 ANYTLS_MIN_SING_BOX，其余 1.12.0。
-# 落地机只跑 WireGuard，NODE_PROTO 为空，不受影响。
+# 本次部署需要的最低核心：AnyTLS 节点或 TCP 隧道要 ANYTLS_MIN_SING_BOX，其余 1.12.0。
+# WireGuard 落地机 NODE_PROTO 为空且 TUNNEL_TYPE 非 tcp，不受影响。
 singbox_min_version() {
-    if [ "${NODE_PROTO:-}" = "anytls" ]; then
+    if [ "${NODE_PROTO:-}" = "anytls" ] || [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
         printf '%s' "$ANYTLS_MIN_SING_BOX"
     else
         printf '%s' "1.12.0"
@@ -1711,6 +1770,7 @@ install_config_file() {
 # 指定了 server 的查询（REALITY 握手的 local、resolve 的 exit-dns）不经过 DNS 规则，不受影响。
 write_relay_config() {
     local _tmp _reality_strategy _local_strategy _exit_strategy _dns_aaaa_rule="" _node_tag _node_inbound
+    local _tunnel_tag="wg-out" _dns_server_block="" _tunnel_block="" _route_outbound="wg-out"
     _reality_strategy=$(reality_domain_strategy)
     case "${BIND_FAMILY:-v4}" in
         v6) _local_strategy="prefer_ipv6" ;;
@@ -1782,46 +1842,51 @@ CFG
         _exit_strategy="ipv4_only"
         _dns_aaaa_rule=$(printf '\n      { "inbound": ["%s"], "query_type": ["AAAA"], "action": "predefined" },' "$_node_tag")
     fi
-    # reverse：线路机固定监听 UDP，peer 不写地址，由落地机握手后自动学习（WireGuard roaming）。
-    # 心跳由落地机发送即可（还能维持家宽 NAT 映射）；线路机此时不知道对端地址，发心跳只会刷错误日志。
-    local _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
-    if [ "${WG_MODE:-forward}" = "reverse" ]; then
-        _wg_listen="
-      \"listen_port\": ${WG_PORT},"
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        # TCP 隧道没有 WireGuard 内网 DNS：经 AnyTLS 出站用 TCP 问 1.1.1.1，查询从落地机出去。
+        _tunnel_tag="tunnel-out"
+        _route_outbound="tunnel-out"
+        _dns_server_block=$(cat <<CFG
+      { "type": "tcp", "tag": "exit-dns", "server": "1.1.1.1", "detour": "tunnel-out" }
+CFG
+)
+        _tunnel_block=$(cat <<CFG
+  "outbounds": [
+    {
+      "type": "anytls",
+      "tag": "tunnel-out",
+      "server": "${EXIT_HOST}",
+      "server_port": ${WG_PORT},
+      "password": "${TUNNEL_PASSWORD}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${TUNNEL_SERVER_NAME}",
+        "certificate_path": "${LANDING_TUNNEL_CERT}"
+      }
+    },
+    { "type": "direct", "tag": "direct" }
+  ],
+CFG
+)
     else
-        _wg_peer_dest="
+        # reverse：线路机固定监听 UDP，peer 不写地址，由落地机握手后自动学习（WireGuard roaming）。
+        # 心跳由落地机发送即可（还能维持家宽 NAT 映射）；线路机此时不知道对端地址，发心跳只会刷错误日志。
+        local _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
+        if [ "${WG_MODE:-forward}" = "reverse" ]; then
+            _wg_listen="
+      \"listen_port\": ${WG_PORT},"
+        else
+            _wg_peer_dest="
           \"address\": \"${EXIT_HOST}\",
           \"port\": ${WG_PORT},"
-        _wg_keepalive=",
+            _wg_keepalive=",
           \"persistent_keepalive_interval\": ${WG_KEEPALIVE}"
-    fi
-    mkdir -p "$LANDING_DIR" || return 1
-    _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
-    if ! cat > "$_tmp" <<CFG
-{
-  "log": { "level": "warn", "timestamp": true },
-  "dns": {
-    "servers": [
-      { "type": "local", "tag": "local" },
+        fi
+        _dns_server_block=$(cat <<CFG
       { "type": "udp", "tag": "exit-dns", "server": "${WG_EXIT_DNS}", "detour": "wg-out" }
-    ],
-    "rules": [${_dns_aaaa_rule}
-      { "inbound": ["${_node_tag}"], "action": "route", "server": "exit-dns" }
-    ],
-    "final": "local"
-  },
-  "inbounds": [
-${_node_inbound}
-    {
-      "type": "mixed",
-      "tag": "probe-in",
-      "listen": "127.0.0.1",
-      "listen_port": ${PROBE_PORT},
-      "users": [
-        { "username": "${PROBE_USER}", "password": "${PROBE_PASS}" }
-      ]
-    }
-  ],
+CFG
+)
+        _tunnel_block=$(cat <<CFG
   "endpoints": [
     {
       "type": "wireguard",
@@ -1843,12 +1908,43 @@ ${_node_inbound}
   "outbounds": [
     { "type": "direct", "tag": "direct" }
   ],
+CFG
+)
+    fi
+    mkdir -p "$LANDING_DIR" || return 1
+    _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
+    if ! cat > "$_tmp" <<CFG
+{
+  "log": { "level": "warn", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "type": "local", "tag": "local" },
+${_dns_server_block}
+    ],
+    "rules": [${_dns_aaaa_rule}
+      { "inbound": ["${_node_tag}"], "action": "route", "server": "exit-dns" }
+    ],
+    "final": "local"
+  },
+  "inbounds": [
+${_node_inbound}
+    {
+      "type": "mixed",
+      "tag": "probe-in",
+      "listen": "127.0.0.1",
+      "listen_port": ${PROBE_PORT},
+      "users": [
+        { "username": "${PROBE_USER}", "password": "${PROBE_PASS}" }
+      ]
+    }
+  ],
+${_tunnel_block}
   "route": {
     "rules": [
       { "inbound": ["${_node_tag}"], "port": 53, "action": "hijack-dns" },
       { "inbound": ["${_node_tag}", "probe-in"], "action": "resolve", "server": "exit-dns", "strategy": "${_exit_strategy}" },
       { "ip_is_private": true, "action": "reject" },
-      { "inbound": ["${_node_tag}", "probe-in"], "action": "route", "outbound": "wg-out" }
+      { "inbound": ["${_node_tag}", "probe-in"], "action": "route", "outbound": "${_route_outbound}" }
     ],
     "final": "direct",
     "default_domain_resolver": { "server": "local", "strategy": "${_local_strategy}" }
@@ -1862,10 +1958,58 @@ CFG
     install_config_file "$_tmp"
 }
 
-# 落地机：WireGuard 入站只接受线路机的隧道地址；DNS 交给本机系统解析器，
+# 落地机：隧道入站只接受线路机；DNS 交给本机系统解析器，
 # 私网与本机回环目标一律拒绝，避免线路机经隧道访问家宽内网或落地机本地服务。
 write_exit_config() {
-    local _tmp _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
+    local _tmp
+    mkdir -p "$LANDING_DIR" || return 1
+    _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        if ! cat > "$_tmp" <<CFG
+{
+  "log": { "level": "warn", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "type": "local", "tag": "local" }
+    ]
+  },
+  "inbounds": [
+    {
+      "type": "anytls",
+      "tag": "tunnel-in",
+      "listen": "::",
+      "listen_port": ${WG_PORT},
+      "users": [
+        { "name": "tunnel", "password": "${TUNNEL_PASSWORD}" }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${TUNNEL_SERVER_NAME}",
+        "certificate_path": "${LANDING_TUNNEL_CERT}",
+        "key_path": "${LANDING_TUNNEL_KEY}"
+      }
+    }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "ip_is_private": true, "action": "reject" }
+    ],
+    "final": "direct",
+    "default_domain_resolver": "local"
+  }
+}
+CFG
+        then
+            rm -f "$_tmp"
+            return 1
+        fi
+        install_config_file "$_tmp"
+        return $?
+    fi
+    local _wg_listen="" _wg_peer_dest="" _wg_keepalive=""
     if [ "${WG_MODE:-forward}" = "reverse" ]; then
         # 落地机主动拨号线路机并保持心跳：家宽 NAT 后无需端口转发，换 IP 后线路机自动跟随。
         _wg_peer_dest="
@@ -1877,8 +2021,6 @@ write_exit_config() {
         _wg_listen="
       \"listen_port\": ${WG_PORT},"
     fi
-    mkdir -p "$LANDING_DIR" || return 1
-    _tmp=$(mktemp "${LANDING_DIR}/landing.json.new.XXXXXX" 2>/dev/null) || return 1
     if ! cat > "$_tmp" <<CFG
 {
   "log": { "level": "warn", "timestamp": true },
@@ -1959,6 +2101,9 @@ WG_PEER_PUBLIC_KEY=${WG_PEER_PUBLIC_KEY}
 WG_PSK=${WG_PSK}
 WG_PORT=${WG_PORT}
 WG_MODE=${WG_MODE}
+TUNNEL_TYPE=${TUNNEL_TYPE}
+TUNNEL_PASSWORD=${TUNNEL_PASSWORD}
+TUNNEL_SERVER_NAME=${TUNNEL_SERVER_NAME}
 RELAY_HOST=${RELAY_HOST}
 EXIT_HOST=${EXIT_HOST}
 EXIT_IPV4=${EXIT_IPV4}
@@ -1989,6 +2134,7 @@ reset_config_vars() {
     UUID=""; REALITY_PRIVATE_KEY=""; REALITY_PUBLIC_KEY=""
     SHORT_ID=""; NAT_MODE=0; BIND_FAMILY="v4"; LISTEN_HOST="::"; SERVER_NAME=""; HANDSHAKE_PORT="443"
     WG_PRIVATE_KEY=""; WG_PUBLIC_KEY=""; WG_PEER_PUBLIC_KEY=""; WG_PSK=""; WG_PORT=""
+    TUNNEL_TYPE="wireguard"; TUNNEL_PASSWORD=""; TUNNEL_SERVER_NAME="landing-tunnel.local"
     WG_MODE="forward"; RELAY_HOST=""
     EXIT_HOST=""; EXIT_IPV4=""; EXIT_HAS_IPV6=0; SSH_PORT="22"; SSH_USER="root"
     PROBE_PORT=""; PROBE_USER=""; PROBE_PASS=""; AUTO_UPDATE=0; MANAGED_SING_BOX=0; CONFIG_SCHEMA=0
@@ -2027,6 +2173,9 @@ load_meta_file() {
             WG_PSK) WG_PSK="$_value" ;;
             WG_PORT) WG_PORT="$_value" ;;
             WG_MODE) WG_MODE="$_value" ;;
+            TUNNEL_TYPE) TUNNEL_TYPE="$_value" ;;
+            TUNNEL_PASSWORD) TUNNEL_PASSWORD="$_value" ;;
+            TUNNEL_SERVER_NAME) TUNNEL_SERVER_NAME="$_value" ;;
             RELAY_HOST) RELAY_HOST="$_value" ;;
             EXIT_HOST) EXIT_HOST="$_value" ;;
             EXIT_IPV4) EXIT_IPV4="$_value" ;;
@@ -2044,11 +2193,22 @@ load_meta_file() {
     return 0
 }
 
+validate_tunnel_type_meta() {
+    # 旧版本元数据没有 TUNNEL_TYPE，按 WireGuard 处理。
+    case "${TUNNEL_TYPE:-}" in
+        ""|wireguard) TUNNEL_TYPE="wireguard" ;;
+        tcp)
+            TUNNEL_TYPE="tcp"
+            validate_anytls_password "$TUNNEL_PASSWORD" || return 1
+            validate_server_name "$TUNNEL_SERVER_NAME" || return 1
+            ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
 validate_wg_meta() {
-    validate_wg_key "$WG_PRIVATE_KEY" || return 1
-    validate_wg_key "$WG_PUBLIC_KEY" || return 1
-    validate_wg_key "$WG_PEER_PUBLIC_KEY" || return 1
-    validate_wg_key "$WG_PSK" || return 1
+    validate_tunnel_type_meta || return 1
     validate_port "$WG_PORT" || return 1
     [ -z "$EXIT_IPV4" ] || is_valid_ipv4 "$EXIT_IPV4" || return 1
     case "$EXIT_HAS_IPV6" in 0|1) ;; *) return 1 ;; esac
@@ -2056,12 +2216,21 @@ validate_wg_meta() {
     case "${WG_MODE:-}" in
         ""|forward) WG_MODE="forward" ;;
         reverse)
+            [ "$TUNNEL_TYPE" = "wireguard" ] || return 1
             if [ "$ROLE" = "exit" ]; then
                 is_valid_ipv4 "$RELAY_HOST" || is_valid_ipv6 "$RELAY_HOST" || return 1
             fi
             ;;
         *) return 1 ;;
     esac
+    if [ "$TUNNEL_TYPE" = "tcp" ]; then
+        [ "$WG_MODE" = "forward" ] || return 1
+        return 0
+    fi
+    validate_wg_key "$WG_PRIVATE_KEY" || return 1
+    validate_wg_key "$WG_PUBLIC_KEY" || return 1
+    validate_wg_key "$WG_PEER_PUBLIC_KEY" || return 1
+    validate_wg_key "$WG_PSK" || return 1
     return 0
 }
 
@@ -2135,6 +2304,7 @@ backup_current_install() {
     [ ! -f "$LANDING_CONFIG" ] || cp -a "$LANDING_CONFIG" "$INSTALL_BACKUP_DIR/config" || { discard_install_backup; return 1; }
     [ ! -d "$LANDING_META" ] || cp -a "$LANDING_META" "$INSTALL_BACKUP_DIR/meta" || { discard_install_backup; return 1; }
     [ ! -d "$LANDING_CERT_DIR" ] || cp -a "$LANDING_CERT_DIR" "$INSTALL_BACKUP_DIR/cert" || { discard_install_backup; return 1; }
+    [ ! -d "$LANDING_TUNNEL_CERT_DIR" ] || cp -a "$LANDING_TUNNEL_CERT_DIR" "$INSTALL_BACKUP_DIR/tunnel-cert" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_MANAGED_MARKER" ] || cp -a "$SING_BOX_MANAGED_MARKER" "$INSTALL_BACKUP_DIR/managed-marker" || { discard_install_backup; return 1; }
     [ ! -f "$LANDING_BIN" ] || cp -a "$LANDING_BIN" "$INSTALL_BACKUP_DIR/wrapper" || { discard_install_backup; return 1; }
     [ ! -f "$SING_BOX_BIN" ] || cp -a "$SING_BOX_BIN" "$INSTALL_BACKUP_DIR/sing-box" || { discard_install_backup; return 1; }
@@ -2197,11 +2367,12 @@ restore_current_install() {
     close_role_ports
     rm -f "$LANDING_CONFIG" "$LANDING_BIN" "$SYSTEMD_SERVICE" "$OPENRC_SERVICE"
     rm -f "$SING_BOX_MANAGED_MARKER"
-    rm -rf "$LANDING_META" "$LANDING_CERT_DIR"
+    rm -rf "$LANDING_META" "$LANDING_CERT_DIR" "$LANDING_TUNNEL_CERT_DIR"
 
     [ -f "$INSTALL_BACKUP_DIR/config" ] && cp -a "$INSTALL_BACKUP_DIR/config" "$LANDING_CONFIG"
     [ -d "$INSTALL_BACKUP_DIR/meta" ] && cp -a "$INSTALL_BACKUP_DIR/meta" "$LANDING_META"
     [ -d "$INSTALL_BACKUP_DIR/cert" ] && cp -a "$INSTALL_BACKUP_DIR/cert" "$LANDING_CERT_DIR"
+    [ -d "$INSTALL_BACKUP_DIR/tunnel-cert" ] && cp -a "$INSTALL_BACKUP_DIR/tunnel-cert" "$LANDING_TUNNEL_CERT_DIR"
     [ -f "$INSTALL_BACKUP_DIR/managed-marker" ] && cp -a "$INSTALL_BACKUP_DIR/managed-marker" "$SING_BOX_MANAGED_MARKER"
     [ -f "$INSTALL_BACKUP_DIR/wrapper" ] && cp -a "$INSTALL_BACKUP_DIR/wrapper" "$LANDING_BIN"
     # 共享核心可能正被其他协议运行，直接 cp 覆盖会因 Text file busy 失败；
@@ -2227,15 +2398,17 @@ restore_current_install() {
 }
 
 close_replaced_install_port() {
-    local _old_port="" _old_role="" _old_mode="" _old_wg=""
+    local _old_port="" _old_role="" _old_mode="" _old_wg="" _old_type="wireguard"
     [ -f "$INSTALL_BACKUP_DIR/meta/config.env" ] || return 0
     _old_role=$(awk -F= '$1 == "ROLE" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
     [ "$_old_role" = "$ROLE" ] || return 0
     if [ "$ROLE" = "relay" ]; then
         _old_mode=$(awk -F= '$1 == "WG_MODE" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
         _old_wg=$(awk -F= '$1 == "WG_PORT" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
-        if [ "$_old_mode" = "reverse" ] && validate_port "$_old_wg" && \
-            { [ "${WG_MODE:-forward}" != "reverse" ] || [ "$_old_wg" != "$WG_PORT" ]; }; then
+        _old_type=$(awk -F= '$1 == "TUNNEL_TYPE" { print $2; exit }' "$INSTALL_BACKUP_DIR/meta/config.env")
+        case "$_old_type" in tcp) ;; *) _old_type="wireguard" ;; esac
+        if [ "$_old_type" = "wireguard" ] && [ "$_old_mode" = "reverse" ] && validate_port "$_old_wg" && \
+            { [ "${TUNNEL_TYPE:-wireguard}" != "wireguard" ] || [ "${WG_MODE:-forward}" != "reverse" ] || [ "$_old_wg" != "$WG_PORT" ]; }; then
             close_ports "$_old_wg" udp
         fi
     fi
@@ -2419,14 +2592,21 @@ service_is_healthy() {
     service_is_active || return 1
     case "$ROLE" in
         exit)
-            # reverse 模式落地机只主动拨出，不监听固定 UDP 端口。
-            [ "${WG_MODE:-forward}" = "reverse" ] && return 0
+            # reverse WireGuard 落地机只主动拨出，不监听固定 UDP 端口。
+            if [ "${TUNNEL_TYPE:-wireguard}" = "wireguard" ] && [ "${WG_MODE:-forward}" = "reverse" ]; then
+                return 0
+            fi
             validate_port "${WG_PORT:-}" || return 1
-            udp_port_is_listening "$WG_PORT"
+            if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+                tcp_port_is_listening "$WG_PORT"
+            else
+                udp_port_is_listening "$WG_PORT"
+            fi
             ;;
         *)
             validate_port "${LISTEN_PORT:-}" || return 1
             tcp_port_is_listening "$LISTEN_PORT" || return 1
+            [ "${TUNNEL_TYPE:-wireguard}" = "wireguard" ] || return 0
             [ "${WG_MODE:-forward}" = "reverse" ] || return 0
             validate_port "${WG_PORT:-}" || return 1
             udp_port_is_listening "$WG_PORT"
@@ -2478,12 +2658,27 @@ service_logs_current() {
 }
 
 show_tunnel_errors() {
-    local _esc _all _no_endpoint
+    local _esc _all _no_endpoint _pattern
     _esc=$(printf '\033')
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        _pattern='anytls|tunnel-out'
+    else
+        _pattern='wireguard|wg-out'
+    fi
     _all=$(service_logs_current 2>/dev/null | sed "s/${_esc}\[[0-9;]*m//g" \
-        | grep -iE 'wireguard|wg-out' | grep -iE 'error|fail|timeout' | grep -v 'context canceled' || true)
+        | grep -iE "$_pattern" | grep -iE 'error|fail|timeout' | grep -v 'context canceled' || true)
     if [ -z "$_all" ]; then
-        echo -e "${DIM}  本次运行的日志中没有 WireGuard 报错：通常是握手包被防火墙 / 安全组拦截，没有到达对端。${PLAIN}"
+        if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+            echo -e "${DIM}  本次运行的日志中没有 TCP 隧道报错：通常是落地机 TCP ${WG_PORT:-?} 未放行，或地址填写错误。${PLAIN}"
+        else
+            echo -e "${DIM}  本次运行的日志中没有 WireGuard 报错：通常是握手包被防火墙 / 安全组拦截，没有到达对端。${PLAIN}"
+        fi
+        return 0
+    fi
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        echo -e "${YELLOW}  线路机本次运行的 TCP 隧道报错（最近 5 条）：${PLAIN}"
+        printf '%s\n' "$_all" | tail -n 5 | sed 's/^/    /'
+        echo -e "${YELLOW}  → 请确认落地机已放行 TCP ${WG_PORT:-?}，且本机到落地机网络可达${PLAIN}"
         return 0
     fi
     echo -e "${YELLOW}  线路机本次运行的 WireGuard 报错（最近 5 条）：${PLAIN}"
@@ -2528,12 +2723,17 @@ EOF
         [ "$_i" -lt "$_attempts" ] && sleep 3
     done
     if [ -z "$_ip" ]; then
-        echo -e "${RED}✗ 经 WireGuard 隧道访问外网失败（隧道未握手或落地机无法出网）${PLAIN}"
-        if [ "${WG_MODE:-forward}" = "reverse" ]; then
-            echo -e "${YELLOW}  常见原因：线路机商家面板 / 安全组未放行 UDP ${WG_PORT:-?}（入站），或落地机出站 UDP 被限制${PLAIN}"
+        if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+            echo -e "${RED}✗ 经 TCP 隧道访问外网失败（隧道未连通或落地机无法出网）${PLAIN}"
+            echo -e "${YELLOW}  常见原因：落地机面板 / 云防火墙未放行 TCP ${WG_PORT:-?}，或落地机地址填写错误${PLAIN}"
         else
-            echo -e "${YELLOW}  常见原因：落地机面板 / 云防火墙未放行 UDP ${WG_PORT:-?}，或落地机地址填写错误${PLAIN}"
-            echo -e "${YELLOW}  建议：重新部署并选择「落地机主动连接」，落地机无需放行任何端口${PLAIN}"
+            echo -e "${RED}✗ 经 WireGuard 隧道访问外网失败（隧道未握手或落地机无法出网）${PLAIN}"
+            if [ "${WG_MODE:-forward}" = "reverse" ]; then
+                echo -e "${YELLOW}  常见原因：线路机商家面板 / 安全组未放行 UDP ${WG_PORT:-?}（入站），或落地机出站 UDP 被限制${PLAIN}"
+            else
+                echo -e "${YELLOW}  常见原因：落地机面板 / 云防火墙未放行 UDP ${WG_PORT:-?}，或落地机地址填写错误${PLAIN}"
+                echo -e "${YELLOW}  建议：重新部署并选择「落地机主动连接」，落地机无需放行任何端口${PLAIN}"
+            fi
         fi
         show_tunnel_errors
         return 1
@@ -2801,6 +3001,23 @@ remote_landing_action() {
             return 1
         }
     fi
+    if [ "$_action" = "--remote-exit-install" ] && [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        [ -s "$LANDING_TUNNEL_CERT" ] && [ -s "$LANDING_TUNNEL_KEY" ] || {
+            ssh_run "rm -rf '${REMOTE_STAGE_DIR}'" </dev/null >/dev/null 2>&1 || true
+            echo -e "${RED}TCP 隧道证书缺失，无法部署落地机${PLAIN}"
+            return 1
+        }
+        ssh_run "cat > '${REMOTE_STAGE_DIR}/tunnel-cert.pem'" < "$LANDING_TUNNEL_CERT" || {
+            ssh_run "rm -rf '${REMOTE_STAGE_DIR}'" </dev/null >/dev/null 2>&1 || true
+            echo -e "${RED}无法把隧道证书上传到落地机${PLAIN}"
+            return 1
+        }
+        ssh_run "cat > '${REMOTE_STAGE_DIR}/tunnel-key.pem'" < "$LANDING_TUNNEL_KEY" || {
+            ssh_run "rm -rf '${REMOTE_STAGE_DIR}'" </dev/null >/dev/null 2>&1 || true
+            echo -e "${RED}无法把隧道私钥上传到落地机${PLAIN}"
+            return 1
+        }
+    fi
     _sudo=$(remote_sudo_prefix)
     _log=$(mktemp "$(disk_tmp_dir)/landing-remote-log.XXXXXX" 2>/dev/null) || return 1
     ssh_run "${_sudo}bash '${REMOTE_STAGE_DIR}/landing.sh' ${_action} '${REMOTE_STAGE_DIR}' </dev/null; _rc=\$?; rm -rf '${REMOTE_STAGE_DIR}'; exit \$_rc" \
@@ -2811,18 +3028,23 @@ remote_landing_action() {
     return "$_rc"
 }
 
-# 解析落地机返回：公钥|端口|出口IPv4|是否有IPv6
+# 解析落地机返回：公钥或 tcp|端口|出口IPv4|是否有IPv6
 apply_remote_result() {
     local _result="$1" _pub _port _ipv4 _v6
     [ -n "$_result" ] || return 1
     IFS='|' read -r _pub _port _ipv4 _v6 <<EOF
 $_result
 EOF
-    validate_wg_key "$_pub" || return 1
     validate_port "$_port" || return 1
     [ -z "$_ipv4" ] || is_valid_ipv4 "$_ipv4" || return 1
     case "$_v6" in 0|1) ;; *) return 1 ;; esac
-    WG_PEER_PUBLIC_KEY="$_pub"
+    if [ "$_pub" = "tcp" ]; then
+        [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ] || return 1
+        WG_PEER_PUBLIC_KEY=""
+    else
+        validate_wg_key "$_pub" || return 1
+        WG_PEER_PUBLIC_KEY="$_pub"
+    fi
     WG_PORT="$_port"
     EXIT_IPV4="$_ipv4"
     EXIT_HAS_IPV6="$_v6"
@@ -2832,11 +3054,19 @@ write_remote_params() {
     local _file
     _file=$(mktemp "$(disk_tmp_dir)/landing-params.XXXXXX" 2>/dev/null) || return 1
     chmod 600 "$_file" || { rm -f "$_file"; return 1; }
-    printf 'RELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nAUTO_UPDATE=%s\nWG_PORT=%s\nWG_MODE=%s\nRELAY_HOST=%s\n' \
-        "$WG_PUBLIC_KEY" "$WG_PSK" "$AUTO_UPDATE" "$REQUESTED_WG_PORT" "${WG_MODE:-forward}" "${RELAY_HOST:-}" > "$_file" || {
-        rm -f "$_file"
-        return 1
-    }
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        printf 'TUNNEL_TYPE=tcp\nTUNNEL_PASSWORD=%s\nTUNNEL_SERVER_NAME=%s\nAUTO_UPDATE=%s\nWG_PORT=%s\nWG_MODE=forward\nRELAY_HOST=\n' \
+            "$TUNNEL_PASSWORD" "${TUNNEL_SERVER_NAME:-landing-tunnel.local}" "$AUTO_UPDATE" "$REQUESTED_WG_PORT" > "$_file" || {
+            rm -f "$_file"
+            return 1
+        }
+    else
+        printf 'TUNNEL_TYPE=wireguard\nRELAY_PUBLIC_KEY=%s\nWG_PSK=%s\nAUTO_UPDATE=%s\nWG_PORT=%s\nWG_MODE=%s\nRELAY_HOST=%s\n' \
+            "$WG_PUBLIC_KEY" "$WG_PSK" "$AUTO_UPDATE" "$REQUESTED_WG_PORT" "${WG_MODE:-forward}" "${RELAY_HOST:-}" > "$_file" || {
+            rm -f "$_file"
+            return 1
+        }
+    fi
     printf '%s' "$_file"
 }
 
@@ -2848,6 +3078,9 @@ read_remote_params() {
     REMOTE_PARAM_WG_PORT=""
     REMOTE_PARAM_WG_MODE="forward"
     REMOTE_PARAM_RELAY_HOST=""
+    REMOTE_PARAM_TUNNEL_TYPE="wireguard"
+    REMOTE_PARAM_TUNNEL_PASSWORD=""
+    REMOTE_PARAM_TUNNEL_SERVER_NAME="landing-tunnel.local"
     [ -f "$_file" ] || return 1
     while IFS= read -r _line || [ -n "$_line" ]; do
         _key="${_line%%=*}"
@@ -2859,13 +3092,30 @@ read_remote_params() {
             WG_PORT) REMOTE_PARAM_WG_PORT="$_value" ;;
             WG_MODE) REMOTE_PARAM_WG_MODE="$_value" ;;
             RELAY_HOST) REMOTE_PARAM_RELAY_HOST="$_value" ;;
+            TUNNEL_TYPE) REMOTE_PARAM_TUNNEL_TYPE="$_value" ;;
+            TUNNEL_PASSWORD) REMOTE_PARAM_TUNNEL_PASSWORD="$_value" ;;
+            TUNNEL_SERVER_NAME) REMOTE_PARAM_TUNNEL_SERVER_NAME="$_value" ;;
         esac
     done < "$_file"
     rm -f "$_file"
-    validate_wg_key "$REMOTE_PARAM_PUBLIC_KEY" || return 1
-    validate_wg_key "$REMOTE_PARAM_PSK" || return 1
+    case "$REMOTE_PARAM_TUNNEL_TYPE" in
+        ""|wireguard) REMOTE_PARAM_TUNNEL_TYPE="wireguard" ;;
+        tcp) REMOTE_PARAM_TUNNEL_TYPE="tcp" ;;
+        *) return 1 ;;
+    esac
     [ -z "$REMOTE_PARAM_WG_PORT" ] || validate_port "$REMOTE_PARAM_WG_PORT" || return 1
     case "$REMOTE_PARAM_AUTO_UPDATE" in 0|1) ;; *) REMOTE_PARAM_AUTO_UPDATE=1 ;; esac
+    if [ "$REMOTE_PARAM_TUNNEL_TYPE" = "tcp" ]; then
+        validate_anytls_password "$REMOTE_PARAM_TUNNEL_PASSWORD" || return 1
+        validate_server_name "$REMOTE_PARAM_TUNNEL_SERVER_NAME" || return 1
+        case "$REMOTE_PARAM_WG_MODE" in
+            ""|forward) REMOTE_PARAM_WG_MODE="forward" ;;
+            *) return 1 ;;
+        esac
+        return 0
+    fi
+    validate_wg_key "$REMOTE_PARAM_PUBLIC_KEY" || return 1
+    validate_wg_key "$REMOTE_PARAM_PSK" || return 1
     case "$REMOTE_PARAM_WG_MODE" in
         ""|forward) REMOTE_PARAM_WG_MODE="forward" ;;
         reverse)
@@ -2895,14 +3145,28 @@ stage_pending_rollback() {
     return 0
 }
 
+install_remote_tunnel_cert() {
+    local _stage="$1"
+    [ -s "$_stage/tunnel-cert.pem" ] && [ -s "$_stage/tunnel-key.pem" ] || return 1
+    mkdir -p "$LANDING_TUNNEL_CERT_DIR" && chmod 700 "$LANDING_TUNNEL_CERT_DIR" || return 1
+    cp -f "$_stage/tunnel-cert.pem" "$LANDING_TUNNEL_CERT" || return 1
+    cp -f "$_stage/tunnel-key.pem" "$LANDING_TUNNEL_KEY" || return 1
+    chmod 600 "$LANDING_TUNNEL_CERT" "$LANDING_TUNNEL_KEY" || return 1
+    tunnel_certificate_ok
+}
+
 remote_exit_install() {
-    local _stage="$1" _old_port=""
+    local _stage="$1" _old_port="" _old_type="" _listen_check
     check_root
     check_sys
     detect_init
-    echo -e "${SKYBLUE}── 落地机：开始部署 WireGuard 落地端 ──${PLAIN}"
     is_valid_remote_stage_dir "$_stage" || { echo -e "${RED}无效的远程参数目录${PLAIN}"; return 1; }
     read_remote_params "$_stage" || { echo -e "${RED}对接参数无效，已取消${PLAIN}"; return 1; }
+    if [ "$REMOTE_PARAM_TUNNEL_TYPE" = "tcp" ]; then
+        echo -e "${SKYBLUE}── 落地机：开始部署 TCP 隧道落地端 ──${PLAIN}"
+    else
+        echo -e "${SKYBLUE}── 落地机：开始部署 WireGuard 落地端 ──${PLAIN}"
+    fi
     if [ "$(installed_role 2>/dev/null)" = "relay" ]; then
         echo -e "${RED}该机器已部署为线路机（中转端），不能同时作为落地机${PLAIN}"
         return 1
@@ -2918,10 +3182,13 @@ remote_exit_install() {
 
     if [ "$(installed_role 2>/dev/null)" = "exit" ]; then
         _old_port=$(awk -F= '$1 == "WG_PORT" { print $2; exit }' "$LANDING_META/config.env" 2>/dev/null)
+        _old_type=$(awk -F= '$1 == "TUNNEL_TYPE" { print $2; exit }' "$LANDING_META/config.env" 2>/dev/null)
         validate_port "$_old_port" || _old_port=""
+        case "$_old_type" in tcp) ;; *) _old_type="wireguard" ;; esac
     fi
     stage_pending_rollback || { echo -e "${RED}无法保存落地机现有配置，已取消${PLAIN}"; return 1; }
     backup_current_install || { rm -rf "$LANDING_PENDING_DIR"; echo -e "${RED}无法创建安装备份${PLAIN}"; return 1; }
+    TUNNEL_TYPE="$REMOTE_PARAM_TUNNEL_TYPE"
     if ! ensure_singbox_bin; then
         restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
     fi
@@ -2930,12 +3197,19 @@ remote_exit_install() {
     HAS_IPV6="$EXIT_HAS_IPV6"
     WG_MODE="$REMOTE_PARAM_WG_MODE"
     RELAY_HOST="$REMOTE_PARAM_RELAY_HOST"
+    TUNNEL_PASSWORD="$REMOTE_PARAM_TUNNEL_PASSWORD"
+    TUNNEL_SERVER_NAME="$REMOTE_PARAM_TUNNEL_SERVER_NAME"
     if [ "$WG_MODE" = "reverse" ]; then
         # 端口属于线路机，落地机只拨出，不需要检查本机占用或放行防火墙。
         WG_PORT="$REMOTE_PARAM_WG_PORT"
     elif [ -n "$REMOTE_PARAM_WG_PORT" ]; then
-        if [ "$REMOTE_PARAM_WG_PORT" != "$_old_port" ] && udp_port_is_listening "$REMOTE_PARAM_WG_PORT"; then
-            echo -e "${RED}落地机 UDP ${REMOTE_PARAM_WG_PORT} 已被占用，请换一个端口${PLAIN}"
+        if [ "$TUNNEL_TYPE" = "tcp" ]; then
+            _listen_check=tcp_port_is_listening
+        else
+            _listen_check=udp_port_is_listening
+        fi
+        if [ "$REMOTE_PARAM_WG_PORT" != "$_old_port" ] && "$_listen_check" "$REMOTE_PARAM_WG_PORT"; then
+            echo -e "${RED}落地机端口 ${REMOTE_PARAM_WG_PORT} 已被占用，请换一个端口${PLAIN}"
             restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
         fi
         WG_PORT="$REMOTE_PARAM_WG_PORT"
@@ -2944,12 +3218,22 @@ remote_exit_install() {
     else
         WG_PORT=$(generate_random_port) || { restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1; }
     fi
-    if ! generate_wg_keypair; then
-        echo -e "${RED}生成 WireGuard 密钥失败${PLAIN}"
-        restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
+    if [ "$TUNNEL_TYPE" = "tcp" ]; then
+        if ! install_remote_tunnel_cert "$_stage"; then
+            echo -e "${RED}安装 TCP 隧道证书失败${PLAIN}"
+            restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
+        fi
+        WG_PRIVATE_KEY=""; WG_PUBLIC_KEY=""; WG_PEER_PUBLIC_KEY=""; WG_PSK=""
+    else
+        if ! generate_wg_keypair; then
+            echo -e "${RED}生成 WireGuard 密钥失败${PLAIN}"
+            restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
+        fi
+        WG_PEER_PUBLIC_KEY="$REMOTE_PARAM_PUBLIC_KEY"
+        WG_PSK="$REMOTE_PARAM_PSK"
+        TUNNEL_PASSWORD=""; TUNNEL_SERVER_NAME="landing-tunnel.local"
+        rm -rf "$LANDING_TUNNEL_CERT_DIR"
     fi
-    WG_PEER_PUBLIC_KEY="$REMOTE_PARAM_PUBLIC_KEY"
-    WG_PSK="$REMOTE_PARAM_PSK"
     AUTO_UPDATE="$REMOTE_PARAM_AUTO_UPDATE"
     PUBLIC_IP="$EXIT_IPV4"
     PUBLIC_IPV6=""
@@ -2961,8 +3245,12 @@ remote_exit_install() {
     if ! write_service_files || ! service_enable; then
         restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
     fi
-    if [ "$WG_MODE" != "reverse" ] && ! open_ports "$WG_PORT" udp; then
-        restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1
+    if [ "$WG_MODE" != "reverse" ]; then
+        if [ "$TUNNEL_TYPE" = "tcp" ]; then
+            open_ports "$WG_PORT" tcp || { restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1; }
+        else
+            open_ports "$WG_PORT" udp || { restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1; }
+        fi
     fi
     if service_is_active; then
         service_restart || { restore_current_install; rm -rf "$LANDING_PENDING_DIR"; return 1; }
@@ -2978,25 +3266,31 @@ remote_exit_install() {
     if [ "$AUTO_UPDATE" = "1" ]; then
         setup_auto_update quiet || true
     fi
-    if [ "$WG_MODE" = "reverse" ]; then
+    if [ "$TUNNEL_TYPE" = "tcp" ]; then
+        echo -e "${GREEN}✓ 落地端已启动，监听 TCP ${WG_PORT}${PLAIN}"
+        echo "LANDING_EXIT_RESULT=tcp|${WG_PORT}|${EXIT_IPV4}|${EXIT_HAS_IPV6}"
+    elif [ "$WG_MODE" = "reverse" ]; then
         echo -e "${GREEN}✓ 落地端已启动，主动连接线路机 ${RELAY_HOST} UDP ${WG_PORT}（落地机无需放行端口）${PLAIN}"
+        echo "LANDING_EXIT_RESULT=${WG_PUBLIC_KEY}|${WG_PORT}|${EXIT_IPV4}|${EXIT_HAS_IPV6}"
     else
         echo -e "${GREEN}✓ 落地端已启动，监听 UDP ${WG_PORT}${PLAIN}"
+        echo "LANDING_EXIT_RESULT=${WG_PUBLIC_KEY}|${WG_PORT}|${EXIT_IPV4}|${EXIT_HAS_IPV6}"
     fi
-    echo "LANDING_EXIT_RESULT=${WG_PUBLIC_KEY}|${WG_PORT}|${EXIT_IPV4}|${EXIT_HAS_IPV6}"
     return 0
 }
 
 remote_exit_commit() {
-    local _old_mode="" _old_port=""
+    local _old_mode="" _old_port="" _old_type="wireguard" _old_proto="udp"
     check_root
-    # 新配置已验证通过：关闭被替换掉的旧监听端口（改为 reverse 或换了端口时）。
+    # 新配置已验证通过：关闭被替换掉的旧监听端口（改为 reverse、换协议或换了端口时）。
     if [ -f "$LANDING_PENDING_DIR/meta/config.env" ] && read_config >/dev/null 2>&1; then
         _old_mode=$(awk -F= '$1 == "WG_MODE" { print $2; exit }' "$LANDING_PENDING_DIR/meta/config.env")
         _old_port=$(awk -F= '$1 == "WG_PORT" { print $2; exit }' "$LANDING_PENDING_DIR/meta/config.env")
+        _old_type=$(awk -F= '$1 == "TUNNEL_TYPE" { print $2; exit }' "$LANDING_PENDING_DIR/meta/config.env")
+        case "$_old_type" in tcp) _old_proto="tcp" ;; *) _old_type="wireguard"; _old_proto="udp" ;; esac
         if [ "$_old_mode" != "reverse" ] && validate_port "$_old_port" && \
-            { [ "$WG_MODE" = "reverse" ] || [ "$_old_port" != "$WG_PORT" ]; }; then
-            close_ports "$_old_port" udp
+            { [ "$WG_MODE" = "reverse" ] || [ "$_old_port" != "$WG_PORT" ] || [ "$_old_type" != "$TUNNEL_TYPE" ]; }; then
+            close_ports "$_old_port" "$_old_proto"
         fi
     fi
     rm -rf "$LANDING_PENDING_DIR"
@@ -3057,18 +3351,18 @@ remote_exit_status() {
         return 1
     fi
     service_is_active && echo -e "  ${GREEN}✓ 落地端服务运行中${PLAIN}" || echo -e "  ${RED}✗ 落地端服务未运行${PLAIN}"
-    if [ "$WG_MODE" = "reverse" ]; then
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        tcp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ TCP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 TCP ${WG_PORT} 监听${PLAIN}"
+        echo -e "  ${DIM}若服务与监听正常但线路机无法连通，请在落地机面板 / 云防火墙放行 TCP ${WG_PORT}${PLAIN}"
+    elif [ "$WG_MODE" = "reverse" ]; then
         echo -e "  ${DIM}隧道方向：落地机主动连接线路机 ${RELAY_HOST} UDP ${WG_PORT}${PLAIN}"
+        echo -e "  ${DIM}若服务正常但仍无法握手，请在线路机面板 / 安全组放行 UDP ${WG_PORT}（入站）${PLAIN}"
     else
         udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
+        echo -e "  ${DIM}若服务与监听正常但线路机无法握手，请在落地机面板 / 云防火墙放行 UDP ${WG_PORT}${PLAIN}"
     fi
     detect_exit_egress
     [ -n "$EXIT_IPV4" ] && echo -e "  ${GREEN}✓ 落地机出口 IPv4: ${EXIT_IPV4}${PLAIN}" || echo -e "  ${RED}✗ 落地机无法访问 IPv4 外网${PLAIN}"
-    if [ "$WG_MODE" = "reverse" ]; then
-        echo -e "  ${DIM}若服务正常但仍无法握手，请在线路机面板 / 安全组放行 UDP ${WG_PORT}（入站）${PLAIN}"
-    else
-        echo -e "  ${DIM}若服务与监听正常但线路机无法握手，请在落地机面板 / 云防火墙放行 UDP ${WG_PORT}${PLAIN}"
-    fi
 }
 
 # ============================================================
@@ -3081,6 +3375,8 @@ uninstall_landing_files() {
         LISTEN_PORT=$(awk -F= '$1 == "LISTEN_PORT" { print $2; exit }' "$LANDING_META/config.env")
         MANAGED_SING_BOX=$(awk -F= '$1 == "MANAGED_SING_BOX" { print $2; exit }' "$LANDING_META/config.env")
         WG_MODE=$(awk -F= '$1 == "WG_MODE" { print $2; exit }' "$LANDING_META/config.env")
+        TUNNEL_TYPE=$(awk -F= '$1 == "TUNNEL_TYPE" { print $2; exit }' "$LANDING_META/config.env")
+        case "${TUNNEL_TYPE:-}" in tcp) ;; *) TUNNEL_TYPE="wireguard" ;; esac
     fi
     local _managed_core=0 _other_file=""
     if [ "$MANAGED_SING_BOX" = "1" ] || [ -f "$SING_BOX_MANAGED_MARKER" ]; then
@@ -3099,7 +3395,7 @@ uninstall_landing_files() {
     remove_exit_watchdog
     rm -f "$SYSTEMD_SERVICE" "$OPENRC_SERVICE" "$AUTO_UPDATE_SCRIPT" "$LANDING_BIN"
     rm -f "$LANDING_CONFIG" "$AUTO_UPDATE_LOG" "$WATCHDOG_LOG"
-    rm -rf "$LANDING_META" "$LANDING_PENDING_DIR" "$LANDING_CERT_DIR"
+    rm -rf "$LANDING_META" "$LANDING_PENDING_DIR" "$LANDING_CERT_DIR" "$LANDING_TUNNEL_CERT_DIR"
     if [ -d "$LANDING_DIR" ]; then
         _other_file=$(find "$LANDING_DIR" -mindepth 1 -maxdepth 1 ! -name '.singbox-tools-managed' -print -quit 2>/dev/null)
     fi
@@ -3207,25 +3503,50 @@ prompt_relay_port() {
 prompt_exit_target() {
     local _input _default_host="${EXIT_HOST:-}" _default_port="${SSH_PORT:-22}" _default_user="${SSH_USER:-root}"
     local _exit_net="R" _can_reverse=0 _default_net=1 _old_mode="${WG_MODE:-forward}"
+    local _old_type="${TUNNEL_TYPE:-wireguard}" _default_transport=1
+    case "$_old_type" in tcp) _default_transport=2 ;; esac
+    echo -e "\n${SKYBLUE}--- 隧道传输（本机 ↔ 落地机）---${PLAIN}"
+    echo -e "  [1] WireGuard（UDP，推荐）：延迟低；落地机主动连接时无需放行端口"
+    echo -e "  [2] TCP 隧道（禁 UDP 时用）：AnyTLS TCP；落地机需放行一个 TCP 端口"
+    while true; do
+        read -r -p "隧道传输 [默认 ${_default_transport}]: " _input
+        case "${_input:-$_default_transport}" in
+            1) TUNNEL_TYPE="wireguard"; break ;;
+            2) TUNNEL_TYPE="tcp"; break ;;
+            *) echo -e "${RED}请输入 1 或 2${PLAIN}" ;;
+        esac
+    done
     # 落地机主动连接需要线路机有可直达的公网 IPv4（NAT 机的 UDP 端口映射不可控）。
-    if [ "${NAT_MODE:-0}" = "0" ] && is_valid_ipv4 "${PUBLIC_IP:-}"; then
+    if [ "$TUNNEL_TYPE" = "tcp" ]; then
+        _can_reverse=0
+        _default_net=2
+    elif [ "${NAT_MODE:-0}" = "0" ] && is_valid_ipv4 "${PUBLIC_IP:-}"; then
         _can_reverse=1
     else
         _default_net=2
     fi
     echo -e "\n${SKYBLUE}--- 落地机（家宽机）信息 ---${PLAIN}"
     echo -e "${DIM}落地机需要：能 SSH 登录、有公网 IPv4 出口。${PLAIN}"
-    if [ "$_can_reverse" = "1" ]; then
-        echo -e "  [1] 落地机主动连接本机（推荐）：落地机无需放行端口、无需路由器端口转发，家宽换 IP 自动重连"
+    if [ "$TUNNEL_TYPE" = "tcp" ]; then
+        echo -e "  ${DIM}[1] 落地机主动连接本机：TCP 隧道本期不支持（AnyTLS 无法反向灌流量）${PLAIN}"
+        echo -e "  [2] 本机主动连接落地机：落地机需放行一个 TCP 端口（面板 / 安全组放行，或路由器端口转发）"
     else
-        echo -e "  ${DIM}[1] 落地机主动连接本机：本机是 NAT 机或未确认公网 IPv4，不可用${PLAIN}"
+        if [ "$_can_reverse" = "1" ]; then
+            echo -e "  [1] 落地机主动连接本机（推荐）：落地机无需放行端口、无需路由器端口转发，家宽换 IP 自动重连"
+        else
+            echo -e "  ${DIM}[1] 落地机主动连接本机：本机是 NAT 机或未确认公网 IPv4，不可用${PLAIN}"
+        fi
+        # 本机拨号落地机只有一种连法：云主机在面板放行、路由器后做端口转发，只是放行 UDP 的位置不同。
+        echo -e "  [2] 本机主动连接落地机：本机是 NAT 机时使用，落地机需放行一个 UDP 端口（面板 / 安全组放行，或路由器端口转发）"
     fi
-    # 本机拨号落地机只有一种连法：云主机在面板放行、路由器后做端口转发，只是放行 UDP 的位置不同。
-    echo -e "  [2] 本机主动连接落地机：本机是 NAT 机时使用，落地机需放行一个 UDP 端口（面板 / 安全组放行，或路由器端口转发）"
     while true; do
         read -r -p "连接方式 [默认 ${_default_net}]: " _input
         case "${_input:-$_default_net}" in
             1)
+                if [ "$TUNNEL_TYPE" = "tcp" ]; then
+                    echo -e "${RED}TCP 隧道请选择 2（本机连接落地机）${PLAIN}"
+                    continue
+                fi
                 if [ "$_can_reverse" = "1" ]; then _exit_net="R"; break; fi
                 echo -e "${RED}本机无法使用 [1]，请选择 2${PLAIN}"
                 ;;
@@ -3275,7 +3596,7 @@ prompt_exit_target() {
         WG_MODE="reverse"
         RELAY_HOST="$PUBLIC_IP"
         # 重新对接时沿用原端口，客户端与面板规则都不用变。
-        if [ "$_old_mode" = "reverse" ] && validate_port "${WG_PORT:-}"; then
+        if [ "$_old_mode" = "reverse" ] && [ "$_old_type" = "wireguard" ] && validate_port "${WG_PORT:-}"; then
             REQUESTED_WG_PORT="$WG_PORT"
         else
             REQUESTED_WG_PORT=$(generate_random_port) || {
@@ -3288,40 +3609,77 @@ prompt_exit_target() {
     else
         WG_MODE="forward"
         RELAY_HOST=""
-        echo -e "${YELLOW}本机将主动连接落地机：落地机必须放行一个 UDP 端口，否则隧道必然失败（看起来像脚本 bug）。${PLAIN}"
-        echo -e "${DIM}云主机在面板 / 安全组放行入站；路由器后的家宽把该 UDP 端口转发到落地机的同一端口。可直接填已放行的端口，留空则先随机一个再去放行。${PLAIN}"
-        [ "$_old_mode" = "forward" ] || WG_PORT=""
-        while true; do
-            if validate_port "${WG_PORT:-}"; then
-                read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}，输入 0 改为随机]: " _input
-                [ -z "$_input" ] && _input="$WG_PORT"
-            else
-                read -r -p "落地机 WireGuard UDP 端口 [留空=先随机再确认]: " _input
-            fi
-            case "$_input" in
-                ""|0)
-                    REQUESTED_WG_PORT=$(generate_random_port) || {
-                        echo -e "${RED}无法生成随机 UDP 端口${PLAIN}"
-                        return 1
-                    }
-                    ;;
-                *)
-                    if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
-                        REQUESTED_WG_PORT="$_input"
-                    else
-                        echo -e "${RED}端口必须为 1024-65535 的整数${PLAIN}"
-                        continue
-                    fi
-                    ;;
-            esac
-            echo -e "${YELLOW}请现在放行落地机 UDP ${REQUESTED_WG_PORT}：云主机在面板 / 安全组放行入站，路由器后则转发到落地机 UDP ${REQUESTED_WG_PORT}。${PLAIN}"
-            echo -e "${DIM}未放行时部署会在「隧道验证」失败并自动回滚，与换哪台落地机无关。${PLAIN}"
-            read -r -p "已放行 UDP ${REQUESTED_WG_PORT}？按回车继续，或输入 n 重选端口: " _input
-            case "$_input" in
-                [nN]*) continue ;;
-                *) break ;;
-            esac
-        done
+        if [ "$TUNNEL_TYPE" = "tcp" ]; then
+            echo -e "${YELLOW}本机将主动连接落地机：落地机必须放行一个 TCP 端口，否则隧道必然失败（看起来像脚本 bug）。${PLAIN}"
+            echo -e "${DIM}云主机在面板 / 安全组放行入站；路由器后的家宽把该 TCP 端口转发到落地机的同一端口。可直接填已放行的端口，留空则先随机一个再去放行。${PLAIN}"
+            [ "$_old_type" = "tcp" ] && [ "$_old_mode" = "forward" ] || WG_PORT=""
+            while true; do
+                if validate_port "${WG_PORT:-}"; then
+                    read -r -p "落地机 TCP 隧道端口 [当前 ${WG_PORT}，输入 0 改为随机]: " _input
+                    [ -z "$_input" ] && _input="$WG_PORT"
+                else
+                    read -r -p "落地机 TCP 隧道端口 [留空=先随机再确认]: " _input
+                fi
+                case "$_input" in
+                    ""|0)
+                        REQUESTED_WG_PORT=$(generate_random_port) || {
+                            echo -e "${RED}无法生成随机 TCP 端口${PLAIN}"
+                            return 1
+                        }
+                        ;;
+                    *)
+                        if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
+                            REQUESTED_WG_PORT="$_input"
+                        else
+                            echo -e "${RED}端口必须为 1024-65535 的整数${PLAIN}"
+                            continue
+                        fi
+                        ;;
+                esac
+                echo -e "${YELLOW}请现在放行落地机 TCP ${REQUESTED_WG_PORT}：云主机在面板 / 安全组放行入站，路由器后则转发到落地机 TCP ${REQUESTED_WG_PORT}。${PLAIN}"
+                echo -e "${DIM}未放行时部署会在「隧道验证」失败并自动回滚，与换哪台落地机无关。${PLAIN}"
+                read -r -p "已放行 TCP ${REQUESTED_WG_PORT}？按回车继续，或输入 n 重选端口: " _input
+                case "$_input" in
+                    [nN]*) continue ;;
+                    *) break ;;
+                esac
+            done
+        else
+            echo -e "${YELLOW}本机将主动连接落地机：落地机必须放行一个 UDP 端口，否则隧道必然失败（看起来像脚本 bug）。${PLAIN}"
+            echo -e "${DIM}云主机在面板 / 安全组放行入站；路由器后的家宽把该 UDP 端口转发到落地机的同一端口。可直接填已放行的端口，留空则先随机一个再去放行。${PLAIN}"
+            [ "$_old_type" = "wireguard" ] && [ "$_old_mode" = "forward" ] || WG_PORT=""
+            while true; do
+                if validate_port "${WG_PORT:-}"; then
+                    read -r -p "落地机 WireGuard UDP 端口 [当前 ${WG_PORT}，输入 0 改为随机]: " _input
+                    [ -z "$_input" ] && _input="$WG_PORT"
+                else
+                    read -r -p "落地机 WireGuard UDP 端口 [留空=先随机再确认]: " _input
+                fi
+                case "$_input" in
+                    ""|0)
+                        REQUESTED_WG_PORT=$(generate_random_port) || {
+                            echo -e "${RED}无法生成随机 UDP 端口${PLAIN}"
+                            return 1
+                        }
+                        ;;
+                    *)
+                        if validate_port "$_input" && [ "$_input" -ge 1024 ]; then
+                            REQUESTED_WG_PORT="$_input"
+                        else
+                            echo -e "${RED}端口必须为 1024-65535 的整数${PLAIN}"
+                            continue
+                        fi
+                        ;;
+                esac
+                echo -e "${YELLOW}请现在放行落地机 UDP ${REQUESTED_WG_PORT}：云主机在面板 / 安全组放行入站，路由器后则转发到落地机 UDP ${REQUESTED_WG_PORT}。${PLAIN}"
+                echo -e "${DIM}未放行时部署会在「隧道验证」失败并自动回滚，与换哪台落地机无关。${PLAIN}"
+                read -r -p "已放行 UDP ${REQUESTED_WG_PORT}？按回车继续，或输入 n 重选端口: " _input
+                case "$_input" in
+                    [nN]*) continue ;;
+                    *) break ;;
+                esac
+            done
+        fi
     fi
     read -r -p "落地机开启每周自动更新 sing-box（推荐）？[Y/n]: " _input
     case "$_input" in
@@ -3385,13 +3743,12 @@ print_deploy_intro() {
     echo -e "${SKYBLUE}===============================================${PLAIN}"
     echo -e "${GREEN}  一键部署：线路机 + 落地机（家宽机）${PLAIN}"
     echo -e "${SKYBLUE}===============================================${PLAIN}"
-    echo -e "  客户端 ──AnyTLS / VLESS──▶ ${BOLD}本机（线路机）${PLAIN} ══WireGuard══▶ ${BOLD}落地机${PLAIN} ──▶ 互联网"
+    echo -e "  客户端 ──AnyTLS / VLESS──▶ ${BOLD}本机（线路机）${PLAIN} ══隧道══▶ ${BOLD}落地机${PLAIN} ──▶ 互联网"
     echo -e "  ${DIM}只需在本机操作：脚本会 SSH 登录落地机自动部署，并验证出口 IP。${PLAIN}"
     echo -e "  ${DIM}只有本节点的流量从落地机出网；本机 SSH、系统更新和其他协议保持直连。${PLAIN}"
     echo -e "  ${DIM}两端均不修改系统路由、不开启 ip_forward，失败会自动回滚。${PLAIN}"
-    echo -e "  ${DIM}两种连接方式（不限国家/地区）：${PLAIN}"
-    echo -e "  ${DIM}  1 落地机主动连接本机（推荐）：落地机无需放行端口或路由器端口转发${PLAIN}"
-    echo -e "  ${DIM}  2 本机主动连接落地机：本机是 NAT 机时使用，落地机需放行一个 UDP 端口${PLAIN}"
+    echo -e "  ${DIM}隧道传输：WireGuard（UDP，推荐）或 TCP（禁 UDP 时用；落地机需放行 TCP）。${PLAIN}"
+    echo -e "  ${DIM}WireGuard 连接方式：1 落地机主动连接（推荐）/ 2 本机连接落地机。${PLAIN}"
     echo -e "${SKYBLUE}-----------------------------------------------${PLAIN}"
 }
 
@@ -3448,8 +3805,17 @@ deploy_landing() {
         generate_landing_certificate || { deploy_fail "生成 TLS 证书失败"; return 1; }
     fi
     prepare_probe_inbound || { deploy_fail "无法生成本机探测入口参数"; return 1; }
-    generate_wg_keypair || { deploy_fail "生成 WireGuard 密钥失败"; return 1; }
-    WG_PSK=$(generate_wg_psk) || { deploy_fail "生成 WireGuard 预共享密钥失败"; return 1; }
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        WG_PRIVATE_KEY=""; WG_PUBLIC_KEY=""; WG_PEER_PUBLIC_KEY=""; WG_PSK=""
+        TUNNEL_PASSWORD=$(generate_anytls_password) || { deploy_fail "生成 TCP 隧道密码失败"; return 1; }
+        TUNNEL_SERVER_NAME="landing-tunnel.local"
+        generate_tunnel_certificate force || { deploy_fail "生成 TCP 隧道证书失败"; return 1; }
+    else
+        TUNNEL_PASSWORD=""; TUNNEL_SERVER_NAME="landing-tunnel.local"
+        rm -rf "$LANDING_TUNNEL_CERT_DIR"
+        generate_wg_keypair || { deploy_fail "生成 WireGuard 密钥失败"; return 1; }
+        WG_PSK=$(generate_wg_psk) || { deploy_fail "生成 WireGuard 预共享密钥失败"; return 1; }
+    fi
     resolve_script_source || { deploy_fail "无法准备落地机部署脚本"; return 1; }
 
     echo ""
@@ -3489,7 +3855,7 @@ deploy_landing() {
         deploy_fail "线路机防火墙放行失败"
         return 1
     fi
-    if [ "$WG_MODE" = "reverse" ] && ! open_ports "$WG_PORT" udp; then
+    if [ "${TUNNEL_TYPE:-wireguard}" = "wireguard" ] && [ "$WG_MODE" = "reverse" ] && ! open_ports "$WG_PORT" udp; then
         deploy_fail "线路机 UDP ${WG_PORT} 防火墙放行失败"
         return 1
     fi
@@ -3519,6 +3885,7 @@ deploy_landing() {
     discard_install_backup
     # 由 AnyTLS 改为 VLESS 重新部署成功后，旧证书已不再使用。
     [ "$NODE_PROTO" = "anytls" ] || rm -rf "$LANDING_CERT_DIR"
+    [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ] || rm -rf "$LANDING_TUNNEL_CERT_DIR"
     ensure_exit_watchdog || true
     apply_relay_auto_update
     echo -e "${GREEN}✓ 部署完成：客户端流量将从落地机 ${LAST_EGRESS_IP} 出网${PLAIN}"
@@ -3536,7 +3903,11 @@ update_exit_address() {
     if [ "$WG_MODE" = "reverse" ]; then
         echo -e "${DIM}当前为「落地机主动连接」模式：家宽换 IP 后隧道会自动恢复，这里的地址只用于 SSH 管理落地机。${PLAIN}"
     fi
-    echo -e "${DIM}当前落地机地址: ${EXIT_HOST}（UDP ${WG_PORT}）${PLAIN}"
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        echo -e "${DIM}当前落地机地址: ${EXIT_HOST}（TCP ${WG_PORT}）${PLAIN}"
+    else
+        echo -e "${DIM}当前落地机地址: ${EXIT_HOST}（UDP ${WG_PORT}）${PLAIN}"
+    fi
     read -r -p "新的落地机公网 IP 或域名 [留空取消]: " _input
     _input=$(trim_string "$_input")
     _input="${_input#[}"
@@ -3836,21 +4207,34 @@ show_config() {
 # 缺少 "udp_fragment": true（v2.0.55 及以前）时同样重写：线路机发出的隧道包不再带 DF。
 # 没有接管客户端 DNS（v2.0.58 及以前）时同样重写：落地机无 IPv6 时客户端不必再关 IPv6。
 # 每周自动更新与诊断都会调用这里，已部署节点无需重新对接即可自愈。
-# 函数名沿用 VLESS 时代的叫法；AnyTLS 线路机没有 REALITY 握手，按 wg-out 识别线路机配置。
+# 函数名沿用 VLESS 时代的叫法；按 wg-out / tunnel-out 识别线路机配置。
 ensure_reality_handshake_direct() {
-    local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0
+    local _bak="${LANDING_CONFIG}.handshake.bak" _was_active=0 _need=0 _tag=""
     [ -f "$LANDING_CONFIG" ] || return 0
     [ "${ROLE:-}" = "relay" ] || [ "$(installed_role 2>/dev/null)" = "relay" ] || return 0
-    grep -q '"tag": "wg-out"' "$LANDING_CONFIG" || return 0
+    if grep -q '"tag": "tunnel-out"' "$LANDING_CONFIG"; then
+        _tag="tunnel-out"
+    elif grep -q '"tag": "wg-out"' "$LANDING_CONFIG"; then
+        _tag="wg-out"
+    else
+        return 0
+    fi
     grep -q '"final": "wg-out"' "$LANDING_CONFIG" && _need=1
-    grep -q '"action": "route", "outbound": "wg-out"' "$LANDING_CONFIG" || _need=1
+    grep -q '"final": "tunnel-out"' "$LANDING_CONFIG" && _need=1
+    grep -q "\"action\": \"route\", \"outbound\": \"${_tag}\"" "$LANDING_CONFIG" || _need=1
     grep -q '"detour": "direct"' "$LANDING_CONFIG" && _need=1
-    grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1
-    grep -q '"udp_fragment": true' "$LANDING_CONFIG" || _need=1
     grep -q '"port": 53, "action": "hijack-dns"' "$LANDING_CONFIG" || _need=1
+    if [ "$_tag" = "wg-out" ]; then
+        grep -q "\"mtu\": ${WG_MTU}," "$LANDING_CONFIG" || _need=1
+        grep -q '"udp_fragment": true' "$LANDING_CONFIG" || _need=1
+    fi
     [ "$_need" = "1" ] || return 0
     read_config >/dev/null 2>&1 || return 1
-    echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道，隧道 MTU ${WG_MTU} 且允许分片，客户端 DNS 交给落地机解析...${PLAIN}"
+    if [ "$_tag" = "tunnel-out" ]; then
+        echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走 TCP 隧道，客户端 DNS 经隧道解析...${PLAIN}"
+    else
+        echo -e "${YELLOW}正在修复线路机配置：默认直连，仅业务入站走家宽隧道，隧道 MTU ${WG_MTU} 且允许分片，客户端 DNS 交给落地机解析...${PLAIN}"
+    fi
     cp -p "$LANDING_CONFIG" "$_bak" || return 1
     if ! write_config || ! check_config; then
         mv -f "$_bak" "$LANDING_CONFIG"
@@ -3867,7 +4251,11 @@ ensure_reality_handshake_direct() {
         fi
     fi
     rm -f "$_bak"
-    echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，隧道 MTU ${WG_MTU}，允许分片，接管客户端 DNS）${PLAIN}"
+    if [ "$_tag" = "tunnel-out" ]; then
+        echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 tunnel-out，接管客户端 DNS）${PLAIN}"
+    else
+        echo -e "${GREEN}✓ 线路机配置已修复（final=direct，业务走 wg-out，隧道 MTU ${WG_MTU}，允许分片，接管客户端 DNS）${PLAIN}"
+    fi
     return 0
 }
 
@@ -3907,19 +4295,24 @@ diagnose_landing() {
 
     if [ "$ROLE" = "exit" ]; then
         echo -e "  ${DIM}本机角色: 落地机${PLAIN}"
-        if [ "$WG_MODE" = "reverse" ]; then
+        if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+            tcp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ TCP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 TCP ${WG_PORT} 监听${PLAIN}"
+            echo -e "  ${DIM}请确认落地机面板 / 云防火墙已放行 TCP ${WG_PORT}${PLAIN}"
+        elif [ "$WG_MODE" = "reverse" ]; then
             echo -e "  ${DIM}隧道方向: 主动连接线路机 ${RELAY_HOST} UDP ${WG_PORT}（本机无需放行端口）${PLAIN}"
         else
             udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
+            echo -e "  ${DIM}请确认落地机面板 / 云防火墙已放行 UDP ${WG_PORT}${PLAIN}"
         fi
         detect_exit_egress
         [ -n "$EXIT_IPV4" ] && echo -e "  ${GREEN}✓ 出口 IPv4: ${EXIT_IPV4}${PLAIN}" || echo -e "  ${RED}✗ 无法访问 IPv4 外网${PLAIN}"
-        [ "$WG_MODE" = "reverse" ] || echo -e "  ${DIM}请确认落地机面板 / 云防火墙已放行 UDP ${WG_PORT}${PLAIN}"
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
         return 0
     fi
 
-    if [ "$WG_MODE" = "reverse" ]; then
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        echo -e "  ${DIM}本机角色: 线路机（$(relay_protocol_label)）| TCP 隧道 → 落地机 ${EXIT_HOST}:${WG_PORT}${PLAIN}"
+    elif [ "$WG_MODE" = "reverse" ]; then
         echo -e "  ${DIM}本机角色: 线路机（$(relay_protocol_label)）| 落地机 ${EXIT_HOST} 主动连接本机 UDP ${WG_PORT}${PLAIN}"
     else
         echo -e "  ${DIM}本机角色: 线路机（$(relay_protocol_label)）| 落地机: ${EXIT_HOST} UDP ${WG_PORT}${PLAIN}"
@@ -3927,27 +4320,38 @@ diagnose_landing() {
     ensure_reality_handshake_direct || true
     ensure_exit_watchdog quiet || true
     tcp_port_is_listening "$LISTEN_PORT" && echo -e "  ${GREEN}✓ TCP ${LISTEN_PORT} 正在监听${PLAIN}" || echo -e "  ${RED}✗ 未检测到 TCP ${LISTEN_PORT} 监听${PLAIN}"
-    if [ "$WG_MODE" = "reverse" ]; then
+    if [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        if tunnel_certificate_ok; then
+            echo -e "  ${GREEN}✓ TCP 隧道证书有效${PLAIN}"
+        else
+            echo -e "  ${RED}✗ TCP 隧道证书缺失或损坏：请重新部署${PLAIN}"
+        fi
+    elif [ "$WG_MODE" = "reverse" ]; then
         udp_port_is_listening "$WG_PORT" && echo -e "  ${GREEN}✓ UDP ${WG_PORT} 正在监听（等待落地机连接）${PLAIN}" || echo -e "  ${RED}✗ 未检测到 UDP ${WG_PORT} 监听${PLAIN}"
         _cur_ip=$(get_native_public_ipv4 2>/dev/null || get_default_public_ipv4 2>/dev/null || true)
         if [ -n "$RELAY_HOST" ] && is_valid_ipv4 "$_cur_ip" && [ "$RELAY_HOST" != "$_cur_ip" ]; then
             echo -e "  ${YELLOW}! 本机公网 IP 已变为 ${_cur_ip}，落地机仍在连接 ${RELAY_HOST}；请重新部署${PLAIN}"
         fi
     fi
-    if [ "$NODE_PROTO" = "anytls" ]; then
-        if landing_certificate_ok; then
-            echo -e "  ${GREEN}✓ AnyTLS 自签证书有效（SNI ${SERVER_NAME}）${PLAIN}"
-        else
-            echo -e "  ${RED}✗ AnyTLS 证书缺失、与私钥不匹配或即将过期：请重新部署（可保留现有节点参数）${PLAIN}"
+    if [ "$NODE_PROTO" = "anytls" ] || [ "${TUNNEL_TYPE:-wireguard}" = "tcp" ]; then
+        if [ "$NODE_PROTO" = "anytls" ]; then
+            if landing_certificate_ok; then
+                echo -e "  ${GREEN}✓ AnyTLS 自签证书有效（SNI ${SERVER_NAME}）${PLAIN}"
+            else
+                echo -e "  ${RED}✗ AnyTLS 证书缺失、与私钥不匹配或即将过期：请重新部署（可保留现有节点参数）${PLAIN}"
+            fi
         fi
         _core_ver=$(get_installed_version 2>/dev/null || true)
         if [ -n "$_core_ver" ] && ! version_at_least "$_core_ver" "$ANYTLS_MIN_SING_BOX"; then
-            echo -e "  ${YELLOW}! sing-box ${_core_ver} 的 AnyTLS 入站有会话卡死问题（${ANYTLS_MIN_SING_BOX} 起修复）：请在菜单「升级 sing-box」升级${PLAIN}"
+            echo -e "  ${YELLOW}! sing-box ${_core_ver} 的 AnyTLS 有会话卡死问题（${ANYTLS_MIN_SING_BOX} 起修复）：请在菜单「升级 sing-box」升级${PLAIN}"
         fi
-    elif reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
-        echo -e "  ${GREEN}✓ REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 可达${PLAIN}"
-    else
-        echo -e "  ${YELLOW}! REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 不可达，可重新部署并选择其他 SNI${PLAIN}"
+    fi
+    if [ "$NODE_PROTO" = "vless" ]; then
+        if reality_target_usable_for_family "$SERVER_NAME" "$HANDSHAKE_PORT"; then
+            echo -e "  ${GREEN}✓ REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 可达${PLAIN}"
+        else
+            echo -e "  ${YELLOW}! REALITY 握手目标 ${SERVER_NAME}:${HANDSHAKE_PORT} 不可达，可重新部署并选择其他 SNI${PLAIN}"
+        fi
     fi
     if verify_exit_egress 3; then
         echo -e "${SKYBLUE}─────────────────────────────────────────────${PLAIN}"
@@ -4562,7 +4966,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.2.2${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Landing Relay Management Script${PLAIN} ${DIM}v2.3.0${PLAIN}"
         echo -e "  ${DIM}线路机 + 落地机 / 家宽机（sing-box WireGuard）${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

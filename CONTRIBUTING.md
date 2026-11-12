@@ -37,7 +37,7 @@ bash tests/validate_scripts.sh
 
 项目没有共享版本文件。每次准备提交一组代码、测试或文档修改时，都必须提升统一项目版本并同步以下位置；不能等到创建 GitHub Release 时再补版本：
 
-- 八个脚本的文件头版本和日期
+- 九个脚本的文件头版本和日期
 - `install.sh`、`hy2.sh`、`ss.sh`、`anytls.sh`、`vless.sh`、`proxy.sh`、`landing.sh` 的菜单显示版本
 - `install.sh` 写入备份元数据的 `script_version`
 - `euservhy2.sh` 的 `SCRIPT_VERSION`

@@ -4,9 +4,9 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh euservhy2.sh"
-HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh"
-EXPECTED_VERSION="v2.2.2"
+SCRIPTS="install.sh hy2.sh ss.sh anytls.sh vless.sh proxy.sh landing.sh realm.sh euservhy2.sh"
+HELPER_SCRIPTS="tests/helpers/validators.bash tests/helpers/generators.bash tests/validate_recovery.sh tests/validate_restore.sh tests/validate_autoupdate.sh tests/validate_landing.sh tests/validate_realm.sh"
+EXPECTED_VERSION="v2.3.0"
 EXPECTED_VERSION_NUMBER="${EXPECTED_VERSION#v}"
 REQUIRED_DOCS="
 README.md
@@ -86,6 +86,14 @@ for script in $SCRIPTS; do
             grep -q '"system": false' "$script"
             grep -q 'LANDING_LIB_ONLY' "$script"
             ;;
+        realm.sh)
+            grep -q "# 版本：${EXPECTED_VERSION}" "$script"
+            grep -q "Realm TCP Relay Management Script.*${EXPECTED_VERSION}" "$script"
+            grep -q 'zhboner/realm' "$script"
+            grep -q 'REALM_LIB_ONLY' "$script"
+            grep -q 'use_udp = false' "$script"
+            grep -q '[[endpoints]]' "$script"
+            ;;
         euservhy2.sh)
             grep -q "#  版本: ${EXPECTED_VERSION}" "$script"
             ;;
@@ -141,16 +149,22 @@ grep -q 'shared_service_is_active landing-server && _landing_was_active=1' proxy
 grep -q 'shared_service_restart landing-server /usr/local/bin/landing-server' proxy.sh
 grep -q 'UPGRADE_LOCK_FILE="${UPGRADE_LOCK_FILE:-/var/lock/sing-box-tools-upgrade.lock}"' landing.sh
 grep -q 'LANDING_URL="${BASE_URL}/landing.sh"' install.sh
+grep -q 'REALM_URL="${BASE_URL}/realm.sh"' install.sh
 grep -q 'landing-server:start) nohup /usr/local/bin/landing-server' install.sh
 grep -q '"landing-server /var/run/landing-server.pid"' install.sh
 grep -q 'etc/systemd/system/landing-server.service' install.sh
 grep -q 'menu_item 6 "家宽 / 落地中转（线路机 + 落地机）"' install.sh
+grep -q 'menu_item 7 "Realm TCP 中转"' install.sh
 grep -q 'run_script "家宽中转" "$LANDING_URL" "$_action"' install.sh
+grep -q 'run_script "Realm TCP 中转" "$REALM_URL" "$_action"' install.sh
 grep -q 'menu_item 6 "卸载家宽中转"' install.sh
+grep -q 'menu_item 7 "卸载 Realm TCP 中转"' install.sh
 grep -q '6) run_uninstall_action "家宽中转" "$LANDING_URL"' install.sh
+grep -q '7) run_uninstall_action "Realm TCP 中转" "$REALM_URL"' install.sh
 ! grep -q 'menu_item 10 "卸载家宽中转"' install.sh
 ! grep -q '5) run_script "家宽中转" "$LANDING_URL" "menu"' install.sh
 grep -q 'download_script_to_cache landing.sh "$LANDING_URL"' install.sh
+grep -q 'download_script_to_cache realm.sh "$REALM_URL"' install.sh
 grep -q '^ensure_outbound_bind()' anytls.sh
 grep -q '^ensure_outbound_bind()' vless.sh
 grep -q '^ensure_outbound_bind()' proxy.sh
@@ -198,7 +212,8 @@ grep -q 'menu_item 9 "卸载 / 清理中心"' install.sh
 ! grep -q 'menu_item 10 "卸载 / 清理中心"' install.sh
 ! grep -q 'menu_item 5 "生成二维码"' install.sh
 grep -q 'menu_item 6 "家宽 / 落地中转（线路机 + 落地机）"' install.sh
-grep -q 'menu_item 7 "EUserv IPv6-only HY2"' install.sh
+grep -q 'menu_item 7 "Realm TCP 中转"' install.sh
+grep -q 'menu_item 8 "EUserv IPv6-only HY2"' install.sh
 grep -q 'etc/sysctl.d/99-singbox-tools-bbr.conf' install.sh
 ! grep -R -qE 'bbr3|tcp_bbr3' install.sh hy2.sh ss.sh README.md CHANGELOG.md
 grep -q 'net.ipv4.tcp_congestion_control = bbr' install.sh
@@ -277,13 +292,20 @@ grep -q '17 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' anytls.sh
 grep -q '27 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' vless.sh
 grep -q '37 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' proxy.sh
 grep -q '47 4 \* \* 1 \$AUTO_UPDATE_SCRIPT' landing.sh
-# 连接方式只有两种：[2] 本机拨号落地机，面板放行与路由器端口转发只是放行位置不同，合并为一项，格式与 [1] 统一。
+# 隧道传输与连接方式都是 [1]/[2] 菜单，不合并成带 [3] 的长列表；TCP 隧道单独一项且本期仅 forward。
+grep -q '\[1\] WireGuard（UDP，推荐）' landing.sh
+grep -q '\[2\] TCP 隧道（禁 UDP 时用）' landing.sh
 grep -q '\[1\] 落地机主动连接本机（推荐）' landing.sh
 grep -q '\[2\] 本机主动连接落地机：' landing.sh
 grep -q '请输入 1 或 2' landing.sh
+grep -q 'TCP 隧道本期不支持' landing.sh
+grep -q 'TUNNEL_TYPE' landing.sh
+grep -q 'landing-tunnel-cert' landing.sh
+grep -q '"tag": "tunnel-out"' landing.sh
 # set -e 不会因为 `! cmd` 失败而退出，否定断言必须包进子 shell：( ! cmd )。
 ( ! grep -qE 'A：公网直达|B：真·家宽|场景 [AB]|\[3\] ' landing.sh )
 grep -q '已放行 UDP' landing.sh
+grep -q '已放行 TCP' landing.sh
 grep -q '看起来像脚本 bug' landing.sh
 # 面板 / 安全组没放行节点 TCP 端口时，隧道验证全过、部署“成功”，客户端却只会超时：部署时由落地机（境外）实测一次。
 grep -q '^check_node_port_from_exit()' landing.sh
@@ -293,9 +315,11 @@ grep -q '^ensure_reality_handshake_direct()' landing.sh
 # “detour to an empty direct outbound makes no sense”，WG 隧道与 REALITY 握手永远失败（v2.0.47–v2.0.51）。
 ! grep -qE '^[[:space:]]+"detour": "direct"' landing.sh
 grep -q 'grep -q '\''"detour": "direct"'\'' "$LANDING_CONFIG" && _need=1' landing.sh
-grep -q '"action": "route", "outbound": "wg-out"' landing.sh
+grep -q '"action": "route", "outbound": "${_route_outbound}"' landing.sh
 grep -q '"final": "direct"' landing.sh
 grep -q 'grep -q '\''"final": "wg-out"'\'' "$LANDING_CONFIG"' landing.sh
+grep -q '_route_outbound="wg-out"' landing.sh
+grep -q '_route_outbound="tunnel-out"' landing.sh
 # 隧道出口探测禁止用 http://1.1.1.1：Cloudflare 对 http 一律 301 跳转 https，永远拿不到 ip=，
 # 隧道明明已通也被判“握手失败”并回滚（v2.0.52–v2.0.53）。1.1.1.1 证书含 IP SAN，https 可正常校验。
 ! grep -qE 'http://1\.(1\.1\.1|0\.0\.1)' landing.sh
@@ -323,15 +347,19 @@ grep -q '\[1\] AnyTLS（推荐）：' landing.sh
 grep -q '\[2\] VLESS + REALITY：' landing.sh
 grep -qF '节点协议 [默认 1]' landing.sh
 grep -q '"tag": "anytls-in"' landing.sh
-grep -qF '{ "inbound": ["${_node_tag}", "probe-in"], "action": "route", "outbound": "wg-out" }' landing.sh
+# 路由出站按 TUNNEL_TYPE 用 ${_route_outbound}（wg-out / tunnel-out），禁止写死 vless-in。
+grep -qF '{ "inbound": ["${_node_tag}", "probe-in"], "action": "route", "outbound": "${_route_outbound}" }' landing.sh
 ( ! grep -qF '"inbound": ["vless-in"' landing.sh )
 # 家宽 AnyTLS 导出不带 uTLS 指纹：fp=chrome / client-fingerprint: chrome 让客户端（v2rayN 等 sing-box 内核）
 # 新建会话偶发 “tls: first record does not look like a TLS handshake”，本机压测约 1.6%，标准 TLS 为 0（v2.1.1 及以前）。
 ( ! grep -qE "anytls://[^']*fp=" landing.sh )
 ( ! grep -qE "type: anytls[^\"]*client-fingerprint" landing.sh )
-# 自愈不能只认 REALITY 的 "handshake" 字段，否则 AnyTLS 线路机在诊断 / 自动更新时永远不会被修复。
+# 自愈不能只认 REALITY 的 "handshake" 字段，否则 AnyTLS 线路机在诊断 / 自动更新时永远不会被修复；
+# TCP 隧道线路机看 tunnel-out，WireGuard 看 wg-out。
 ( ! grep -qF "grep -q '\"handshake\"' \"\$LANDING_CONFIG\" || return 0" landing.sh )
-grep -qF "grep -q '\"tag\": \"wg-out\"' \"\$LANDING_CONFIG\" || return 0" landing.sh
+grep -qF 'grep -q '\''"tag": "tunnel-out"'\'' "$LANDING_CONFIG"' landing.sh
+grep -qF 'grep -q '\''"tag": "wg-out"'\'' "$LANDING_CONFIG"' landing.sh
+grep -qF 'grep -q '\''"final": "tunnel-out"'\'' "$LANDING_CONFIG" && _need=1' landing.sh
 # AnyTLS 自签证书目录随部署失败回滚恢复、随卸载删除（卸载时留下它，共享 sing-box 核心也删不掉），
 # 改为 VLESS 重新部署成功后也删除。
 grep -qF 'cp -a "$LANDING_CERT_DIR" "$INSTALL_BACKUP_DIR/cert"' landing.sh
@@ -575,6 +603,7 @@ bash tests/validate_anytls.sh
 bash tests/validate_vless.sh
 bash tests/validate_proxy.sh
 bash tests/validate_landing.sh
+bash tests/validate_realm.sh
 bash tests/validate_hy2_network.sh
 bash tests/validate_ss_network.sh
 
@@ -613,7 +642,8 @@ grep -q '^print_big_title()' install.sh
 grep -q 'NO_COLOR' install.sh
 grep -q 'SB_ASCII' install.sh
 grep -q 'r|R) load_net_info 1 ;;' install.sh
-[ "$(grep -c '^    local MENU_KEY_WIDTH=2$' install.sh)" -eq 2 ]
+# 服务管理（含 [11] Realm）、更新中心（含 [10]）、卸载中心以外若再有两位数编号菜单须同步此计数。
+[ "$(grep -c '^    local MENU_KEY_WIDTH=2$' install.sh)" -eq 3 ]
 # 返回主菜单曾每次重新联网探测 IP / 地区（常等 1–3 秒）：get_status 只能读缓存，不得直接探测。
 ! sed -n '/^get_status() {/,/^}$/p' install.sh | grep -qE 'probe_public_ip|get_ip_country'
 # 大字标题为天蓝纯色：v2.1.0 的青→蓝→紫逐行渐变在终端里色带明显、显得杂乱。

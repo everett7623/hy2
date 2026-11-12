@@ -8,8 +8,8 @@
 
 1. 确认工作区只包含本次发布内容。
 2. 确认本次变更集已按语义化版本提升版本，例如 `v1.0.3`。
-3. 同步七个脚本的文件头版本和更新日期。
-4. 同步菜单版本（含 `proxy.sh`）和 EUserv `SCRIPT_VERSION`。
+3. 同步九个脚本的文件头版本和更新日期（含 `landing.sh`、`realm.sh`、`proxy.sh`）。
+4. 同步菜单版本（含 `proxy.sh` / `landing.sh` / `realm.sh`）和 EUserv `SCRIPT_VERSION`。
 5. 更新 `tests/validate_scripts.sh` 中的 `EXPECTED_VERSION`。
 6. AnyTLS、VLESS 或 HTTP/SOCKS 变更需确认行为测试覆盖官方下载 URL、配置和服务文件生成；共享 sing-box 升级还需验证所有现存配置。
 7. 同步 `README.md` 的当前版本、日期和本次更新摘要。

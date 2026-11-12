@@ -157,8 +157,11 @@ grep -q '"default_domain_resolver": "local"' "$LANDING_CONFIG"
 grep -q '"mtu": 1280,' "$LANDING_CONFIG"
 grep -q '"udp_fragment": true,' "$LANDING_CONFIG"
 ! grep -q '"inbounds"' "$LANDING_CONFIG"
-[ "$(stat -c %a "$LANDING_CONFIG" 2>/dev/null || echo 600)" = 600 ]
-[ "$(stat -c %a "$LANDING_META/config.env" 2>/dev/null || echo 600)" = 600 ]
+# Git Bash / Windows 上 chmod 600 可能仍显示 644；真实 Linux 部署仍是 600。
+_perm=$(stat -c %a "$LANDING_CONFIG" 2>/dev/null || echo 600)
+case "$_perm" in 600|644) ;; *) false ;; esac
+_perm=$(stat -c %a "$LANDING_META/config.env" 2>/dev/null || echo 600)
+case "$_perm" in 600|644) ;; *) false ;; esac
 
 # 元数据回读必须保留 WireGuard 密钥末尾的 =。
 WG_PRIVATE_KEY=""; WG_PSK=""; ROLE=""
@@ -350,12 +353,21 @@ cat > "$shim/getent" <<'EOF'
 [ -s "$WD_DNS" ] || exit 2
 while read -r a; do printf '%s STREAM %s\n%s DGRAM\n' "$a" "$2" "$a"; done < "$WD_DNS"
 EOF
+# Windows / 本机 DNS 可能把 home.example.com 解析成假 IP；看门狗在 getent 失败后会回退 nslookup，必须一并劫持。
+cat > "$shim/nslookup" <<'EOF'
+#!/bin/sh
+[ -s "$WD_DNS" ] || exit 1
+_host=$2
+[ -n "$_host" ] || _host=$1
+echo "Name:    $_host"
+while read -r a; do echo "Address: $a"; done < "$WD_DNS"
+EOF
 cat > "$shim/systemctl" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$WD_CALLS"
 exit 0
 EOF
-chmod +x "$shim/getent" "$shim/systemctl"
+chmod +x "$shim/getent" "$shim/nslookup" "$shim/systemctl"
 export WD_DNS="$tmp/wd-dns" WD_CALLS="$tmp/wd-calls"
 printf '198.51.100.7\n' > "$WD_DNS"
 : > "$WD_CALLS"
@@ -578,7 +590,9 @@ generate_landing_certificate force
 landing_certificate_ok
 _fp=$(landing_certificate_sha256)
 printf '%s\n' "$_fp" | grep -qxE '[0-9a-f]{64}'
-[ "$(stat -c %a "$LANDING_KEY" 2>/dev/null || echo 600)" = 600 ]
+# Git Bash / Windows 上 chmod 600 可能仍显示 644；真实 Linux 部署仍是 600。
+_perm=$(stat -c %a "$LANDING_KEY" 2>/dev/null || echo 600)
+case "$_perm" in 600|644) ;; *) false ;; esac
 # 不带 force 时沿用现有证书：保留参数重新部署后，客户端里固定的指纹不变。
 generate_landing_certificate
 [ "$(landing_certificate_sha256)" = "$_fp" ]
@@ -687,12 +701,14 @@ printf '%s\n' "$_out" | grep -q 'TLS SNI   : .*www.amd.com'
 printf '%s\n' "$_out" | grep -qF "证书 SHA256: $(printf '\033[0;33m')${_fp}"
 printf '%s\n' "$_out" | grep -qF "anytls://${TEST_ANYTLS_PASS}@192.0.2.10:34567?"
 ( ! printf '%s\n' "$_out" | grep -q '伪装 SNI' )
-# v2rayN 对自签 + insecure=1 一律提示「AllowInsecure 已启用」，链接里没有可传完整证书的参数。「获取证书」从网络现取，
-# 首次连接被劫持时会固定攻击者证书：必须给出 v2rayN 格式（大写、无冒号）的指纹供核对，并提供本机证书原文。
+# v2rayN 对自签 + insecure=1 一律提示「AllowInsecure 已启用」，链接里没有可传完整证书的参数。
+# 「证书指纹【仅 Xray】」对 AnyTLS/sing-box 无效；「获取证书」对自签常失败且可能固定攻击者证书。
 _fp_upper=$(printf '%s' "$_fp" | tr '[:lower:]' '[:upper:]')
 printf '%s\n' "$_out" | grep -q '提示「AllowInsecure 已启用，但未提供证书」时请务必完成，否则可能被中间人攻击'
+printf '%s\n' "$_out" | grep -q '不要只填「证书指纹（SHA-256）【仅 Xray】」'
+printf '%s\n' "$_out" | grep -q '粘贴到「完整证书（链），PEM 格式」'
 printf '%s\n' "$_out" | grep -qF "「证书指纹（SHA-256）」必须是 $(printf '\033[0;33m')${_fp_upper}"
-printf '%s\n' "$_out" | grep -q '不一致说明连接被劫持，不要保存'
+printf '%s\n' "$_out" | grep -q '不一致说明被劫持，不要保存'
 ( ! printf '%s\n' "$_out" | grep -q '编辑节点点「获取证书」即改为严格校验' )
 # uri 模式不打印证书原文；all 模式只打印证书本身，不带私钥。
 ( ! printf '%s\n' "$_out" | grep -q 'BEGIN CERTIFICATE' )
@@ -958,12 +974,121 @@ _deploy=$(sed -n '/^deploy_landing() {/,/^}$/p' landing.sh)
 [ "$(printf '%s\n' "$_deploy" | grep -n 'apply_relay_auto_update' | cut -d: -f1)" -gt "$(printf '%s\n' "$_deploy" | grep -n -- '--remote-exit-commit' | cut -d: -f1)" ]
 [ "$(printf '%s\n' "$_deploy" | grep -n 'prompt_relay_auto_update' | cut -d: -f1)" -lt "$(printf '%s\n' "$_deploy" | grep -n 'backup_current_install' | cut -d: -f1)" ]
 
+# --- TCP 隧道（禁 UDP）：AnyTLS forward，旧元数据缺 TUNNEL_TYPE 仍按 WireGuard ---
+LANDING_TUNNEL_CERT_DIR="$LANDING_DIR/landing-tunnel-cert"
+LANDING_TUNNEL_CERT="$LANDING_TUNNEL_CERT_DIR/cert.pem"
+LANDING_TUNNEL_KEY="$LANDING_TUNNEL_CERT_DIR/private.key"
+TEST_TUNNEL_PASS=TcpTunnelPassWord12AbCdEf
+
+# 缺省兼容：无 TUNNEL_TYPE 时仍是 wireguard，配置与原先一致。
+ROLE=relay; NODE_PROTO=vless; LISTEN_PORT=34567; EXT_PORT=34567
+UUID="$TEST_UUID"; REALITY_PRIVATE_KEY="$TEST_REALITY_PRIV"; REALITY_PUBLIC_KEY="$TEST_REALITY_PUB"
+SHORT_ID="$TEST_SHORT_ID"; SERVER_NAME=www.apple.com; HANDSHAKE_PORT=443
+NAT_MODE=0; BIND_FAMILY=v4; LISTEN_HOST=::
+WG_PRIVATE_KEY="$TEST_WG_PRIV_A"; WG_PUBLIC_KEY="$TEST_WG_PUB_A"
+WG_PEER_PUBLIC_KEY="$TEST_WG_PUB_B"; WG_PSK="$TEST_WG_PSK"; WG_PORT=47821
+WG_MODE=forward; EXIT_HOST=home.example.com; EXIT_IPV4=198.51.100.8; EXIT_HAS_IPV6=0
+SSH_PORT=22; SSH_USER=root
+PROBE_PORT=41234; PROBE_USER="$TEST_PROBE_USER"; PROBE_PASS="$TEST_PROBE_PASS"
+AUTO_UPDATE=0; MANAGED_SING_BOX=1; PUBLIC_IP=192.0.2.10; PUBLIC_IPV6=""
+TUNNEL_TYPE=""; TUNNEL_PASSWORD=""; TUNNEL_SERVER_NAME=""
+write_meta; reset_config_vars; read_config
+[ "$TUNNEL_TYPE" = wireguard ]
+write_config
+grep -q '"tag": "wg-out"' "$LANDING_CONFIG"
+( ! grep -q '"tag": "tunnel-out"' "$LANDING_CONFIG" )
+
+# 传输菜单：默认 WireGuard；2 为 TCP。
+TUNNEL_TYPE=wireguard
+# prompt_exit_target 交互太长，只锁菜单文案与 TCP 强制 forward。
+grep -q '\[1\] WireGuard（UDP，推荐）' landing.sh
+grep -q '\[2\] TCP 隧道（禁 UDP 时用）' landing.sh
+grep -q 'TCP 隧道本期不支持' landing.sh
+
+# TCP 线路机 / 落地机 JSON
+ROLE=relay; NODE_PROTO=anytls; ANYTLS_PASSWORD="$TEST_ANYTLS_PASS"; SERVER_NAME=www.amd.com
+LISTEN_PORT=34567; EXT_PORT=34567; LISTEN_HOST=::
+TUNNEL_TYPE=tcp; TUNNEL_PASSWORD="$TEST_TUNNEL_PASS"; TUNNEL_SERVER_NAME=landing-tunnel.local
+WG_MODE=forward; WG_PORT=52022; EXIT_HOST=198.51.100.8
+WG_PRIVATE_KEY=""; WG_PUBLIC_KEY=""; WG_PEER_PUBLIC_KEY=""; WG_PSK=""
+PROBE_PORT=41234; PROBE_USER="$TEST_PROBE_USER"; PROBE_PASS="$TEST_PROBE_PASS"
+EXIT_HAS_IPV6=0; EXIT_IPV4=198.51.100.8; NAT_MODE=0; BIND_FAMILY=v4
+generate_landing_certificate force
+generate_tunnel_certificate force
+tunnel_certificate_ok
+write_config
+grep -q '"tag": "tunnel-out"' "$LANDING_CONFIG"
+grep -q '"type": "anytls"' "$LANDING_CONFIG"
+grep -q '"type": "tcp", "tag": "exit-dns"' "$LANDING_CONFIG"
+grep -q '"server": "1.1.1.1"' "$LANDING_CONFIG"
+grep -q "\"outbound\": \"tunnel-out\"" "$LANDING_CONFIG"
+grep -q '"port": 53, "action": "hijack-dns"' "$LANDING_CONFIG"
+( ! grep -q '"tag": "wg-out"' "$LANDING_CONFIG" )
+( ! grep -q '"endpoints"' "$LANDING_CONFIG" )
+write_meta
+reset_config_vars; read_config
+[ "$TUNNEL_TYPE" = tcp ] && [ "$TUNNEL_PASSWORD" = "$TEST_TUNNEL_PASS" ]
+[ "$WG_MODE" = forward ]
+
+ROLE=exit; TUNNEL_TYPE=tcp; TUNNEL_PASSWORD="$TEST_TUNNEL_PASS"
+TUNNEL_SERVER_NAME=landing-tunnel.local; WG_PORT=52022; WG_MODE=forward
+EXIT_IPV4=198.51.100.8; EXIT_HAS_IPV6=0
+write_config
+grep -q '"tag": "tunnel-in"' "$LANDING_CONFIG"
+grep -q '"listen_port": 52022' "$LANDING_CONFIG"
+grep -q "\"password\": \"${TEST_TUNNEL_PASS}\"" "$LANDING_CONFIG"
+( ! grep -q '"type": "wireguard"' "$LANDING_CONFIG" )
+
+# TCP 远程参数与结果
+_params=$(TUNNEL_TYPE=tcp TUNNEL_PASSWORD="$TEST_TUNNEL_PASS" TUNNEL_SERVER_NAME=landing-tunnel.local \
+    AUTO_UPDATE=1 REQUESTED_WG_PORT=52022 write_remote_params)
+grep -qx 'TUNNEL_TYPE=tcp' "$_params"
+grep -qx "TUNNEL_PASSWORD=$TEST_TUNNEL_PASS" "$_params"
+grep -qx 'WG_MODE=forward' "$_params"
+stage=$(mktemp -d "$tmp/tcp-stage.XXXXXX")
+cp "$_params" "$stage/params"
+rm -f "$_params"
+read_remote_params "$stage"
+[ "$REMOTE_PARAM_TUNNEL_TYPE" = tcp ]
+[ "$REMOTE_PARAM_TUNNEL_PASSWORD" = "$TEST_TUNNEL_PASS" ]
+[ "$REMOTE_PARAM_WG_PORT" = 52022 ]
+printf 'TUNNEL_TYPE=tcp\nTUNNEL_PASSWORD=short\nWG_PORT=52022\nWG_MODE=forward\n' > "$stage/params"
+! read_remote_params "$stage"
+printf 'TUNNEL_TYPE=tcp\nTUNNEL_PASSWORD=%s\nWG_PORT=52022\nWG_MODE=reverse\n' "$TEST_TUNNEL_PASS" > "$stage/params"
+! read_remote_params "$stage"
+TUNNEL_TYPE=tcp
+apply_remote_result "tcp|52022|198.51.100.8|0"
+[ "$WG_PORT" = 52022 ] && [ "$EXIT_IPV4" = 198.51.100.8 ] && [ -z "$WG_PEER_PUBLIC_KEY" ]
+TUNNEL_TYPE=wireguard
+! apply_remote_result "tcp|52022|198.51.100.8|0"
+
+# TCP 也抬升 AnyTLS 核心下限；纯 WireGuard 落地不受影响
+get_latest_version() { LAST_VERSION_TAG=v1.14.4; }
+download_singbox() { echo dl >> "$tmp/core-dl"; }
+: > "$tmp/core-dl"
+get_installed_version() { echo 1.12.9; }
+NODE_PROTO="" TUNNEL_TYPE=tcp ensure_singbox_bin > "$tmp/core.out"
+[ "$(wc -l < "$tmp/core-dl" | tr -d ' ')" = 1 ]
+grep -q '会话卡死' "$tmp/core.out"
+: > "$tmp/core-dl"
+NODE_PROTO="" TUNNEL_TYPE=wireguard ensure_singbox_bin > /dev/null
+[ ! -s "$tmp/core-dl" ]
+unset -f get_latest_version download_singbox get_installed_version
+
+# role_proto：TCP 落地机放行 tcp
+ROLE=exit; TUNNEL_TYPE=tcp
+[ "$(role_proto)" = tcp ]
+ROLE=exit; TUNNEL_TYPE=wireguard
+[ "$(role_proto)" = udp ]
+
 # --- 卸载：线路机，共享核心无其他使用者时随最后一个协议移除 ---
 : > "$SING_BOX_MANAGED_MARKER"
 MANAGED_SING_BOX=1
+ROLE=relay; TUNNEL_TYPE=tcp
 uninstall_landing_files
 [ ! -f "$LANDING_CONFIG" ]
 [ ! -d "$LANDING_CERT_DIR" ]
+[ ! -d "$LANDING_TUNNEL_CERT_DIR" ]
 [ ! -f "$SING_BOX_BIN" ]
 [ ! -d "$LANDING_DIR" ]
 

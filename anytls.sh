@@ -2,12 +2,12 @@
 #====================================================================================
 # 项目：AnyTLS Management Script
 # 作者：everettlabs
-# 版本：v2.2.2
+# 版本：v2.3.0
 # GitHub: https://github.com/everett7623/hy2
 # Seedloc博客: https://seedloc.com
 # VPSknow网站：https://vpsknow.com
 # Nodeloc论坛: https://nodeloc.com
-# 更新日期: 2026-11-10
+# 更新日期: 2026-11-12
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
 # 支持环境: 标准 VPS / NAT 机器 / IPv6 单栈 / 双栈机器
@@ -2363,15 +2363,17 @@ print_certificate_verification_status() {
 }
 
 # v2rayN 的 AnyTLS 走 sing-box 内核，只有节点里存了完整 PEM 证书才会关掉 insecure、不再告警，
-# 链接参数（包括 pcs）填不进这个字段。「获取证书」是从网络现取的，首次连接就被劫持时会把
-# 攻击者的证书固定下来，所以给出本机证书原文，并按 v2rayN 的显示格式（大写、无冒号）给出指纹供核对。
+# 链接参数（包括 pcs）填不进这个字段；「证书指纹（SHA-256）【仅 Xray】」对 AnyTLS 无效。
+# 「获取证书」对自签常失败，且从网络现取，首次被劫持时会固定攻击者证书，所以优先给出本机证书原文。
 print_v2rayn_certificate_guide() {
     local _fp="${1:-}" _show_pem="${2:-0}"
     [ "$CERT_MODE" = "self_signed" ] && [ -n "$_fp" ] || return 1
     _fp=$(printf '%s' "$_fp" | tr '[:lower:]' '[:upper:]')
     echo -e "${YELLOW}v2rayN 证书校验${PLAIN}（提示「AllowInsecure 已启用，但未提供证书」时请务必完成，否则可能被中间人攻击）："
-    echo -e "  方法一：编辑节点 → 把本机证书整段粘贴到「完整证书（链），PEM 格式」→ 确定，即改为严格校验且不再提示"
-    echo -e "  方法二：编辑节点 → 点「获取证书」，「证书指纹（SHA-256）」必须是 ${YELLOW}${_fp}${PLAIN}，不一致说明连接被劫持，不要保存"
+    echo -e "  AnyTLS 内核是 sing-box：不要只填「证书指纹（SHA-256）【仅 Xray】」，那一栏对 AnyTLS 无效，警告也不会消失"
+    echo -e "  正确做法：编辑节点 →「固定证书」→ 把本机证书整段粘贴到「完整证书（链），PEM 格式」（含 BEGIN/END 行）→ 确定"
+    echo -e "  粘贴成功后「跳过证书验证」会自动关掉，提示消失；只填指纹或关掉跳过但不贴证书，会报 certificate signed by unknown authority"
+    echo -e "  自签时「获取证书」常失败；若仍要点，成功后「完整证书」须非空，且「证书指纹（SHA-256）」必须是 ${YELLOW}${_fp}${PLAIN}，不一致说明被劫持，不要保存"
     [ "$_show_pem" = "1" ] || return 0
     awk '/-----BEGIN CERTIFICATE-----/ { p = 1 } p { print } /-----END CERTIFICATE-----/ { exit }' "$CERT_PATH"
 }
@@ -2881,7 +2883,7 @@ main_menu() {
         fi
 
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.2.2${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}AnyTLS Management Script${PLAIN} ${DIM}v2.3.0${PLAIN}"
         echo -e "  ${DIM}sing-box native AnyTLS inbound${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

@@ -1,14 +1,14 @@
 #!/bin/bash
 #====================================================================================
 # 项目：Sing-box Multi-Protocol Tools — 一键管理入口
-# 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · EUserv IPv6 HY2
+# 脚本：VLESS · AnyTLS · Hysteria2 · Shadowsocks · HTTP/SOCKS · 家宽中转 · Realm TCP · EUserv IPv6 HY2
 # 作者：everettlabs
-# 版本：v2.2.2
+# 版本：v2.3.0
 # GitHub  : https://github.com/everett7623/hy2
 # 博客    : https://seedloc.com
 # 测评    : https://vpsknow.com
 # 论坛    : https://nodeloc.com
-# 更新日期: 2026-11-10
+# 更新日期: 2026-11-12
 #====================================================================================
 
 # ============================================================
@@ -79,6 +79,7 @@ ANYTLS_URL="${BASE_URL}/anytls.sh"
 VLESS_URL="${BASE_URL}/vless.sh"
 PROXY_URL="${BASE_URL}/proxy.sh"
 LANDING_URL="${BASE_URL}/landing.sh"
+REALM_URL="${BASE_URL}/realm.sh"
 EUSERV_URL="${BASE_URL}/euservhy2.sh"
 BACKUP_DIR="/root/singbox-tools/backup"
 LAST_BACKUP_FILE=""
@@ -503,6 +504,14 @@ get_status() {
         LANDING_STATUS="${RED}${GLYPH_DOT} 未部署${PLAIN}"
     fi
 
+    if [ -x "/usr/local/bin/realm" ] && [ -f "/etc/realm/config.toml" ]; then
+        service_active realm /var/run/realm.pid \
+            && REALM_STATUS="${GREEN}${GLYPH_DOT} 运行中${PLAIN}" \
+            || REALM_STATUS="${YELLOW}${GLYPH_DOT} 已停止${PLAIN}"
+    else
+        REALM_STATUS="${RED}${GLYPH_DOT} 未部署${PLAIN}"
+    fi
+
     if [ "$NET_IPV6" != "无" ]; then
         [ "$NET_IPV4" = "无" ] \
             && EUSERV_STATUS="${CYAN}${GLYPH_DOT} 纯 IPv6 可用${PLAIN}" \
@@ -511,9 +520,9 @@ get_status() {
         EUSERV_STATUS="${RED}${GLYPH_DOT} 不适用${PLAIN}"
     fi
 
-    # 首页标题行的真实计数（6 个可安装协议；EUserv 只表示网络是否适用，不计入）。
+    # 首页标题行的真实计数（7 个可安装协议；EUserv 只表示网络是否适用，不计入）。
     UI_RUNNING=0; UI_STOPPED=0; UI_ABSENT=0
-    for _state in "$VLESS_STATUS" "$ANYTLS_STATUS" "$HY2_STATUS" "$SS_STATUS" "$PROXY_STATUS" "$LANDING_STATUS"; do
+    for _state in "$VLESS_STATUS" "$ANYTLS_STATUS" "$HY2_STATUS" "$SS_STATUS" "$PROXY_STATUS" "$LANDING_STATUS" "$REALM_STATUS"; do
         case "$_state" in
             *运行中*) UI_RUNNING=$((UI_RUNNING + 1)) ;;
             *已停止*) UI_STOPPED=$((UI_STOPPED + 1)) ;;
@@ -642,7 +651,7 @@ show_header() {
     local _title _state=""
     clear_screen
     print_big_title
-    _title="  ${WHITE}${BOLD}PROXY SUITE${PLAIN} ${DIM}${GLYPH_MID}${PLAIN} ${YELLOW}${BOLD}v2.2.2${PLAIN}"
+    _title="  ${WHITE}${BOLD}PROXY SUITE${PLAIN} ${DIM}${GLYPH_MID}${PLAIN} ${YELLOW}${BOLD}v2.3.0${PLAIN}"
     # 计数来自上一次 get_status（主菜单每次刷新都会调用）；还没统计过时不显示。
     if [ -n "${UI_RUNNING:-}" ]; then
         _state="${GREEN}${GLYPH_DOT} 运行 ${UI_RUNNING}${PLAIN}"
@@ -678,14 +687,15 @@ show_status_summary() {
     echo -e "  Shadowsocks   $(echo -e "$SS_STATUS")"
     echo -e "  HTTP/SOCKS    $(echo -e "$PROXY_STATUS")"
     echo -e "  家宽中转      $(echo -e "$LANDING_STATUS")"
+    echo -e "  Realm TCP     $(echo -e "$REALM_STATUS")"
     echo -e "  EUserv HY2    $(echo -e "$EUSERV_STATUS")"
     print_rule 1
 }
 
 select_protocol_and_run() {
-    local _title="$1" _action="${2:-}" _show_proxy=1 _range="0-7"
+    local _title="$1" _action="${2:-}" _show_proxy=1 _range="0-8"
     case "$_action" in
-        mihomo|clash|surfboard|shadowrocket|loon|quantumult|quantumultx) _show_proxy=0; _range="0-6" ;;
+        mihomo|clash|surfboard|shadowrocket|loon|quantumult|quantumultx) _show_proxy=0; _range="0-7" ;;
     esac
     while true; do
         show_header
@@ -698,10 +708,12 @@ select_protocol_and_run() {
         if [ "$_show_proxy" = "1" ]; then
             menu_item 5 "HTTP/SOCKS 代理"
             menu_item 6 "家宽 / 落地中转（线路机 + 落地机）"
-            menu_item 7 "EUserv IPv6-only HY2"
+            menu_item 7 "Realm TCP 中转"
+            menu_item 8 "EUserv IPv6-only HY2"
         else
             menu_item 5 "家宽 / 落地中转（线路机 + 落地机）"
-            menu_item 6 "EUserv IPv6-only HY2"
+            menu_item 6 "Realm TCP 中转"
+            menu_item 7 "EUserv IPv6-only HY2"
             echo -e "  ${DIM}（HTTP/SOCKS 仅支持 URI / 二维码导出）${PLAIN}"
         fi
         menu_item 0 "返回"
@@ -724,11 +736,19 @@ select_protocol_and_run() {
                 if [ "$_show_proxy" = "1" ]; then
                     run_script "家宽中转" "$LANDING_URL" "$_action"
                 else
-                    run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"
+                    run_script "Realm TCP 中转" "$REALM_URL" "$_action"
                 fi
                 return
                 ;;
             7)
+                if [ "$_show_proxy" = "1" ]; then
+                    run_script "Realm TCP 中转" "$REALM_URL" "$_action"
+                else
+                    run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"
+                fi
+                return
+                ;;
+            8)
                 if [ "$_show_proxy" = "1" ]; then
                     run_script "EUserv IPv6 HY2" "$EUSERV_URL" "$_action"; return
                 fi
@@ -800,6 +820,7 @@ show_all_services() {
     echo -e "Shadowsocks : $(echo -e "$SS_STATUS")"
     echo -e "HTTP/SOCKS  : $(echo -e "$PROXY_STATUS")"
     echo -e "家宽中转    : $(echo -e "$LANDING_STATUS")"
+    echo -e "Realm TCP   : $(echo -e "$REALM_STATUS")"
     echo -e "EUserv HY2  : $(echo -e "$EUSERV_STATUS")"
 }
 
@@ -865,9 +886,10 @@ service_management_menu() {
         menu_item 8 "查看监听端口"
         menu_item 9 "查看最近日志"
         menu_item 10 "家宽中转服务管理"
+        menu_item 11 "Realm TCP 服务管理"
         menu_item 0 "返回"
         echo ""
-        read -r -p "  请选择 [0-10]: " opt
+        read -r -p "  请选择 [0-11]: " opt
         case "$opt" in
             1) protocol_service_menu "VLESS" "vless-server" "/var/run/vless-server.pid" "/var/log/vless-server.log" "VLESS" "$VLESS_URL" ;;
             2) protocol_service_menu "AnyTLS" "anytls-server" "/var/run/anytls-server.pid" "/var/log/anytls-server.log" "AnyTLS" "$ANYTLS_URL" ;;
@@ -885,9 +907,11 @@ service_management_menu() {
                 service_logs shadowsocks-server /var/log/ssserver.log
                 service_logs proxy-server /var/log/proxy-server.log
                 service_logs landing-server /var/log/landing-server.log
+                service_logs realm /var/log/realm.log
                 pause_return
                 ;;
             10) protocol_service_menu "家宽中转" "landing-server" "/var/run/landing-server.pid" "/var/log/landing-server.log" "家宽中转" "$LANDING_URL" ;;
+            11) protocol_service_menu "Realm TCP" "realm" "/var/run/realm.pid" "/var/log/realm.log" "Realm TCP 中转" "$REALM_URL" ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -925,6 +949,7 @@ system_detect() {
     echo "SS       : $(echo -e "$SS_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
     echo "HTTP/SOCKS: $(echo -e "$PROXY_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
     echo "Landing  : $(echo -e "$LANDING_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
+    echo "Realm    : $(echo -e "$REALM_STATUS" | sed 's/\x1b\[[0-9;]*m//g')"
     echo "BBR      : ${BBR_STATUS}"
     echo "Time     : $(date '+%F %T %Z')"
     echo "Disk     : $(df -h / 2>/dev/null | awk 'NR==2 {print $3" / "$2" ("$5" used)"}')"
@@ -1060,7 +1085,7 @@ backup_config() {
         return 1
     }
     LAST_BACKUP_FILE="$_file"
-    printf '%s\n' "script_version=v2.2.2" > "${BACKUP_DIR}/latest-version.txt"
+    printf '%s\n' "script_version=v2.3.0" > "${BACKUP_DIR}/latest-version.txt"
     echo -e "${GREEN}[OK] VPS 配置备份完成: ${_file}${PLAIN}"
 }
 
@@ -1279,6 +1304,7 @@ upgrade_all_cores() {
 uninstall_all_protocols() {
     local _failed=0 _total=6
     echo -e "${RED}[WARN] 将依次卸载 VLESS、AnyTLS、Hysteria2、Shadowsocks、HTTP/SOCKS、EUserv HY2。${PLAIN}"
+    echo -e "${DIM}家宽中转与 Realm TCP 中转可能提示落地机 SSH 密码，请在卸载中心单独卸载。${PLAIN}"
     echo -e "${YELLOW}[INFO] 如需 VPS 配置备份，请先在“备份 / 恢复”中手动创建。${PLAIN}"
     confirm_action "确认批量卸载全部协议" || { pause_return; return 1; }
     run_script "VLESS" "$VLESS_URL" "uninstall" || _failed=$((_failed + 1))
@@ -1298,6 +1324,7 @@ uninstall_all_protocols() {
 }
 
 update_menu() {
+    local MENU_KEY_WIDTH=2
     while true; do
         show_header
         echo -e "${WHITE}${BOLD}更新 / 升级中心${PLAIN}"
@@ -1312,9 +1339,10 @@ update_menu() {
         menu_item 7 "刷新全部脚本缓存"
         menu_item 8 "升级全部核心（VLESS/AnyTLS/HY2/SS/HTTP/SOCKS）"
         menu_item 9 "升级家宽中转核心（可同时升级落地机）"
+        menu_item 10 "升级 Realm 二进制"
         menu_item 0 "返回"
         echo ""
-        read -r -p "  请选择 [0-9]: " opt
+        read -r -p "  请选择 [0-10]: " opt
         case "$opt" in
             1)
                 if download_script_to_cache install.sh "$INSTALL_URL"; then
@@ -1339,12 +1367,14 @@ update_menu() {
                 download_script_to_cache ss.sh "$SS_URL" || { echo -e "${RED}[ERROR] ss.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 download_script_to_cache proxy.sh "$PROXY_URL" || { echo -e "${RED}[ERROR] proxy.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 download_script_to_cache landing.sh "$LANDING_URL" || { echo -e "${RED}[ERROR] landing.sh 缓存刷新失败${PLAIN}"; _ok=0; }
+                download_script_to_cache realm.sh "$REALM_URL" || { echo -e "${RED}[ERROR] realm.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 download_script_to_cache euservhy2.sh "$EUSERV_URL" || { echo -e "${RED}[ERROR] euservhy2.sh 缓存刷新失败${PLAIN}"; _ok=0; }
                 [ "$_ok" = "1" ] && echo -e "${GREEN}[OK] 全部脚本缓存刷新完成${PLAIN}" || echo -e "${YELLOW}[WARN] 部分脚本缓存刷新失败${PLAIN}"
                 pause_return
                 ;;
             8) upgrade_all_cores ;;
             9) run_upgrade_action "家宽中转" "$LANDING_URL" ;;
+            10) run_upgrade_action "Realm TCP 中转" "$REALM_URL" ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
         esac
@@ -1364,13 +1394,14 @@ uninstall_menu() {
         menu_item 4 "卸载 Shadowsocks"
         menu_item 5 "卸载 HTTP/SOCKS"
         menu_item 6 "卸载家宽中转"
-        menu_item 7 "卸载 EUserv HY2"
-        menu_item 8 "卸载全部协议"
-        menu_item 9 "删除所有配置"
-        menu_item 10 "删除所有备份"
+        menu_item 7 "卸载 Realm TCP 中转"
+        menu_item 8 "卸载 EUserv HY2"
+        menu_item 9 "卸载全部协议"
+        menu_item 10 "删除所有配置"
+        menu_item 11 "删除所有备份"
         menu_item 0 "返回"
         echo ""
-        read -r -p "  请选择 [0-10]: " opt
+        read -r -p "  请选择 [0-11]: " opt
         case "$opt" in
             1) run_uninstall_action "VLESS" "$VLESS_URL" ;;
             2) run_uninstall_action "AnyTLS" "$ANYTLS_URL" ;;
@@ -1378,21 +1409,26 @@ uninstall_menu() {
             4) run_uninstall_action "Shadowsocks" "$SS_URL" ;;
             5) run_uninstall_action "HTTP/SOCKS" "$PROXY_URL" ;;
             6) run_uninstall_action "家宽中转" "$LANDING_URL" ;;
-            7) run_uninstall_action "EUserv IPv6 HY2" "$EUSERV_URL" ;;
-            8) uninstall_all_protocols ;;
-            9)
-                echo -e "${RED}这会删除 /etc/sing-box、/etc/hysteria、/etc/shadowsocks-rust 和相关服务文件。${PLAIN}"
+            7) run_uninstall_action "Realm TCP 中转" "$REALM_URL" ;;
+            8) run_uninstall_action "EUserv IPv6 HY2" "$EUSERV_URL" ;;
+            9) uninstall_all_protocols ;;
+            10)
+                echo -e "${RED}这会删除 /etc/sing-box、/etc/hysteria、/etc/shadowsocks-rust、/etc/realm 和相关服务文件。${PLAIN}"
                 read -r -p "请输入 DELETE-CONFIG 确认: " c
                 if [ "$c" = "DELETE-CONFIG" ]; then
                     service_action vless-server stop /var/run/vless-server.pid >/dev/null 2>&1 || true
                     service_action anytls-server stop /var/run/anytls-server.pid >/dev/null 2>&1 || true
                     service_action proxy-server stop /var/run/proxy-server.pid >/dev/null 2>&1 || true
                     service_action landing-server stop /var/run/landing-server.pid >/dev/null 2>&1 || true
+                    service_action realm stop /var/run/realm.pid >/dev/null 2>&1 || true
+                    service_action realm-node stop /var/run/realm-node.pid >/dev/null 2>&1 || true
                     service_action hysteria-server stop /var/run/hysteria.pid >/dev/null 2>&1 || true
                     service_action shadowsocks-server stop /var/run/ssserver.pid >/dev/null 2>&1 || true
-                    rm -rf /etc/sing-box /etc/hysteria /etc/shadowsocks-rust
+                    rm -rf /etc/sing-box /etc/hysteria /etc/shadowsocks-rust /etc/realm
                     rm -f /etc/shadowsocks.json /etc/systemd/system/vless-server.service /etc/systemd/system/anytls-server.service /etc/systemd/system/proxy-server.service /etc/systemd/system/hysteria-server.service /etc/systemd/system/shadowsocks-server.service
                     rm -f /etc/systemd/system/landing-server.service /etc/init.d/landing-server
+                    rm -f /etc/systemd/system/realm.service /etc/init.d/realm /etc/systemd/system/realm-node.service /etc/init.d/realm-node
+                    rm -f /usr/local/bin/realm /usr/local/bin/realm-node
                     rm -f /etc/init.d/vless-server /etc/init.d/anytls-server /etc/init.d/proxy-server /etc/init.d/hysteria-server /etc/init.d/shadowsocks-server
                     [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload
                     echo -e "${GREEN}[OK] 配置与服务文件已删除${PLAIN}"
@@ -1401,7 +1437,7 @@ uninstall_menu() {
                 fi
                 pause_return
                 ;;
-            10)
+            11)
                 echo -e "${RED}这会删除 ${BACKUP_DIR} 下所有备份。${PLAIN}"
                 read -r -p "请输入 DELETE-BACKUP 确认: " c
                 if [ "$c" = "DELETE-BACKUP" ] && [ -d "$BACKUP_DIR" ]; then

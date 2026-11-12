@@ -7,7 +7,7 @@
 - 保留每个脚本的 Bash bootstrap、CRLF guard、TTY fix
 - 不使用 `grep -oP`、`${var,,}` 或 `head -c`
 - 不创建共享库，所有工具函数在脚本间复制
-- 每次提交必须同步 7 个脚本的版本号、README.md、CHANGELOG.md 和测试期望
+- 每次提交必须同步 9 个脚本的版本号、README.md、CHANGELOG.md 和测试期望
 
 ## 快速命令
 
@@ -20,6 +20,9 @@ bash hy2.sh
 bash ss.sh
 bash anytls.sh
 bash vless.sh
+bash proxy.sh
+bash landing.sh
+bash realm.sh
 bash euservhy2.sh
 
 # 检查换行符
