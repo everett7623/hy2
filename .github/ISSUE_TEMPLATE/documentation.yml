@@ -1,0 +1,55 @@
+name: 文档问题
+description: README、贡献指南或 docs 里的说明有误、过时或不好找。
+title: "[文档] "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        用来指出文档和脚本实际行为不一致、写错，或读者找不到。表单会自动加上 `documentation` 标签。
+
+        脚本跑失败了请用「故障报告」。希望增加文档里还没有的能力，请用「功能建议」。
+
+  - type: dropdown
+    id: doc
+    attributes:
+      label: 哪一份文档
+      description: 可多选。请对照 GitHub main 上的文件，而不是以前下载的副本。
+      multiple: true
+      options:
+        - README.md
+        - CONTRIBUTING.md
+        - CHANGELOG.md
+        - docs/ARCHITECTURE.md
+        - docs/TESTING.md
+        - docs/RELEASE.md
+        - docs/MAINTENANCE.md
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 哪里有问题
+      description: 写章节标题或文件名，以及现在的说法为什么不对。
+      placeholder: "例如：README「常见问题」里某一步和菜单上的选项对不上"
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建议改成什么样（可选）
+      placeholder: "有现成表述就贴在这里，没有可以留空"
+
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我对照的是 GitHub main 上的当前文档
+          required: true
+        - label: 我已经搜索过已有 issue，没有找到相同说明
+          required: true

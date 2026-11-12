@@ -2,6 +2,17 @@
 
 感谢参与 Sing-box Multi-Protocol Tools 项目。此仓库直接向 VPS 用户分发 root 权限 Shell 脚本，改动应优先保证可恢复性、跨发行版兼容和远程执行安全。
 
+## 反馈问题
+
+请用 `.github/ISSUE_TEMPLATE/` 里的 Issue 表单，不要开空白 issue：
+
+- **故障报告**：脚本、脚本版本、发行版和版本、CPU 架构、网络类型、安装命令、复现步骤、期望与实际结果、打码后的日志
+- **功能建议**：希望增加的能力（例如家宽 / 落地中转支持新的落地协议）
+- **使用提问**：先看 [README 常见问题](README.md#常见问题)
+- **文档问题**：README、本文件或 `docs/` 有误或过时
+
+提交前打码公网 IP、域名、密码、UUID、密钥、节点链接和 SSH 信息。表单会带上 `bug`、`enhancement`、`question` 或 `documentation`。维护者再按脚本补标签：`hy2.sh` 与 `euservhy2.sh` 用 `script: hy2`，其余为 `script: anytls`、`script: vless`、`script: ss`、`script: landing`、`script: proxy`、`script: install`。信息不够时加 `needs-info`，复现后加 `confirmed`。
+
 ## 开发前必读
 
 1. 阅读 `CLAUDE.md`（统一 AI 开发指南），了解不可移除的兼容约束。

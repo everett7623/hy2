@@ -1,0 +1,20 @@
+blank_issues_enabled: false
+contact_links:
+  - name: README 常见问题
+    url: https://github.com/everett7623/hy2/blob/main/README.md#常见问题
+    about: 无法输入、标题错位、下载失败、误判成纯 IPv6、客户端连不上，先看这里。
+  - name: 系统与网络支持
+    url: https://github.com/everett7623/hy2/blob/main/README.md#系统与网络支持
+    about: 支持的发行版和 CPU 架构，以及 IPv4、双栈、纯 IPv6、NAT。
+  - name: 家宽 / 落地中转
+    url: https://github.com/everett7623/hy2/blob/main/README.md#家宽--落地中转
+    about: 线路机与落地机怎么部署、节点用 AnyTLS 还是 VLESS、两种 WireGuard 方向。
+  - name: 变更日志
+    url: https://github.com/everett7623/hy2/blob/main/CHANGELOG.md
+    about: 看最近修过什么，避免把已经修好的问题再报一遍。
+  - name: 发布版本
+    url: https://github.com/everett7623/hy2/releases
+    about: 对照 sb 或脚本菜单上的版本号，确认是不是当前最新脚本。
+  - name: 贡献指南
+    url: https://github.com/everett7623/hy2/blob/main/CONTRIBUTING.md
+    about: 要改脚本或提交拉取请求时，从贡献指南开始。

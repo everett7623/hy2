@@ -1,0 +1,116 @@
+name: 使用提问
+description: 不确定怎么操作，或想确认某种现象是不是正常。请先看 README 常见问题。
+title: "[提问] "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先看 [README 常见问题](https://github.com/everett7623/hy2/blob/main/README.md#常见问题)：无法输入、标题错位、下载失败、误判纯 IPv6、客户端连不上、VLESS 慢、AnyTLS 偶发握手失败，那里已经写了。
+
+        家宽 / 落地中转的部署方式、AnyTLS 与 VLESS、reverse 与 forward，见 [家宽 / 落地中转](https://github.com/everett7623/hy2/blob/main/README.md#家宽--落地中转)。
+
+        表单会自动加上 `question` 标签。能稳定复现的异常请改用「故障报告」。不要在正文里贴 IP、密码、UUID、密钥、节点链接或 SSH 信息。
+
+  - type: dropdown
+    id: script
+    attributes:
+      label: 相关脚本
+      description: 可多选。家宽 / 落地中转选 landing.sh。
+      multiple: true
+      options:
+        - hy2.sh（Hysteria 2）
+        - euservhy2.sh（EUserv IPv6-only Hysteria 2）
+        - ss.sh（Shadowsocks-Rust）
+        - anytls.sh（AnyTLS）
+        - vless.sh（VLESS REALITY）
+        - proxy.sh（HTTP/SOCKS）
+        - landing.sh（家宽 / 落地中转）
+        - install.sh（统一入口 sb）
+        - 不确定
+    validations:
+      required: true
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: 问题属于
+      options:
+        - 安装和菜单怎么用
+        - 该选哪种协议或导出格式
+        - 客户端怎么导入
+        - 连不上、很慢，但还不确定是不是故障
+        - 家宽 / 落地中转
+        - 升级、卸载或自动更新
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 想问什么
+      placeholder: "用一两段话说清楚你想确认的事"
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已经看过或试过什么
+      description: 写过哪些菜单、看过 README 的哪一节。还没操作就写「还没安装」。
+      placeholder: "例如：看过常见问题里的「服务已安装但客户端无法连接」，菜单里服务是运行中"
+    validations:
+      required: true
+
+  - type: input
+    id: script_version
+    attributes:
+      label: 脚本版本（可选）
+      description: sb 首页 PROXY SUITE 旁边，或脚本菜单标题上的版本。
+      placeholder: "例如 v2.2.2"
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 发行版（可选）
+      options:
+        - 未提供
+        - Debian
+        - Ubuntu
+        - CentOS / RHEL
+        - Rocky Linux
+        - AlmaLinux
+        - Fedora
+        - Arch Linux
+        - Manjaro
+        - Alpine Linux
+        - 其他
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: 网络类型（可选）
+      multiple: true
+      options:
+        - 公网 IPv4
+        - 双栈（IPv4 + IPv6）
+        - 纯 IPv6
+        - NAT（需要端口映射）
+        - 家宽或住宅出口
+        - EUserv IPv6-only
+        - 已开启 WARP
+        - 不确定
+
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经看过 README 的常见问题，没有找到答案
+          required: true
+        - label: 我已经搜索过已有 issue
+          required: true
+        - label: 正文没有 IP、密码、密钥、节点链接或 SSH 信息
+          required: true
