@@ -2,11 +2,11 @@
 #====================================================================================
 # 项目：Realm TCP Relay Management Script
 # 作者：everettlabs
-# 版本：v2.3.0
+# 版本：v2.3.1
 # GitHub: https://github.com/everett7623/hy2
-# Seedloc博客: https://seedloc.com
-# VPSknow网站：https://vpsknow.com
-# Nodeloc论坛: https://nodeloc.com
+# 博客    : https://seedloc.com
+# 测评    : https://vpsknow.com
+# 推荐社区: https://nodeloc.com
 # 更新日期: 2026-11-12
 #
 # 支持系统: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Arch / Alpine
@@ -2398,7 +2398,7 @@ main_menu() {
             _status="${RED}未安装${PLAIN}"
         fi
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
-        echo -e "  ${GREEN}${BOLD}Realm TCP Relay Management Script${PLAIN} ${DIM}v2.3.0${PLAIN}"
+        echo -e "  ${GREEN}${BOLD}Realm TCP Relay Management Script${PLAIN} ${DIM}v2.3.1${PLAIN}"
         echo -e "  ${DIM}线路机 realm TCP 转发 + 落地机 AnyTLS / VLESS 节点${PLAIN}"
         echo -e "${SKYBLUE}${BOLD}================================================${PLAIN}"
         echo -e "  项目地址: ${YELLOW}https://github.com/everett7623/hy2${PLAIN}"

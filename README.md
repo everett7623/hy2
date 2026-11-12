@@ -8,7 +8,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/everett7623/hy2?style=flat&color=yellow)](https://github.com/everett7623/hy2/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/everett7623/hy2?color=purple)](https://github.com/everett7623/hy2/commits/main)
 
-> 当前版本：v2.3.0（2026-11-12） · 本次更新：家宽中转新增 TCP 隧道（禁 UDP 时用）；新增一键 Realm TCP 中转（落地机跑节点、线路机只转发）。
+> 当前版本：v2.3.1（2026-11-12） · 本次更新：项目信息标签统一为中文；nodeloc.com 改为「推荐社区」，避免被误解为作者自有论坛。
 
 ## 目录
 
@@ -402,12 +402,12 @@ git diff --check
 
 | 项目 | 地址 |
 | --- | --- |
-| Author | everettlabs |
+| 作者 | everettlabs |
 | GitHub | [everett7623/hy2](https://github.com/everett7623/hy2) |
-| Blog | [seedloc.com](https://seedloc.com) |
-| Review | [vpsknow.com](https://vpsknow.com) |
-| Forum | [nodeloc.com](https://nodeloc.com) |
-| License | [MIT](LICENSE) |
+| 博客 | [seedloc.com](https://seedloc.com) |
+| 测评 | [vpsknow.com](https://vpsknow.com) |
+| 推荐社区 | [nodeloc.com](https://nodeloc.com) |
+| 许可证 | [MIT](LICENSE) |
 
 ## 免责声明
 
